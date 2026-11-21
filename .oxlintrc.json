@@ -1,0 +1,78 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react", "oxc", "import", "typescript"],
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/only-export-components": [
+      "warn",
+      {
+        "allowConstantExport": true
+      }
+    ],
+    "import/no-cycle": [
+      "error",
+      {
+        "ignoreExternal": true,
+        "ignoreTypes": false
+      }
+    ],
+    "typescript/no-explicit-any": "warn",
+    "typescript/no-non-null-assertion": "warn",
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "regex": "^(?:@/|(?:\\.\\.?/)+(?:src/)?)features/[^/]+/[^/]",
+            "message": "Import from the feature folder to use its public index.ts. Use relative sibling imports inside a feature."
+          }
+        ]
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["src/{features,lib,server}/**/*"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^(?:@/|(?:\\.\\.?/)+(?:src/)?)features/[^/]+/[^/]",
+                "message": "Import from the feature folder to use its public index.ts. Use relative sibling imports inside a feature."
+              },
+              {
+                "regex": "^(?:@/|(?:\\.\\.?/)+(?:src/)?)(?:app|routes)(?:/|$)",
+                "message": "Keep app and route wiring in the composition layer. Pass dependencies into the feature through its public API."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/shared/**/*"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^(?:@/|(?:\\.\\.?/)+(?:src/)?)(?:app|features|routes)(?:/|$)",
+                "message": "Shared modules must be independent of app wiring, routes, and business features."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/**/*.{jsx,tsx}"],
+      "plugins": ["react", "oxc", "import", "typescript", "jsx-a11y"],
+      "rules": {
+        "jsx-a11y/alt-text": "warn"
+      }
+    }
+  ]
+}

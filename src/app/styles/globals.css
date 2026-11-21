@@ -1,0 +1,67 @@
+@import 'tailwindcss';
+
+:root,
+[data-ui-theme='light'] {
+  color-scheme: light;
+  --ui-surface-canvas: #faf6f0;
+  --ui-surface-default: #ffffff;
+  --ui-surface-muted: #f3ece2;
+  --ui-text-default: #1c1917;
+  --ui-text-muted: #57534e;
+  --ui-border-default: #e2d8c9;
+  --ui-accent: #c2410c;
+  --ui-accent-hover: #9a3412;
+  --ui-on-accent: #fffbf7;
+  --ui-focus-color: #c2410c;
+  --ui-status-error: #b91c1c;
+}
+
+[data-ui-theme='dark'] {
+  color-scheme: dark;
+  --ui-surface-canvas: #12100e;
+  --ui-surface-default: #1c1917;
+  --ui-surface-muted: #292524;
+  --ui-text-default: #fafaf9;
+  --ui-text-muted: #a8a29e;
+  --ui-border-default: #3f3a36;
+  --ui-accent: #fb923c;
+  --ui-accent-hover: #fdba74;
+  --ui-on-accent: #1c1917;
+  --ui-focus-color: #fb923c;
+  --ui-status-error: #fca5a5;
+}
+
+@theme inline {
+  --color-ui-canvas: var(--ui-surface-canvas);
+  --color-ui-surface: var(--ui-surface-default);
+  --color-ui-surface-muted: var(--ui-surface-muted);
+  --color-ui-text: var(--ui-text-default);
+  --color-ui-text-muted: var(--ui-text-muted);
+  --color-ui-border: var(--ui-border-default);
+  --color-ui-accent: var(--ui-accent);
+  --color-ui-accent-hover: var(--ui-accent-hover);
+  --color-ui-on-accent: var(--ui-on-accent);
+  --color-ui-focus: var(--ui-focus-color);
+  --color-ui-error: var(--ui-status-error);
+}
+
+@custom-variant dark (&:where([data-ui-theme='dark'], [data-ui-theme='dark'] *));
+
+@layer base {
+  :root {
+    color: var(--ui-text-default);
+    background-color: var(--ui-surface-canvas);
+    font-family: Inter, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  :where(a, button, input, textarea, select, summary):focus-visible {
+    outline: 3px solid var(--ui-focus-color);
+    outline-offset: 3px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+}
