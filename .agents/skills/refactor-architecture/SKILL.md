@@ -80,6 +80,7 @@ Report in this order:
 ## Skill boundaries
 
 - Use `enhance-feature` for isolated feature or component cleanup, UX/edge-state hardening, or styling/a11y polish without cross-module boundary changes.
+- Use `fix-bugs` to diagnose, reproduce, and fix isolated defects, regressions, crashes, or failing tests without broad architectural migration.
 - Use `create-feature` to build and wire a brand-new user-facing feature or capability.
 - Use **this skill** (`refactor-architecture`) when source-code ownership, feature/app layering, cross-module dependencies, or architectural conformance must change.
 - Use `audit-performance` for evidence-based bundle, rendering, complexity, and Core Web Vitals audits or optimizations.

@@ -95,6 +95,7 @@ Report in this order:
 ## Skill boundaries
 
 - Use **this skill** (`enhance-feature`) to refine, harden, clean up, or incrementally enhance an existing feature or component within its current boundaries.
+- Use `fix-bugs` to diagnose, reproduce, isolate root cause, and fix reported defects, regressions, crashes, or failing tests.
 - Use `create-feature` to design, implement, and wire a brand-new user-facing feature or route.
 - Use `refactor-architecture` when source-code ownership, feature/app layering, or cross-module dependency boundaries must change.
 - Use `audit-performance` for dedicated production-build profiling and evidence-based performance optimizations.

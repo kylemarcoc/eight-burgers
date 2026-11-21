@@ -92,6 +92,7 @@ Report concisely in this order:
 
 - Use **this skill** (`create-feature`) to design, implement, wire, and test a new feature or capability.
 - Use `enhance-feature` to refine, harden, or incrementally enhance an existing feature or component within its current boundaries.
+- Use `fix-bugs` to diagnose, reproduce, and fix defects, regressions, crashes, or failing tests.
 - Use `refactor-architecture` to reorganize existing code for architectural conformance without adding new product capabilities.
 - Use `audit-performance` for evidence-based bundle, rendering, complexity, and Core Web Vitals audits or optimizations.
 - Use `audit-accessibility` for WCAG 2.2, keyboard/focus, ARIA, contrast, and reduced-motion audits or remediation.
