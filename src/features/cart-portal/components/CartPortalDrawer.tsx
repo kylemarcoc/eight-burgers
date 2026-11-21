@@ -2,7 +2,12 @@ import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 
 import { createPortal } from 'react-dom';
 import { FoodImage } from '@/shared/components/FoodImage';
 import { STORE_METADATA } from '@/shared/shop/eight-burgers-seed';
-import { useShop } from '@/shared/shop/shop-context';
+import {
+  useShopActions,
+  useShopCartOpen,
+  useShopCartSummary,
+  useShopLastPlacedOrder,
+} from '@/shared/store/useShopStore';
 import { MAKATI_DELIVERY_FEE_PHP, formatPhp } from '@/shared/shop/shop-storage';
 import type { FulfillmentMode, PaymentMethod } from '@/shared/shop/types';
 
@@ -27,17 +32,11 @@ function getFocusableElements(container: HTMLElement): HTMLElement[] {
 }
 
 export function CartPortalDrawer() {
-  const {
-    cartSummary,
-    isCartOpen,
-    lastPlacedOrder,
-    setCartOpen,
-    setLineQuantity,
-    removeCartLine,
-    clearCart,
-    placeOrder,
-    dismissLastOrder,
-  } = useShop();
+  const cartSummary = useShopCartSummary();
+  const isCartOpen = useShopCartOpen();
+  const lastPlacedOrder = useShopLastPlacedOrder();
+  const { setCartOpen, setLineQuantity, removeCartLine, clearCart, placeOrder, dismissLastOrder } =
+    useShopActions();
 
   const [customerName, setCustomerName] = useState('');
   const [contactNumber, setContactNumber] = useState('');

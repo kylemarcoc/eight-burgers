@@ -6,10 +6,7 @@ import type {
   MenuCategory,
   MenuItem,
   MenuItemInput,
-  OrderCustomerInput,
-  OrderLineSnapshot,
   OrderRecord,
-  OrderStatus,
 } from './types';
 
 export const SHOP_STORAGE_KEY = 'eight-burgers:state:v1';
@@ -23,21 +20,6 @@ export type ShopState = {
   lastPlacedOrder: OrderRecord | null;
   nextQueueSeq: number;
 };
-
-export type ShopAction =
-  | { type: 'add_to_cart'; itemId: string; quantity?: number; addonIds?: MenuAddonId[] }
-  | { type: 'set_line_quantity'; lineId: string; quantity: number }
-  | { type: 'remove_cart_line'; lineId: string }
-  | { type: 'clear_cart' }
-  | { type: 'set_cart_open'; open: boolean }
-  | { type: 'create_menu_item'; input: MenuItemInput }
-  | { type: 'update_menu_item'; id: string; input: MenuItemInput }
-  | { type: 'toggle_item_availability'; id: string }
-  | { type: 'delete_menu_item'; id: string }
-  | { type: 'reset_catalog' }
-  | { type: 'place_order'; customer: OrderCustomerInput }
-  | { type: 'update_order_status'; orderId: string; status: OrderStatus }
-  | { type: 'dismiss_last_order' };
 
 export type ResolvedCartLine = {
   lineId: string;
@@ -130,7 +112,7 @@ export function calculateCartDetails(
   return { lines, totalItems, subtotalPhp };
 }
 
-function slugifyId(name: string, existingIds: ReadonlySet<string>): string {
+export function slugifyMenuId(name: string, existingIds: ReadonlySet<string>): string {
   const base =
     name
       .trim()
@@ -145,7 +127,7 @@ function slugifyId(name: string, existingIds: ReadonlySet<string>): string {
   return `${base}-${suffix}`;
 }
 
-function sanitizeMenuItemInput(input: MenuItemInput): MenuItemInput {
+export function sanitizeMenuItemInput(input: MenuItemInput): MenuItemInput {
   const numericPrice = Number(input.pricePhp);
   const pricePhp =
     Number.isFinite(numericPrice) && numericPrice > 0 ? Math.round(numericPrice) : 99;
@@ -174,184 +156,7 @@ export function createInitialShopState(): ShopState {
   };
 }
 
-export function shopReducer(state: ShopState, action: ShopAction): ShopState {
-  switch (action.type) {
-    case 'add_to_cart': {
-      const targetItem = state.menu.find((item) => item.id === action.itemId);
-      if (!targetItem || !targetItem.available) return state;
-
-      const qtyToAdd = Math.max(1, Math.round(action.quantity ?? 1));
-      const addonIds = targetItem.allowAddons ? normalizeAddonIds(action.addonIds) : [];
-      const lineId = buildCartLineId(targetItem.id, addonIds);
-      const existing = state.cart.find((line) => line.lineId === lineId);
-
-      const nextCart = existing
-        ? state.cart.map((line) =>
-            line.lineId === lineId ? { ...line, quantity: line.quantity + qtyToAdd } : line,
-          )
-        : [...state.cart, { lineId, itemId: targetItem.id, quantity: qtyToAdd, addonIds }];
-
-      return {
-        ...state,
-        cart: nextCart,
-        lastPlacedOrder: null,
-      };
-    }
-
-    case 'set_line_quantity': {
-      const nextQty = Math.round(action.quantity);
-      if (nextQty <= 0) {
-        return {
-          ...state,
-          cart: state.cart.filter((line) => line.lineId !== action.lineId),
-        };
-      }
-      return {
-        ...state,
-        cart: state.cart.map((line) =>
-          line.lineId === action.lineId ? { ...line, quantity: nextQty } : line,
-        ),
-      };
-    }
-
-    case 'remove_cart_line':
-      return {
-        ...state,
-        cart: state.cart.filter((line) => line.lineId !== action.lineId),
-      };
-
-    case 'clear_cart':
-      return {
-        ...state,
-        cart: [],
-      };
-
-    case 'set_cart_open':
-      return {
-        ...state,
-        isCartOpen: action.open,
-      };
-
-    case 'create_menu_item': {
-      const existingIds = new Set(state.menu.map((item) => item.id));
-      const clean = sanitizeMenuItemInput(action.input);
-      const newItem: MenuItem = {
-        id: slugifyId(clean.name, existingIds),
-        ...clean,
-      };
-      return {
-        ...state,
-        menu: [newItem, ...state.menu],
-      };
-    }
-
-    case 'update_menu_item': {
-      const clean = sanitizeMenuItemInput(action.input);
-      return {
-        ...state,
-        menu: state.menu.map((item) => (item.id === action.id ? { id: item.id, ...clean } : item)),
-        cart: clean.available ? state.cart : state.cart.filter((line) => line.itemId !== action.id),
-      };
-    }
-
-    case 'toggle_item_availability': {
-      let becameUnavailable = false;
-      const nextMenu = state.menu.map((item) => {
-        if (item.id !== action.id) return item;
-        const nextAvailable = !item.available;
-        if (!nextAvailable) becameUnavailable = true;
-        return { ...item, available: nextAvailable };
-      });
-      return {
-        ...state,
-        menu: nextMenu,
-        cart: becameUnavailable
-          ? state.cart.filter((line) => line.itemId !== action.id)
-          : state.cart,
-      };
-    }
-
-    case 'delete_menu_item':
-      return {
-        ...state,
-        menu: state.menu.filter((item) => item.id !== action.id),
-        cart: state.cart.filter((line) => line.itemId !== action.id),
-      };
-
-    case 'reset_catalog': {
-      const defaultItems = DEFAULT_MENU_ITEMS.map((item) => ({ ...item }));
-      const validIds = new Set(defaultItems.map((item) => item.id));
-      return {
-        ...state,
-        menu: defaultItems,
-        cart: state.cart.filter((line) => validIds.has(line.itemId)),
-      };
-    }
-
-    case 'place_order': {
-      const summary = calculateCartDetails(state.cart, state.menu);
-      if (summary.lines.length === 0) return state;
-
-      const deliveryFeePhp =
-        action.customer.fulfillment === 'makati-delivery' ? MAKATI_DELIVERY_FEE_PHP : 0;
-      const lines: OrderLineSnapshot[] = summary.lines.map((line) => ({
-        lineId: line.lineId,
-        itemId: line.item.id,
-        name: line.item.name,
-        unitPricePhp: line.item.pricePhp,
-        addonNames: line.addons.map((addon) => addon.name),
-        addonsPricePhp: line.addonsPricePhp,
-        quantity: line.quantity,
-        lineTotalPhp: line.lineTotalPhp,
-      }));
-
-      const seq = state.nextQueueSeq;
-      const newOrder: OrderRecord = {
-        id: `ord-${seq}-${Date.now().toString(36)}`,
-        queueNumber: `#8B-${seq}`,
-        customerName: action.customer.customerName.trim() || 'Walk-in Guest',
-        contactNumber: action.customer.contactNumber.trim(),
-        fulfillment: action.customer.fulfillment,
-        addressOrNotes: action.customer.addressOrNotes.trim(),
-        paymentMethod: action.customer.paymentMethod,
-        lines,
-        subtotalPhp: summary.subtotalPhp,
-        deliveryFeePhp,
-        totalPhp: summary.subtotalPhp + deliveryFeePhp,
-        status: 'received',
-        createdAtIso: new Date().toISOString(),
-      };
-
-      return {
-        ...state,
-        cart: [],
-        orders: [newOrder, ...state.orders],
-        lastPlacedOrder: newOrder,
-        nextQueueSeq: seq + 1,
-      };
-    }
-
-    case 'update_order_status':
-      return {
-        ...state,
-        orders: state.orders.map((order) =>
-          order.id === action.orderId ? { ...order, status: action.status } : order,
-        ),
-        lastPlacedOrder:
-          state.lastPlacedOrder && state.lastPlacedOrder.id === action.orderId
-            ? { ...state.lastPlacedOrder, status: action.status }
-            : state.lastPlacedOrder,
-      };
-
-    case 'dismiss_last_order':
-      return {
-        ...state,
-        lastPlacedOrder: null,
-      };
-  }
-}
-
-type PersistedShopPayload = {
+export type PersistedShopPayload = {
   menu: MenuItem[];
   cart: CartLineItem[];
   orders: OrderRecord[];
@@ -371,58 +176,36 @@ function isMenuItemArray(value: unknown): value is MenuItem[] {
   );
 }
 
-export function loadPersistedShopState(): ShopState {
-  const initial = createInitialShopState();
-  if (typeof window === 'undefined') return initial;
-
-  try {
-    const raw = window.localStorage.getItem(SHOP_STORAGE_KEY);
-    if (!raw) return initial;
-    const parsed = JSON.parse(raw) as Partial<PersistedShopPayload>;
-    if (!parsed || typeof parsed !== 'object') return initial;
-
-    const menu = isMenuItemArray(parsed.menu) ? parsed.menu : initial.menu;
-    const cart = Array.isArray(parsed.cart)
-      ? parsed.cart.filter(
-          (line): line is CartLineItem =>
-            typeof line === 'object' &&
-            line !== null &&
-            typeof line.lineId === 'string' &&
-            typeof line.itemId === 'string' &&
-            typeof line.quantity === 'number' &&
-            line.quantity > 0 &&
-            Array.isArray(line.addonIds),
-        )
-      : initial.cart;
-    const orders = Array.isArray(parsed.orders) ? (parsed.orders as OrderRecord[]) : initial.orders;
-    const nextQueueSeq =
-      typeof parsed.nextQueueSeq === 'number' && parsed.nextQueueSeq >= 101
-        ? Math.round(parsed.nextQueueSeq)
-        : initial.nextQueueSeq;
-
+export function sanitizePersistedShopPayload(raw: unknown): PersistedShopPayload {
+  const fallback = createInitialShopState();
+  if (!raw || typeof raw !== 'object') {
     return {
-      ...initial,
-      menu,
-      cart,
-      orders,
-      nextQueueSeq,
+      menu: fallback.menu,
+      cart: fallback.cart,
+      orders: fallback.orders,
+      nextQueueSeq: fallback.nextQueueSeq,
     };
-  } catch {
-    return initial;
   }
-}
 
-export function persistShopState(state: ShopState): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const payload: PersistedShopPayload = {
-      menu: state.menu,
-      cart: state.cart,
-      orders: state.orders,
-      nextQueueSeq: state.nextQueueSeq,
-    };
-    window.localStorage.setItem(SHOP_STORAGE_KEY, JSON.stringify(payload));
-  } catch {
-    // Ignore storage quota or private-mode errors and keep in-memory state.
-  }
+  const parsed = raw as Partial<PersistedShopPayload>;
+  const menu = isMenuItemArray(parsed.menu) ? parsed.menu : fallback.menu;
+  const cart = Array.isArray(parsed.cart)
+    ? parsed.cart.filter(
+        (line): line is CartLineItem =>
+          typeof line === 'object' &&
+          line !== null &&
+          typeof line.lineId === 'string' &&
+          typeof line.itemId === 'string' &&
+          typeof line.quantity === 'number' &&
+          line.quantity > 0 &&
+          Array.isArray(line.addonIds),
+      )
+    : fallback.cart;
+  const orders = Array.isArray(parsed.orders) ? (parsed.orders as OrderRecord[]) : fallback.orders;
+  const nextQueueSeq =
+    typeof parsed.nextQueueSeq === 'number' && parsed.nextQueueSeq >= 101
+      ? Math.round(parsed.nextQueueSeq)
+      : fallback.nextQueueSeq;
+
+  return { menu, cart, orders, nextQueueSeq };
 }

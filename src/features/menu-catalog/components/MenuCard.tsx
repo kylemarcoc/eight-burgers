@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { memo, useEffect, useId, useRef, useState } from 'react';
 import { FoodImage } from '@/shared/components/FoodImage';
 import { MENU_ADDONS } from '@/shared/shop/eight-burgers-seed';
 import { formatPhp } from '@/shared/shop/shop-storage';
@@ -10,7 +10,7 @@ type MenuCardProps = {
   onAddToCart: (itemId: string, addonIds: MenuAddonId[]) => void;
 };
 
-export function MenuCard({ item, qtyInCart, onAddToCart }: MenuCardProps) {
+export const MenuCard = memo(function MenuCard({ item, qtyInCart, onAddToCart }: MenuCardProps) {
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const [selectedAddons, setSelectedAddons] = useState<MenuAddonId[]>([]);
   const [justAdded, setJustAdded] = useState(false);
@@ -25,10 +25,11 @@ export function MenuCard({ item, qtyInCart, onAddToCart }: MenuCardProps) {
     };
   }, []);
 
+  const selectedAddonSet = new Set(selectedAddons);
   const addonsAllowed = item.allowAddons && item.available;
   const addonsTotalPhp = addonsAllowed
     ? MENU_ADDONS.reduce(
-        (sum, addon) => (selectedAddons.includes(addon.id) ? sum + addon.pricePhp : sum),
+        (sum, addon) => (selectedAddonSet.has(addon.id) ? sum + addon.pricePhp : sum),
         0,
       )
     : 0;
@@ -125,7 +126,7 @@ export function MenuCard({ item, qtyInCart, onAddToCart }: MenuCardProps) {
                 className="mt-2.5 grid grid-cols-2 gap-1.5 rounded-xl border border-ui-border bg-ui-surface-muted p-2.5"
               >
                 {MENU_ADDONS.map((addon) => {
-                  const checked = selectedAddons.includes(addon.id);
+                  const checked = selectedAddonSet.has(addon.id);
                   return (
                     <label
                       key={addon.id}
@@ -189,4 +190,4 @@ export function MenuCard({ item, qtyInCart, onAddToCart }: MenuCardProps) {
       </div>
     </article>
   );
-}
+});

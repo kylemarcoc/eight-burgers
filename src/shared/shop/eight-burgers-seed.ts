@@ -1,5 +1,9 @@
 import type { MenuAddon, MenuCategory, MenuItem } from './types';
 
+function menuImage(filename: string): string {
+  return `${import.meta.env.BASE_URL}images/menu/${filename}`;
+}
+
 export const STORE_METADATA = {
   name: '8Burgers',
   branch: 'Chino Roces Avenue, Makati',
@@ -8,7 +12,7 @@ export const STORE_METADATA = {
   hours: 'Daily · 10:00 AM – 11:00 PM',
   foodpandaUrl: 'https://www.foodpanda.ph/restaurant/om5p/8burgers-chino-roces-avenue',
   facebookUrl: 'https://www.facebook.com/p/8Burgers-61556691506190/',
-  bannerImageUrl: 'https://images.deliveryhero.io/image/fd-ph/LH/om5p-listing.jpg',
+  bannerImageUrl: menuImage('hero-banner.webp'),
 } as const;
 
 export const MENU_CATEGORIES: readonly {
@@ -47,36 +51,36 @@ export const MENU_ADDONS: readonly MenuAddon[] = [
 
 export const IMAGE_PRESETS: readonly { label: string; url: string }[] = [
   {
-    label: 'Foodpanda Chino Roces Banner',
-    url: 'https://images.deliveryhero.io/image/fd-ph/LH/om5p-listing.jpg',
+    label: 'Chino Roces Store Banner',
+    url: menuImage('hero-banner.webp'),
   },
   {
-    label: 'Classic Cheeseburger',
-    url: 'https://upload.wikimedia.org/wikipedia/commons/5/59/Homemade_Cheeseburger.JPG',
+    label: 'Burger Deluxe',
+    url: menuImage('burger-deluxe.webp'),
   },
   {
-    label: 'Bacon Cheeseburger',
-    url: 'https://upload.wikimedia.org/wikipedia/commons/9/94/Bacon_cheeseburger.JPG',
+    label: 'American Burger',
+    url: menuImage('american-burger.webp'),
   },
   {
-    label: 'Double Cheeseburger',
-    url: 'https://upload.wikimedia.org/wikipedia/commons/b/b2/Classic_double_cheeseburger.jpg',
+    label: 'Overload Burger',
+    url: menuImage('overload-burger.webp'),
   },
   {
-    label: 'Hawaiian Pineapple Burger',
-    url: 'https://upload.wikimedia.org/wikipedia/commons/4/49/Pork_Chop_Pineapple_Bun_Burger.jpg',
+    label: 'Hawaiian Burger',
+    url: menuImage('hawaiian-burger.webp'),
   },
   {
     label: 'Crinkle Cut Fries',
-    url: 'https://upload.wikimedia.org/wikipedia/commons/1/18/French_fries_crinkle_cut.jpg',
+    url: menuImage('crinkle-cut-fries.webp'),
   },
   {
     label: 'Potato Wedges',
-    url: 'https://upload.wikimedia.org/wikipedia/commons/4/49/Making_potato_wedges.jpg',
+    url: menuImage('potato-wedges.webp'),
   },
   {
-    label: 'Loaded Nachos',
-    url: 'https://upload.wikimedia.org/wikipedia/commons/8/87/Nachos-cheese.jpg',
+    label: 'Nachos Overload',
+    url: menuImage('nachos-overload.webp'),
   },
 ];
 
@@ -89,7 +93,7 @@ export const DEFAULT_MENU_ITEMS: readonly MenuItem[] = [
     pattySpec: '65g Junior Beef',
     description:
       'Compact seared beef patty, melted cheese slice, crisp lettuce, tomato, cucumber, and house mayo dressing on a soft bun.',
-    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/5/59/Homemade_Cheeseburger.JPG',
+    imageUrl: menuImage('mini-cheese-burger-deluxe.webp'),
     available: true,
     featured: false,
     allowAddons: true,
@@ -102,7 +106,7 @@ export const DEFAULT_MENU_ITEMS: readonly MenuItem[] = [
     pattySpec: '100g Pure Beef',
     description:
       '100g pure beef patty topped with fresh onion, crisp lettuce, juicy tomato slices, cool cucumber, and creamy mayo on a soft bun.',
-    imageUrl: 'https://images.deliveryhero.io/image/fd-ph/LH/om5p-listing.jpg',
+    imageUrl: menuImage('burger-deluxe.webp'),
     available: true,
     featured: true,
     allowAddons: true,
@@ -115,7 +119,7 @@ export const DEFAULT_MENU_ITEMS: readonly MenuItem[] = [
     pattySpec: '100g Pure Beef',
     description:
       '100g pure beef patty layered with melted cheddar, warm mayo cheese sauce, lettuce, tomato, onion, and cucumber on a toasted bun.',
-    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/b/bd/Cheeseburger_with_fries.jpg',
+    imageUrl: menuImage('cheese-burger-deluxe.webp'),
     available: true,
     featured: true,
     allowAddons: true,
@@ -128,8 +132,7 @@ export const DEFAULT_MENU_ITEMS: readonly MenuItem[] = [
     pattySpec: '100g Pure Beef',
     description:
       '100g pure beef patty finished with creamy mayo, melted cheese sauce, crisp lettuce, and zesty tomato-chili house salsa.',
-    imageUrl:
-      'https://upload.wikimedia.org/wikipedia/commons/1/14/McDonald%27s%2C_nachos_cheeseburger.jpg',
+    imageUrl: menuImage('chicano-burger.webp'),
     available: true,
     featured: true,
     allowAddons: true,
@@ -142,7 +145,7 @@ export const DEFAULT_MENU_ITEMS: readonly MenuItem[] = [
     pattySpec: '100g Beef + Taco Meat',
     description:
       '100g pure beef patty stacked with seasoned taco beef, crisp lettuce, creamy mayo, and rich cheese sauce on a toasted bun.',
-    imageUrl: 'https://images.unsplash.com/photo-1683882330385-e9270342b306',
+    imageUrl: menuImage('mexican-burger.webp'),
     available: true,
     featured: false,
     allowAddons: true,
@@ -155,7 +158,7 @@ export const DEFAULT_MENU_ITEMS: readonly MenuItem[] = [
     pattySpec: '100g Pure Beef',
     description:
       '100g pure beef patty paired with crisp shredded lettuce, punchy wasabi mayo, and rich warm cheese sauce.',
-    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/d/d9/Burger_and_fries_%281%29.jpg',
+    imageUrl: menuImage('japanese-burger.webp'),
     available: true,
     featured: false,
     allowAddons: true,
@@ -168,7 +171,7 @@ export const DEFAULT_MENU_ITEMS: readonly MenuItem[] = [
     pattySpec: '100g Beef + Bacon',
     description:
       '100g pure beef patty topped with creamy mayo, melted cheese sauce, savory sautéed mushrooms, and crispy bacon strips.',
-    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/9/94/Bacon_cheeseburger.JPG',
+    imageUrl: menuImage('american-burger.webp'),
     available: true,
     featured: true,
     allowAddons: true,
@@ -181,8 +184,7 @@ export const DEFAULT_MENU_ITEMS: readonly MenuItem[] = [
     pattySpec: '100g Beef + Pineapple',
     description:
       '100g pure beef patty with sweet caramelized pineapple, lettuce, tomato, onion, cucumber, creamy mayo, and cheese sauce.',
-    imageUrl:
-      'https://upload.wikimedia.org/wikipedia/commons/4/49/Pork_Chop_Pineapple_Bun_Burger.jpg',
+    imageUrl: menuImage('hawaiian-burger.webp'),
     available: true,
     featured: false,
     allowAddons: true,
@@ -195,7 +197,7 @@ export const DEFAULT_MENU_ITEMS: readonly MenuItem[] = [
     pattySpec: 'Grilled Sausage',
     description:
       'Smoky grilled Hungarian sausage tucked into a warm toasted roll with tangy dressing and rich melted cheese sauce.',
-    imageUrl: 'https://images.unsplash.com/photo-1455480570512-42feb248c2b6',
+    imageUrl: menuImage('hungarian-sandwich.webp'),
     available: true,
     featured: false,
     allowAddons: true,
@@ -208,8 +210,7 @@ export const DEFAULT_MENU_ITEMS: readonly MenuItem[] = [
     pattySpec: 'Seared Ground Beef',
     description:
       'Savory seared ground beef tossed with sweet sautéed onions and peppers, smothered in warm cheese sauce on a soft long roll.',
-    imageUrl:
-      'https://upload.wikimedia.org/wikipedia/commons/8/8f/NYC-Diner-Bacon-Cheeseburger.jpg',
+    imageUrl: menuImage('philly-cheese-steak.webp'),
     available: true,
     featured: false,
     allowAddons: true,
@@ -222,7 +223,7 @@ export const DEFAULT_MENU_ITEMS: readonly MenuItem[] = [
     pattySpec: '100g Beef Loaded',
     description:
       '100g pure beef patty piled high with crispy bacon, sautéed mushrooms, fried egg, crisp garden veggies, and signature sauces.',
-    imageUrl: 'https://images.unsplash.com/photo-1773394985083-48ebbd05de99',
+    imageUrl: menuImage('ultimate-burger.webp'),
     available: true,
     featured: false,
     allowAddons: true,
@@ -235,7 +236,7 @@ export const DEFAULT_MENU_ITEMS: readonly MenuItem[] = [
     pattySpec: 'Double Cheese Stack',
     description:
       '100g pure beef patty with extra sliced cheddar, molten cheese sauce, crispy bacon, fried egg, and fresh garden crunch.',
-    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/2/22/Double_Cheese_Cheeseburger.jpg',
+    imageUrl: menuImage('ultimate-cheese-burger.webp'),
     available: true,
     featured: false,
     allowAddons: true,
@@ -248,7 +249,7 @@ export const DEFAULT_MENU_ITEMS: readonly MenuItem[] = [
     pattySpec: 'Double 100g Beef',
     description:
       'Double 100g pure beef patties layered with crispy bacon, spiced taco beef, sautéed mushrooms, double cheese, and full toppings.',
-    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/b/b2/Classic_double_cheeseburger.jpg',
+    imageUrl: menuImage('overload-burger.webp'),
     available: true,
     featured: true,
     allowAddons: true,
@@ -260,7 +261,7 @@ export const DEFAULT_MENU_ITEMS: readonly MenuItem[] = [
     pricePhp: 78,
     pattySpec: 'Crispy Cut',
     description: 'Golden fried crinkle-cut potato ridges seasoned warm out of the fryer.',
-    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/1/18/French_fries_crinkle_cut.jpg',
+    imageUrl: menuImage('crinkle-cut-fries.webp'),
     available: true,
     featured: false,
     allowAddons: false,
@@ -272,7 +273,7 @@ export const DEFAULT_MENU_ITEMS: readonly MenuItem[] = [
     pricePhp: 78,
     pattySpec: 'Seasoned Wedges',
     description: 'Thick-cut skin-on potato wedges with crisp seasoned edges and fluffy centers.',
-    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/4/49/Making_potato_wedges.jpg',
+    imageUrl: menuImage('potato-wedges.webp'),
     available: true,
     featured: false,
     allowAddons: false,
@@ -285,7 +286,7 @@ export const DEFAULT_MENU_ITEMS: readonly MenuItem[] = [
     pattySpec: 'Shareable Tray',
     description:
       'Crispy tortilla chips loaded with seasoned ground beef, diced tomatoes, fresh onions, and generous warm melted cheese sauce.',
-    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/8/87/Nachos-cheese.jpg',
+    imageUrl: menuImage('nachos-overload.webp'),
     available: true,
     featured: true,
     allowAddons: false,

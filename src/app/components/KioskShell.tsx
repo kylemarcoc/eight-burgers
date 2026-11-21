@@ -2,11 +2,12 @@ import { NavLink, Outlet } from 'react-router-dom';
 import { useTheme } from '@/app/providers/theme-context';
 import { CartPortalDrawer, FloatingCartButton } from '@/features/cart-portal';
 import { STORE_METADATA } from '@/shared/shop/eight-burgers-seed';
-import { useShop } from '@/shared/shop/shop-context';
+import { useShopActions, useShopCartSummary } from '@/shared/store/useShopStore';
 
 export function KioskShell() {
   const { theme, toggleTheme } = useTheme();
-  const { cartSummary, setCartOpen } = useShop();
+  const cartSummary = useShopCartSummary();
+  const { setCartOpen } = useShopActions();
 
   return (
     <div className="min-h-screen bg-ui-canvas text-ui-text">

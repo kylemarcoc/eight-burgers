@@ -1,9 +1,11 @@
 import { useId, useMemo, useRef, useState, type FormEvent } from 'react';
 import { FoodImage } from '@/shared/components/FoodImage';
 import { IMAGE_PRESETS, MENU_CATEGORIES } from '@/shared/shop/eight-burgers-seed';
-import { useShop } from '@/shared/shop/shop-context';
+import { useShopActions, useShopMenu, useShopOrders } from '@/shared/store/useShopStore';
 import { formatPhp } from '@/shared/shop/shop-storage';
 import type { MenuCategory, MenuItem, MenuItemInput, OrderStatus } from '@/shared/shop/types';
+
+const INITIAL_VISIBLE_ORDERS = 20;
 
 type FormState = {
   name: string;
@@ -68,7 +70,7 @@ function itemToFormState(item: MenuItem): FormState {
 function isSafeImageUrl(raw: string): boolean {
   const trimmed = raw.trim();
   if (!trimmed) return true;
-  if (trimmed.startsWith('/')) return true;
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) return true;
   try {
     const parsed = new URL(trimmed);
     return parsed.protocol === 'https:' || parsed.protocol === 'http:';
@@ -84,16 +86,16 @@ function formatOrderTimestamp(iso: string): string | null {
 }
 
 export function AdminCatalogManager() {
+  const menu = useShopMenu();
+  const orders = useShopOrders();
   const {
-    menu,
-    orders,
     createMenuItem,
     updateMenuItem,
     toggleItemAvailability,
     deleteMenuItem,
     resetCatalog,
     updateOrderStatus,
-  } = useShop();
+  } = useShopActions();
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
@@ -103,6 +105,7 @@ export function AdminCatalogManager() {
   const [inventoryCategory, setInventoryCategory] = useState<'all' | MenuCategory>('all');
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [showAllOrders, setShowAllOrders] = useState(false);
 
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const priceInputRef = useRef<HTMLInputElement | null>(null);
@@ -735,9 +738,22 @@ export function AdminCatalogManager() {
       </div>
 
       <section aria-labelledby="orders-ledger-heading" className="space-y-4">
-        <h2 id="orders-ledger-heading" className="text-lg font-bold text-ui-text">
-          Recent Customer Orders ({orders.length})
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 id="orders-ledger-heading" className="text-lg font-bold text-ui-text">
+            Recent Customer Orders ({orders.length})
+          </h2>
+          {orders.length > INITIAL_VISIBLE_ORDERS ? (
+            <button
+              type="button"
+              onClick={() => setShowAllOrders((prev) => !prev)}
+              className="rounded-lg border border-ui-border bg-ui-surface px-3 py-1.5 text-xs font-semibold text-ui-text hover:bg-ui-surface-muted"
+            >
+              {showAllOrders
+                ? `Show latest ${INITIAL_VISIBLE_ORDERS}`
+                : `Show all ${orders.length} orders`}
+            </button>
+          ) : null}
+        </div>
 
         {orders.length === 0 ? (
           <div className="rounded-2xl border border-ui-border bg-ui-surface p-6 text-sm text-ui-text-muted">
@@ -746,7 +762,7 @@ export function AdminCatalogManager() {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            {orders.map((order) => {
+            {(showAllOrders ? orders : orders.slice(0, INITIAL_VISIBLE_ORDERS)).map((order) => {
               const formattedTime = formatOrderTimestamp(order.createdAtIso);
               return (
                 <article

@@ -1,11 +1,13 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
+import { resetShopStore } from '@/shared/store/useShopStore';
 import App from './App';
 import { ThemeProvider } from './providers/ThemeProvider';
 
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  resetShopStore();
   document.documentElement.classList.remove('dark');
   document.documentElement.dataset.uiTheme = 'light';
   window.history.replaceState({}, '', '/');
@@ -87,7 +89,7 @@ describe('8Burgers Storefront, Bottom-Right Cart Portal, and Admin', () => {
     expect(within(dialog).getByText('#8B-101')).toBeTruthy();
   });
 
-  it('allows the owner to add and update listings in /admin and reflects them on /', () => {
+  it('allows the owner to add and update listings in /admin and reflects them on /', async () => {
     render(
       <ThemeProvider>
         <App />
@@ -96,7 +98,7 @@ describe('8Burgers Storefront, Bottom-Right Cart Portal, and Admin', () => {
 
     fireEvent.click(screen.getByRole('link', { name: /owner admin/i }));
     expect(
-      screen.getByRole('heading', { level: 1, name: /owner menu & order manager/i }),
+      await screen.findByRole('heading', { level: 1, name: /owner menu & order manager/i }),
     ).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText(/item name/i), {
@@ -118,7 +120,7 @@ describe('8Burgers Storefront, Bottom-Right Cart Portal, and Admin', () => {
     ).toBeTruthy();
   });
 
-  it('renders a not-found page for unknown routes', () => {
+  it('renders a not-found page for unknown routes', async () => {
     window.history.replaceState({}, '', '/unknown-route');
     render(
       <ThemeProvider>
@@ -126,6 +128,6 @@ describe('8Burgers Storefront, Bottom-Right Cart Portal, and Admin', () => {
       </ThemeProvider>,
     );
 
-    expect(screen.getByRole('heading', { level: 1, name: /page not found/i })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: /page not found/i })).toBeTruthy();
   });
 });

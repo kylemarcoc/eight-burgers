@@ -1,8 +1,10 @@
-import { useShop } from '@/shared/shop/shop-context';
+import { useShopActions, useShopCartOpen, useShopCartSummary } from '@/shared/store/useShopStore';
 import { formatPhp } from '@/shared/shop/shop-storage';
 
 export function FloatingCartButton() {
-  const { cartSummary, isCartOpen, setCartOpen } = useShop();
+  const cartSummary = useShopCartSummary();
+  const isCartOpen = useShopCartOpen();
+  const { setCartOpen } = useShopActions();
 
   const label =
     cartSummary.totalItems > 0

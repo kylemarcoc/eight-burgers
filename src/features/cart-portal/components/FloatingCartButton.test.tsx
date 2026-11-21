@@ -1,11 +1,11 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ShopProvider } from '@/shared/shop/ShopProvider';
-import { useShop } from '@/shared/shop/shop-context';
+import { resetShopStore, useShopActions, useShopCartOpen } from '@/shared/store/useShopStore';
 import { FloatingCartButton } from './FloatingCartButton';
 
 function FloatingButtonHarness() {
-  const { addToCart, isCartOpen } = useShop();
+  const { addToCart } = useShopActions();
+  const isCartOpen = useShopCartOpen();
   return (
     <div>
       <button type="button" onClick={() => addToCart('burger-deluxe')}>
@@ -20,15 +20,12 @@ function FloatingButtonHarness() {
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  resetShopStore();
 });
 
 describe('FloatingCartButton', () => {
   it('announces empty and populated cart totals and toggles cart open state', () => {
-    render(
-      <ShopProvider>
-        <FloatingButtonHarness />
-      </ShopProvider>,
-    );
+    render(<FloatingButtonHarness />);
 
     const emptyButton = screen.getByRole('button', { name: 'Open cart (empty)' });
     expect(emptyButton.getAttribute('aria-expanded')).toBe('false');

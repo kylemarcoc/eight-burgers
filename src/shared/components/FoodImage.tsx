@@ -6,6 +6,8 @@ type FoodImageProps = {
   alt: string;
   category?: MenuCategory;
   badgeText?: string;
+  loading?: 'eager' | 'lazy';
+  fetchPriority?: 'high' | 'low' | 'auto';
   className?: string;
 };
 
@@ -83,6 +85,8 @@ export function FoodImage({
   alt,
   category = 'classic-burgers',
   badgeText,
+  loading = 'lazy',
+  fetchPriority,
   className = '',
 }: FoodImageProps) {
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
@@ -108,7 +112,8 @@ export function FoodImage({
     <img
       src={src}
       alt={alt}
-      loading="lazy"
+      loading={loading}
+      fetchPriority={fetchPriority}
       decoding="async"
       onError={() => setFailedSrc(src)}
       className={`object-cover ${className}`}

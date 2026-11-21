@@ -1,23 +1,72 @@
+import { Component, Suspense, lazy, type ReactNode } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { KioskShell } from '@/app/components/KioskShell';
-import { AdminPage } from '@/routes/AdminPage';
 import { HomePage } from '@/routes/HomePage';
-import { NotFoundPage } from '@/routes/NotFoundPage';
-import { ShopProvider } from '@/shared/shop/ShopProvider';
+
+const AdminPage = lazy(() =>
+  import('@/routes/AdminPage').then((module) => ({ default: module.AdminPage })),
+);
+const NotFoundPage = lazy(() =>
+  import('@/routes/NotFoundPage').then((module) => ({ default: module.NotFoundPage })),
+);
+
+class RouteErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  override state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  override render() {
+    if (this.state.hasError) {
+      return (
+        <div
+          role="alert"
+          className="mx-auto flex min-h-[50vh] max-w-md flex-col items-center justify-center gap-3 text-center"
+        >
+          <p className="text-base font-semibold text-ui-text">
+            Unable to load this page after an update.
+          </p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="rounded-xl bg-ui-accent px-4 py-2 text-sm font-semibold text-ui-on-accent hover:bg-ui-accent-hover"
+          >
+            Reload page
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function RouteFallback() {
+  return (
+    <div
+      role="status"
+      className="flex min-h-[50vh] items-center justify-center text-sm text-ui-text-muted"
+    >
+      Loading view…
+    </div>
+  );
+}
 
 function AppRouter() {
   return (
-    <ShopProvider>
-      <BrowserRouter basename={import.meta.env.BASE_URL}>
-        <Routes>
-          <Route element={<KioskShell />}>
-            <Route index element={<HomePage />} />
-            <Route path="/admin" element={<AdminPage />} />
-            <Route path="*" element={<NotFoundPage />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </ShopProvider>
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
+      <RouteErrorBoundary>
+        <Suspense fallback={<RouteFallback />}>
+          <Routes>
+            <Route element={<KioskShell />}>
+              <Route index element={<HomePage />} />
+              <Route path="/admin" element={<AdminPage />} />
+              <Route path="*" element={<NotFoundPage />} />
+            </Route>
+          </Routes>
+        </Suspense>
+      </RouteErrorBoundary>
+    </BrowserRouter>
   );
 }
 

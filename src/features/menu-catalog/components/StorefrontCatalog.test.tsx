@@ -1,20 +1,17 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ShopProvider } from '@/shared/shop/ShopProvider';
+import { resetShopStore } from '@/shared/store/useShopStore';
 import { StorefrontCatalog } from './StorefrontCatalog';
 
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  resetShopStore();
 });
 
 describe('StorefrontCatalog', () => {
   it('supports keyboard tablist navigation and updates visible menu items', () => {
-    render(
-      <ShopProvider>
-        <StorefrontCatalog />
-      </ShopProvider>,
-    );
+    render(<StorefrontCatalog />);
 
     const allTab = screen.getByRole('tab', { name: /all menu/i });
     allTab.focus();
@@ -35,11 +32,7 @@ describe('StorefrontCatalog', () => {
   });
 
   it('filters by search, clears search, and resets empty filters', () => {
-    render(
-      <ShopProvider>
-        <StorefrontCatalog />
-      </ShopProvider>,
-    );
+    render(<StorefrontCatalog />);
 
     const searchInput = screen.getByLabelText(/search menu items/i);
     fireEvent.change(searchInput, { target: { value: 'nachos' } });
@@ -57,14 +50,29 @@ describe('StorefrontCatalog', () => {
     expect(screen.getByRole('heading', { level: 3, name: 'Burger Deluxe' })).toBeTruthy();
   });
 
-  it('allows quick-adding featured highlights from the hero', () => {
-    render(
-      <ShopProvider>
-        <StorefrontCatalog />
-      </ShopProvider>,
-    );
+  it('prioritizes in-page ordering CTA and keeps Foodpanda and Facebook links subtle', () => {
+    render(<StorefrontCatalog />);
+
+    const orderLink = screen.getByRole('link', { name: /order from menu/i });
+    expect(orderLink.getAttribute('href')).toBe('#menu-heading');
+
+    const foodpandaLink = screen.getByRole('link', { name: 'Foodpanda' });
+    const facebookLink = screen.getByRole('link', { name: 'Facebook' });
+    expect(foodpandaLink.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(facebookLink.getAttribute('rel')).toBe('noopener noreferrer');
 
     fireEvent.click(screen.getByRole('button', { name: /quick add burger deluxe/i }));
     expect(screen.getByRole('button', { name: /review order \(1 · ₱148\)/i })).toBeTruthy();
+  });
+
+  it('loads the hero showcase image eagerly with high priority while keeping menu cards lazy', () => {
+    render(<StorefrontCatalog />);
+
+    const heroImage = screen.getByAltText('8Burgers Chino Roces Avenue signature burger showcase');
+    expect(heroImage.getAttribute('loading')).toBe('eager');
+    expect(heroImage.getAttribute('fetchpriority')).toBe('high');
+
+    const cardImage = screen.getByAltText('Mini Cheese Burger Deluxe');
+    expect(cardImage.getAttribute('loading')).toBe('lazy');
   });
 });

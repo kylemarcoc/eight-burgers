@@ -1,11 +1,11 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ShopProvider } from '@/shared/shop/ShopProvider';
-import { useShop } from '@/shared/shop/shop-context';
+import { resetShopStore, useShopActions, useShopCartOpen } from '@/shared/store/useShopStore';
 import { CartPortalDrawer } from './CartPortalDrawer';
 
 function CartDrawerTestHarness({ initialItemId = 'burger-deluxe' }: { initialItemId?: string }) {
-  const { addToCart, setCartOpen, isCartOpen } = useShop();
+  const { addToCart, setCartOpen } = useShopActions();
+  const isCartOpen = useShopCartOpen();
   return (
     <div>
       <button type="button" onClick={() => addToCart(initialItemId)}>
@@ -23,16 +23,13 @@ function CartDrawerTestHarness({ initialItemId = 'burger-deluxe' }: { initialIte
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  resetShopStore();
   document.body.style.overflow = '';
 });
 
 describe('CartPortalDrawer', () => {
   it('moves focus into the modal on open, traps Tab/Shift+Tab, and restores focus on Escape', () => {
-    render(
-      <ShopProvider>
-        <CartDrawerTestHarness />
-      </ShopProvider>,
-    );
+    render(<CartDrawerTestHarness />);
 
     const openTrigger = screen.getByRole('button', { name: 'Open Drawer' });
     openTrigger.focus();
@@ -58,11 +55,7 @@ describe('CartPortalDrawer', () => {
   });
 
   it('requires confirmation before clearing the cart', () => {
-    render(
-      <ShopProvider>
-        <CartDrawerTestHarness />
-      </ShopProvider>,
-    );
+    render(<CartDrawerTestHarness />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
@@ -81,11 +74,7 @@ describe('CartPortalDrawer', () => {
   });
 
   it('wires validation errors with aria-invalid and aria-describedby and preserves input', () => {
-    render(
-      <ShopProvider>
-        <CartDrawerTestHarness />
-      </ShopProvider>,
-    );
+    render(<CartDrawerTestHarness />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
@@ -119,11 +108,7 @@ describe('CartPortalDrawer', () => {
   });
 
   it('places an order and dismisses the confirmation receipt cleanly', () => {
-    render(
-      <ShopProvider>
-        <CartDrawerTestHarness />
-      </ShopProvider>,
-    );
+    render(<CartDrawerTestHarness />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));

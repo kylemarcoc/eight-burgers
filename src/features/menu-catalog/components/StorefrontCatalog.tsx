@@ -1,7 +1,7 @@
-import { useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { FoodImage } from '@/shared/components/FoodImage';
 import { MENU_CATEGORIES, STORE_METADATA } from '@/shared/shop/eight-burgers-seed';
-import { useShop } from '@/shared/shop/shop-context';
+import { useShopActions, useShopCartSummary, useShopMenu } from '@/shared/store/useShopStore';
 import { formatPhp } from '@/shared/shop/shop-storage';
 import type { MenuAddonId, MenuCategory } from '@/shared/shop/types';
 import { MenuCard } from './MenuCard';
@@ -14,7 +14,9 @@ const CATEGORY_TABS: readonly { id: CategoryFilter; label: string }[] = [
 ];
 
 export function StorefrontCatalog() {
-  const { menu, cartSummary, addToCart, setCartOpen } = useShop();
+  const menu = useShopMenu();
+  const cartSummary = useShopCartSummary();
+  const { addToCart, setCartOpen } = useShopActions();
   const [selectedCategory, setSelectedCategory] = useState<CategoryFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [availableOnly, setAvailableOnly] = useState(false);
@@ -75,9 +77,12 @@ export function StorefrontCatalog() {
     [menu],
   );
 
-  function handleAddToCart(itemId: string, addonIds: MenuAddonId[]) {
-    addToCart(itemId, { addonIds });
-  }
+  const handleAddToCart = useCallback(
+    (itemId: string, addonIds: MenuAddonId[]) => {
+      addToCart(itemId, { addonIds });
+    },
+    [addToCart],
+  );
 
   function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, currentIndex: number) {
     let targetIndex: number | null = null;
@@ -146,43 +151,59 @@ export function StorefrontCatalog() {
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-3 text-sm">
-                <a
-                  href={STORE_METADATA.foodpandaUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center rounded-lg border border-ui-border bg-ui-surface px-3.5 py-2 font-medium text-ui-text hover:bg-ui-surface-muted"
-                >
-                  Foodpanda Listing
-                </a>
-                <a
-                  href={STORE_METADATA.facebookUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center rounded-lg border border-ui-border bg-ui-surface px-3.5 py-2 font-medium text-ui-text hover:bg-ui-surface-muted"
-                >
-                  Facebook Page
-                </a>
-                {cartSummary.totalItems > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => setCartOpen(true)}
-                    className="inline-flex items-center rounded-lg bg-ui-accent px-4 py-2 font-semibold text-ui-on-accent tabular-nums hover:bg-ui-accent-hover"
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-3 text-sm">
+                  {cartSummary.totalItems > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setCartOpen(true)}
+                      className="inline-flex items-center rounded-xl bg-ui-accent px-4 py-2.5 font-semibold text-ui-on-accent tabular-nums hover:bg-ui-accent-hover"
+                    >
+                      Review Order ({cartSummary.totalItems} · {formatPhp(cartSummary.subtotalPhp)})
+                    </button>
+                  ) : (
+                    <a
+                      href="#menu-heading"
+                      className="inline-flex items-center rounded-xl bg-ui-accent px-4 py-2.5 font-semibold text-ui-on-accent hover:bg-ui-accent-hover"
+                    >
+                      Order from Menu
+                    </a>
+                  )}
+                </div>
+
+                <p className="text-xs text-ui-text-muted">
+                  Also on{' '}
+                  <a
+                    href={STORE_METADATA.foodpandaUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline decoration-ui-border underline-offset-4 hover:text-ui-text"
                   >
-                    Review Order ({cartSummary.totalItems} · {formatPhp(cartSummary.subtotalPhp)})
-                  </button>
-                ) : null}
+                    Foodpanda
+                  </a>
+                  {' · '}
+                  <a
+                    href={STORE_METADATA.facebookUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline decoration-ui-border underline-offset-4 hover:text-ui-text"
+                  >
+                    Facebook
+                  </a>
+                </p>
               </div>
             </div>
           </div>
 
           <div className="relative flex flex-col justify-between border-t border-ui-border bg-ui-surface-muted lg:col-span-5 lg:border-t-0 lg:border-l">
-            <div className="relative aspect-[16/10] w-full flex-1 overflow-hidden lg:aspect-auto">
+            <div className="relative aspect-[16/10] w-full flex-1 overflow-hidden lg:aspect-auto lg:min-h-[260px]">
               <FoodImage
                 src={STORE_METADATA.bannerImageUrl}
                 alt="8Burgers Chino Roces Avenue signature burger showcase"
                 category="classic-burgers"
                 badgeText="8Burgers Chino Roces"
+                loading="eager"
+                fetchPriority="high"
                 className="h-full w-full"
               />
             </div>

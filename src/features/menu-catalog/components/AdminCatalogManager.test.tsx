@@ -1,20 +1,17 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ShopProvider } from '@/shared/shop/ShopProvider';
+import { resetShopStore } from '@/shared/store/useShopStore';
 import { AdminCatalogManager } from './AdminCatalogManager';
 
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  resetShopStore();
 });
 
 describe('AdminCatalogManager', () => {
   it('validates fields with aria-invalid/aria-describedby and rejects unsafe image URLs', () => {
-    render(
-      <ShopProvider>
-        <AdminCatalogManager />
-      </ShopProvider>,
-    );
+    render(<AdminCatalogManager />);
 
     const nameInput = screen.getByLabelText(/item name/i);
     const priceInput = screen.getByLabelText(/price \(₱\)/i);
@@ -36,11 +33,7 @@ describe('AdminCatalogManager', () => {
   });
 
   it('edits listings, requires confirmation before deleting, and resets empty filters', () => {
-    render(
-      <ShopProvider>
-        <AdminCatalogManager />
-      </ShopProvider>,
-    );
+    render(<AdminCatalogManager />);
 
     const editButtons = screen.getAllByRole('button', { name: /^edit$/i });
     const firstEditButton = editButtons[0];
@@ -68,11 +61,7 @@ describe('AdminCatalogManager', () => {
   });
 
   it('requires confirmation before restoring the default menu', () => {
-    render(
-      <ShopProvider>
-        <AdminCatalogManager />
-      </ShopProvider>,
-    );
+    render(<AdminCatalogManager />);
 
     fireEvent.click(screen.getByRole('button', { name: /delete burger deluxe/i }));
     fireEvent.click(screen.getByRole('button', { name: /confirm delete burger deluxe/i }));
