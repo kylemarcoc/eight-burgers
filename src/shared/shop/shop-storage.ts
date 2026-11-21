@@ -51,6 +51,30 @@ export function formatPhp(amount: number): string {
   return `₱${safe.toLocaleString('en-PH')}`;
 }
 
+export function formatOrderShareText(order: OrderRecord): string {
+  const fulfillmentLabel =
+    order.fulfillment === 'kiosk-pickup' ? 'Chino Roces Pickup' : 'Makati Delivery';
+  const lines = [
+    `8Burgers Order ${order.queueNumber}`,
+    `Guest: ${order.customerName}`,
+    ...(order.contactNumber ? [`Mobile: ${order.contactNumber}`] : []),
+    `Fulfillment: ${fulfillmentLabel}`,
+    ...(order.addressOrNotes ? [`Details: ${order.addressOrNotes}`] : []),
+    `Payment: ${order.paymentMethod.toUpperCase()}`,
+    '',
+    'Items:',
+    ...order.lines.map((line) => {
+      const addons = line.addonNames.length > 0 ? ` (+ ${line.addonNames.join(', ')})` : '';
+      return `- ${line.quantity}x ${line.name}${addons} — ${formatPhp(line.lineTotalPhp)}`;
+    }),
+    '',
+    `Subtotal: ${formatPhp(order.subtotalPhp)}`,
+    ...(order.deliveryFeePhp > 0 ? [`Delivery fee: ${formatPhp(order.deliveryFeePhp)}`] : []),
+    `Total Due: ${formatPhp(order.totalPhp)}`,
+  ];
+  return lines.join('\n');
+}
+
 export function normalizeAddonIds(addonIds?: readonly MenuAddonId[]): MenuAddonId[] {
   if (!addonIds || addonIds.length === 0) return [];
   const unique = new Set<MenuAddonId>();

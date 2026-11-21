@@ -8,6 +8,7 @@ export function KioskShell() {
   const { theme, toggleTheme } = useTheme();
   const cartSummary = useShopCartSummary();
   const { setCartOpen } = useShopActions();
+  const showAdminNav = import.meta.env.VITE_HIDE_PUBLIC_ADMIN !== 'true';
 
   return (
     <div className="min-h-screen bg-ui-canvas text-ui-text">
@@ -39,18 +40,20 @@ export function KioskShell() {
             >
               Menu
             </NavLink>
-            <NavLink
-              to="/admin"
-              className={({ isActive }) =>
-                `rounded-xl px-3.5 py-2 text-sm font-semibold transition-colors ${
-                  isActive
-                    ? 'bg-ui-accent text-ui-on-accent'
-                    : 'text-ui-text hover:bg-ui-surface-muted'
-                }`
-              }
-            >
-              Owner Admin
-            </NavLink>
+            {showAdminNav ? (
+              <NavLink
+                to="/admin"
+                className={({ isActive }) =>
+                  `rounded-xl px-3.5 py-2 text-sm font-semibold transition-colors ${
+                    isActive
+                      ? 'bg-ui-accent text-ui-on-accent'
+                      : 'text-ui-text hover:bg-ui-surface-muted'
+                  }`
+                }
+              >
+                Owner Admin
+              </NavLink>
+            ) : null}
             <button
               type="button"
               onClick={() => setCartOpen(true)}

@@ -364,14 +364,8 @@ describe('useShopStore cart, order, and catalog actions', () => {
   });
 
   it('clears the cart, dismisses the receipt without deleting order history, and prunes custom items on catalog reset', () => {
-    const {
-      addToCart,
-      clearCart,
-      placeOrder,
-      dismissLastOrder,
-      createMenuItem,
-      resetCatalog,
-    } = useShopStore.getState().actions;
+    const { addToCart, clearCart, placeOrder, dismissLastOrder, createMenuItem, resetCatalog } =
+      useShopStore.getState().actions;
 
     addToCart('burger-deluxe');
     expect(useShopStore.getState().cartSummary.totalItems).toBe(1);

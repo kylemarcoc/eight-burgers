@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resetShopStore, useShopActions, useShopCartOpen } from '@/shared/store/useShopStore';
 import { CartPortalDrawer } from './CartPortalDrawer';
 
@@ -25,6 +25,7 @@ afterEach(() => {
   window.localStorage.clear();
   resetShopStore();
   document.body.style.overflow = '';
+  vi.restoreAllMocks();
 });
 
 describe('CartPortalDrawer', () => {
@@ -107,7 +108,13 @@ describe('CartPortalDrawer', () => {
     expect((nameInput as HTMLInputElement).value).toBe('Marco');
   });
 
-  it('places an order and dismisses the confirmation receipt cleanly', () => {
+  it('places an order, copies order summary / provides SMS & Facebook handoff, and dismisses the receipt cleanly', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+
     render(<CartDrawerTestHarness />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
@@ -121,10 +128,28 @@ describe('CartPortalDrawer', () => {
     fireEvent.change(within(dialog).getByLabelText(/makati delivery address/i), {
       target: { value: 'Chino Roces Tower' },
     });
+    fireEvent.change(within(dialog).getByLabelText(/payment method/i), {
+      target: { value: 'gcash' },
+    });
     fireEvent.click(within(dialog).getByRole('button', { name: /buy order · ₱183/i }));
 
     expect(within(dialog).getByText('Order Confirmed')).toBeTruthy();
     expect(within(dialog).getByText('#8B-101')).toBeTruthy();
+    expect(within(dialog).getByText('Total Due')).toBeTruthy();
+    expect(within(dialog).getByText(/confirm gcash payment details/i)).toBeTruthy();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /copy order summary/i }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledOnce();
+      expect(within(dialog).getByRole('button', { name: /order summary copied/i })).toBeTruthy();
+    });
+    expect(writeText.mock.calls[0]?.[0]).toContain('8Burgers Order #8B-101');
+    expect(writeText.mock.calls[0]?.[0]).toContain('Total Due: ₱183');
+
+    const smsLink = within(dialog).getByRole('link', { name: /send via sms/i });
+    expect(smsLink.getAttribute('href')).toContain('sms:09165205707?body=');
+    const fbLink = within(dialog).getByRole('link', { name: /open facebook page/i });
+    expect(fbLink.getAttribute('href')).toContain('facebook.com');
 
     fireEvent.click(within(dialog).getByRole('button', { name: /done · back to menu/i }));
     expect(screen.queryByRole('dialog')).toBeNull();

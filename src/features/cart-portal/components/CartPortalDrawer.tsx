@@ -8,8 +8,17 @@ import {
   useShopCartSummary,
   useShopLastPlacedOrder,
 } from '@/shared/store/useShopStore';
-import { MAKATI_DELIVERY_FEE_PHP, formatPhp } from '@/shared/shop/shop-storage';
+import {
+  MAKATI_DELIVERY_FEE_PHP,
+  formatOrderShareText,
+  formatPhp,
+} from '@/shared/shop/shop-storage';
 import type { FulfillmentMode, PaymentMethod } from '@/shared/shop/types';
+
+function buildSmsOrderHref(contact: string, body: string): string {
+  const digits = contact.replace(/[^0-9+]/g, '');
+  return `sms:${digits}?body=${encodeURIComponent(body)}`;
+}
 
 type CheckoutFieldErrors = {
   customerName?: string;
@@ -45,6 +54,7 @@ export function CartPortalDrawer() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [fieldErrors, setFieldErrors] = useState<CheckoutFieldErrors>({});
   const [confirmClear, setConfirmClear] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   const titleId = useId();
   const nameErrorId = useId();
@@ -60,6 +70,7 @@ export function CartPortalDrawer() {
 
   const handleClose = useCallback(() => {
     setConfirmClear(false);
+    setCopyStatus('idle');
     setCartOpen(false);
   }, [setCartOpen]);
 
@@ -182,6 +193,7 @@ export function CartPortalDrawer() {
 
     setFieldErrors({});
     setConfirmClear(false);
+    setCopyStatus('idle');
     placeOrder({
       customerName,
       contactNumber,
@@ -301,14 +313,69 @@ export function CartPortalDrawer() {
                   </div>
                 ) : null}
                 <div className="flex justify-between pt-1 text-base font-bold text-ui-text">
-                  <span>Total Paid</span>
+                  <span>Total Due</span>
                   <span className="text-ui-accent">{formatPhp(lastPlacedOrder.totalPhp)}</span>
+                </div>
+              </div>
+
+              {lastPlacedOrder.paymentMethod !== 'cash' ? (
+                <p className="rounded-xl border border-ui-border bg-ui-surface px-3 py-2 text-xs text-ui-text-muted">
+                  Confirm {lastPlacedOrder.paymentMethod.toUpperCase()} payment details with the
+                  Chino Roces counter ({STORE_METADATA.contact}) when sending your order.
+                </p>
+              ) : null}
+
+              <div className="space-y-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const summaryText = formatOrderShareText(lastPlacedOrder);
+                    if (
+                      !navigator.clipboard ||
+                      typeof navigator.clipboard.writeText !== 'function'
+                    ) {
+                      setCopyStatus('failed');
+                      return;
+                    }
+                    void navigator.clipboard
+                      .writeText(summaryText)
+                      .then(() => setCopyStatus('copied'))
+                      .catch(() => setCopyStatus('failed'));
+                  }}
+                  className="w-full rounded-xl border border-ui-border bg-ui-surface px-4 py-2 text-sm font-semibold text-ui-text hover:bg-ui-canvas"
+                >
+                  {copyStatus === 'copied'
+                    ? 'Order Summary Copied'
+                    : copyStatus === 'failed'
+                      ? 'Copy Unavailable — Use SMS or Messenger Below'
+                      : 'Copy Order Summary'}
+                </button>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <a
+                    href={buildSmsOrderHref(
+                      STORE_METADATA.contact,
+                      formatOrderShareText(lastPlacedOrder),
+                    )}
+                    className="inline-flex items-center justify-center rounded-xl border border-ui-border bg-ui-surface px-3 py-2 text-xs font-semibold text-ui-text hover:bg-ui-canvas"
+                  >
+                    Send via SMS
+                  </a>
+                  <a
+                    href={STORE_METADATA.facebookUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center rounded-xl border border-ui-border bg-ui-surface px-3 py-2 text-xs font-semibold text-ui-text hover:bg-ui-canvas"
+                  >
+                    Open Facebook Page
+                  </a>
                 </div>
               </div>
 
               <button
                 type="button"
                 onClick={() => {
+                  setCopyStatus('idle');
                   dismissLastOrder();
                   handleClose();
                 }}
@@ -459,6 +526,7 @@ export function CartPortalDrawer() {
                     <input
                       ref={nameInputRef}
                       id="checkout-name"
+                      name="customerName"
                       type="text"
                       value={customerName}
                       aria-invalid={Boolean(fieldErrors.customerName)}
@@ -493,6 +561,7 @@ export function CartPortalDrawer() {
                     </label>
                     <input
                       id="checkout-contact"
+                      name="contactNumber"
                       type="tel"
                       value={contactNumber}
                       onChange={(event) => setContactNumber(event.target.value)}
@@ -562,6 +631,7 @@ export function CartPortalDrawer() {
                   <input
                     ref={notesInputRef}
                     id="checkout-notes"
+                    name="addressOrNotes"
                     type="text"
                     value={addressOrNotes}
                     aria-invalid={Boolean(fieldErrors.addressOrNotes)}
@@ -601,6 +671,7 @@ export function CartPortalDrawer() {
                   </label>
                   <select
                     id="checkout-payment"
+                    name="paymentMethod"
                     value={paymentMethod}
                     onChange={(event) => setPaymentMethod(event.target.value as PaymentMethod)}
                     className="mt-1 w-full rounded-xl border border-ui-border bg-ui-canvas px-3 py-2 text-sm text-ui-text"

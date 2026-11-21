@@ -3,6 +3,7 @@ import {
   buildCartLineId,
   calculateCartDetails,
   createInitialShopState,
+  formatOrderShareText,
   formatPhp,
   sanitizePersistedShopPayload,
 } from './shop-storage';
@@ -51,5 +52,40 @@ describe('shop storage helpers and cart calculations', () => {
     ]);
     expect(sanitized.orders).toEqual([]);
     expect(sanitized.nextQueueSeq).toBe(defaults.nextQueueSeq);
+  });
+
+  it('formats a shareable order summary for SMS and Messenger handoff', () => {
+    const text = formatOrderShareText({
+      id: 'ord-101',
+      queueNumber: '#8B-101',
+      customerName: 'Marco',
+      contactNumber: '09171234567',
+      fulfillment: 'makati-delivery',
+      addressOrNotes: 'Eton WestEnd Tower 1',
+      paymentMethod: 'gcash',
+      lines: [
+        {
+          lineId: 'burger-deluxe__bacon',
+          itemId: 'burger-deluxe',
+          name: 'Burger Deluxe',
+          unitPricePhp: 148,
+          addonNames: ['Crispy Bacon'],
+          addonsPricePhp: 20,
+          quantity: 2,
+          lineTotalPhp: 336,
+        },
+      ],
+      subtotalPhp: 336,
+      deliveryFeePhp: 35,
+      totalPhp: 371,
+      status: 'received',
+      createdAtIso: '2026-11-21T10:00:00.000Z',
+    });
+
+    expect(text).toContain('8Burgers Order #8B-101');
+    expect(text).toContain('Guest: Marco');
+    expect(text).toContain('2x Burger Deluxe (+ Crispy Bacon) — ₱336');
+    expect(text).toContain('Delivery fee: ₱35');
+    expect(text).toContain('Total Due: ₱371');
   });
 });
