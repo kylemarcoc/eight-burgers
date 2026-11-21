@@ -642,7 +642,7 @@ export function AdminCatalogManager() {
                       isEditingItem ? 'border-ui-accent' : 'border-ui-border'
                     }`}
                   >
-                    <div className="flex items-center gap-3.5">
+                    <div className="flex min-w-0 flex-1 items-center gap-3.5">
                       <div className="h-16 w-20 shrink-0 overflow-hidden rounded-xl border border-ui-border bg-ui-surface-muted">
                         <FoodImage
                           src={item.imageUrl}
@@ -675,11 +675,11 @@ export function AdminCatalogManager() {
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:flex-nowrap">
                       <button
                         type="button"
                         onClick={() => toggleItemAvailability(item.id)}
-                        className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                        className={`whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
                           item.available
                             ? 'border-ui-border bg-ui-surface-muted text-ui-text hover:bg-ui-canvas'
                             : 'border-red-500/40 bg-red-500/10 text-ui-error'
@@ -690,7 +690,7 @@ export function AdminCatalogManager() {
                       <button
                         type="button"
                         onClick={() => startEditing(item)}
-                        className="rounded-lg border border-ui-border bg-ui-surface px-3 py-1.5 text-xs font-semibold text-ui-text hover:bg-ui-surface-muted"
+                        className="whitespace-nowrap rounded-lg border border-ui-border bg-ui-surface px-3 py-1.5 text-xs font-semibold text-ui-text hover:bg-ui-surface-muted"
                       >
                         Edit
                       </button>
@@ -705,7 +705,7 @@ export function AdminCatalogManager() {
                               setConfirmDeleteId(null);
                               setStatusBanner(`Removed "${item.name}" from menu.`);
                             }}
-                            className="rounded-lg bg-ui-error px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+                            className="whitespace-nowrap rounded-lg bg-ui-error px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
                           >
                             Confirm delete
                           </button>
@@ -713,7 +713,7 @@ export function AdminCatalogManager() {
                             type="button"
                             aria-label={`Cancel delete ${item.name}`}
                             onClick={() => setConfirmDeleteId(null)}
-                            className="rounded-lg border border-ui-border bg-ui-surface px-2.5 py-1.5 text-xs font-medium text-ui-text hover:bg-ui-surface-muted"
+                            className="whitespace-nowrap rounded-lg border border-ui-border bg-ui-surface px-2.5 py-1.5 text-xs font-medium text-ui-text hover:bg-ui-surface-muted"
                           >
                             Cancel
                           </button>
@@ -723,7 +723,7 @@ export function AdminCatalogManager() {
                           type="button"
                           aria-label={`Delete ${item.name}`}
                           onClick={() => setConfirmDeleteId(item.id)}
-                          className="rounded-lg border border-ui-border bg-ui-surface px-3 py-1.5 text-xs font-semibold text-ui-error hover:bg-ui-surface-muted"
+                          className="whitespace-nowrap rounded-lg border border-ui-border bg-ui-surface px-3 py-1.5 text-xs font-semibold text-ui-error hover:bg-ui-surface-muted"
                         >
                           Delete
                         </button>
