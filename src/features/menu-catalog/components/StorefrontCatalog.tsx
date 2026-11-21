@@ -127,9 +127,9 @@ export function StorefrontCatalog() {
               </h1>
 
               <p className="max-w-xl text-base leading-relaxed text-ui-text-muted">
-                Walk up beside Pickup Coffee near Eton WestEnd Square or place an order for Makati
-                delivery. Pick your burgers below, customize with cheese, bacon, or pineapple, and
-                review your bag from the floating cart button at the bottom right.
+                Walk up beside Pickup Coffee near Eton WestEnd Square or place an order for Metro
+                Manila delivery. Pick your burgers below, customize with cheese, bacon, or
+                pineapple, and review your bag from the floating cart button at the bottom right.
               </p>
             </div>
 

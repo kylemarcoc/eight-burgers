@@ -2,8 +2,14 @@ import { useId, useMemo, useRef, useState, type FormEvent } from 'react';
 import { FoodImage } from '@/shared/components/FoodImage';
 import { IMAGE_PRESETS, MENU_CATEGORIES } from '@/shared/shop/eight-burgers-seed';
 import { useShopActions, useShopMenu, useShopOrders } from '@/shared/store/useShopStore';
-import { formatPhp } from '@/shared/shop/shop-storage';
+import {
+  buildGoogleMapsPinUrl,
+  formatPhp,
+  isSafeImageUrl,
+  isValidCoordinates,
+} from '@/shared/shop/shop-storage';
 import type { MenuCategory, MenuItem, MenuItemInput, OrderStatus } from '@/shared/shop/types';
+import { AdminDeliverySettings } from './AdminDeliverySettings';
 
 const INITIAL_VISIBLE_ORDERS = 20;
 
@@ -65,18 +71,6 @@ function itemToFormState(item: MenuItem): FormState {
     featured: item.featured,
     allowAddons: item.allowAddons,
   };
-}
-
-function isSafeImageUrl(raw: string): boolean {
-  const trimmed = raw.trim();
-  if (!trimmed) return true;
-  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) return true;
-  try {
-    const parsed = new URL(trimmed);
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
-  } catch {
-    return false;
-  }
 }
 
 function formatOrderTimestamp(iso: string): string | null {
@@ -173,7 +167,7 @@ export function AdminCatalogManager() {
       nextErrors.description = 'Enter ingredients or a short description for customers.';
     }
     if (!isSafeImageUrl(trimmedImageUrl)) {
-      nextErrors.imageUrl = 'Enter a valid http:// or https:// image URL, or leave blank.';
+      nextErrors.imageUrl = 'Enter a valid https:// image URL, or leave blank.';
     }
 
     if (nextErrors.name || nextErrors.pricePhp || nextErrors.description || nextErrors.imageUrl) {
@@ -224,7 +218,8 @@ export function AdminCatalogManager() {
           </h1>
           <p className="mt-1 text-sm text-ui-text-muted">
             Add new burgers, paste updated Foodpanda or Facebook photo URLs, toggle sold-out items,
-            and track incoming orders. Changes save immediately to browser storage.
+            configure Metro Manila delivery zones, and track incoming orders. Changes save
+            immediately to browser storage.
           </p>
         </div>
 
@@ -239,7 +234,7 @@ export function AdminCatalogManager() {
                 setConfirmDeleteId(null);
                 setStatusBanner('Restored the default 8Burgers Chino Roces menu.');
               }}
-              className="rounded-xl bg-ui-error px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+              className="rounded-xl bg-ui-error px-4 py-2 text-sm font-semibold text-ui-on-error hover:opacity-90"
             >
               Confirm restore
             </button>
@@ -281,21 +276,20 @@ export function AdminCatalogManager() {
         </div>
       </section>
 
-      {statusBanner ? (
-        <div
-          role="status"
-          className="flex items-center justify-between gap-4 rounded-xl border border-ui-accent/40 bg-ui-surface px-4 py-3 text-sm font-medium text-ui-text"
-        >
-          <span>{statusBanner}</span>
-          <button
-            type="button"
-            onClick={() => setStatusBanner(null)}
-            className="text-xs text-ui-text-muted underline hover:text-ui-text"
-          >
-            Dismiss
-          </button>
-        </div>
-      ) : null}
+      <div role="status" aria-live="polite" aria-atomic="true">
+        {statusBanner ? (
+          <div className="flex items-center justify-between gap-4 rounded-xl border border-ui-accent/40 bg-ui-surface px-4 py-3 text-sm font-medium text-ui-text">
+            <span>{statusBanner}</span>
+            <button
+              type="button"
+              onClick={() => setStatusBanner(null)}
+              className="text-xs text-ui-text-muted underline hover:text-ui-text"
+            >
+              Dismiss
+            </button>
+          </div>
+        ) : null}
+      </div>
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
         <section
@@ -631,12 +625,12 @@ export function AdminCatalogManager() {
               ) : null}
             </div>
           ) : (
-            <div className="space-y-3">
+            <ul className="space-y-3">
               {filteredMenu.map((item) => {
                 const isEditingItem = editingId === item.id;
                 const isConfirmingDelete = confirmDeleteId === item.id;
                 return (
-                  <div
+                  <li
                     key={item.id}
                     className={`flex flex-col gap-3 rounded-2xl border bg-ui-surface p-3.5 sm:flex-row sm:items-center sm:justify-between ${
                       isEditingItem ? 'border-ui-accent' : 'border-ui-border'
@@ -678,17 +672,20 @@ export function AdminCatalogManager() {
                     <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:flex-nowrap">
                       <button
                         type="button"
+                        aria-pressed={item.available}
+                        aria-label={`${item.available ? 'In Stock' : 'Sold Out'} — toggle ${item.name}`}
                         onClick={() => toggleItemAvailability(item.id)}
-                        className={`whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                        className={`whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors motion-reduce:transition-none ${
                           item.available
                             ? 'border-ui-border bg-ui-surface-muted text-ui-text hover:bg-ui-canvas'
-                            : 'border-red-500/40 bg-red-500/10 text-ui-error'
+                            : 'border-ui-error/40 bg-ui-error/10 text-ui-error'
                         }`}
                       >
                         {item.available ? 'In Stock' : 'Sold Out'}
                       </button>
                       <button
                         type="button"
+                        aria-label={`Edit ${item.name}`}
                         onClick={() => startEditing(item)}
                         className="whitespace-nowrap rounded-lg border border-ui-border bg-ui-surface px-3 py-1.5 text-xs font-semibold text-ui-text hover:bg-ui-surface-muted"
                       >
@@ -705,7 +702,7 @@ export function AdminCatalogManager() {
                               setConfirmDeleteId(null);
                               setStatusBanner(`Removed "${item.name}" from menu.`);
                             }}
-                            className="whitespace-nowrap rounded-lg bg-ui-error px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+                            className="whitespace-nowrap rounded-lg bg-ui-error px-3 py-1.5 text-xs font-semibold text-ui-on-error hover:opacity-90"
                           >
                             Confirm delete
                           </button>
@@ -729,13 +726,15 @@ export function AdminCatalogManager() {
                         </button>
                       )}
                     </div>
-                  </div>
+                  </li>
                 );
               })}
-            </div>
+            </ul>
           )}
         </section>
       </div>
+
+      <AdminDeliverySettings onStatusMessage={setStatusBanner} />
 
       <section aria-labelledby="orders-ledger-heading" className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -778,7 +777,11 @@ export function AdminCatalogManager() {
                         <h3 className="text-sm font-semibold text-ui-text">{order.customerName}</h3>
                       </div>
                       <p className="mt-1 text-xs text-ui-text-muted">
-                        {order.fulfillment === 'kiosk-pickup' ? 'Kiosk Pickup' : 'Makati Delivery'}{' '}
+                        {order.fulfillment === 'kiosk-pickup'
+                          ? 'Kiosk Pickup'
+                          : order.deliveryZoneName
+                            ? `Delivery · ${order.deliveryZoneName}`
+                            : 'Delivery'}{' '}
                         · {order.paymentMethod.toUpperCase()}
                         {order.contactNumber ? ` · ${order.contactNumber}` : ''}
                         {formattedTime ? ` · ${formattedTime}` : ''}
@@ -824,15 +827,49 @@ export function AdminCatalogManager() {
                     ))}
                   </ul>
 
-                  {order.addressOrNotes ? (
-                    <p className="rounded-lg bg-ui-surface-muted px-2.5 py-1.5 text-xs text-ui-text-muted">
-                      Note: {order.addressOrNotes}
-                    </p>
+                  {order.addressOrNotes ||
+                  (order.fulfillment === 'delivery' && isValidCoordinates(order.deliveryPin)) ? (
+                    <div className="space-y-1 rounded-lg bg-ui-surface-muted px-2.5 py-1.5 text-xs text-ui-text-muted">
+                      {order.addressOrNotes ? <p>Note: {order.addressOrNotes}</p> : null}
+                      {order.fulfillment === 'delivery' && isValidCoordinates(order.deliveryPin) ? (
+                        <p className="tabular-nums">
+                          Pin:{' '}
+                          <a
+                            href={buildGoogleMapsPinUrl(order.deliveryPin)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-medium text-ui-accent underline underline-offset-2"
+                          >
+                            Google Maps
+                          </a>
+                          {typeof order.deliveryDistanceKm === 'number'
+                            ? ` (~${order.deliveryDistanceKm.toFixed(1)} km)`
+                            : ''}
+                        </p>
+                      ) : null}
+                    </div>
                   ) : null}
 
-                  <div className="flex items-center justify-between border-t border-ui-border pt-2.5 text-sm font-bold text-ui-text tabular-nums">
-                    <span>Total</span>
-                    <span className="text-ui-accent">{formatPhp(order.totalPhp)}</span>
+                  <div className="space-y-1 border-t border-ui-border pt-2.5 text-xs tabular-nums">
+                    {order.fulfillment === 'delivery' ? (
+                      <div className="flex items-center justify-between text-ui-text-muted">
+                        <span>
+                          Delivery fee
+                          {order.deliveryEtaMinutes ? ` (${order.deliveryEtaMinutes})` : ''}
+                        </span>
+                        <span>
+                          {order.deliveryFeePhp > 0
+                            ? formatPhp(order.deliveryFeePhp)
+                            : order.deliveryFeeWaived
+                              ? 'Free (min. met)'
+                              : 'Free'}
+                        </span>
+                      </div>
+                    ) : null}
+                    <div className="flex items-center justify-between text-sm font-bold text-ui-text">
+                      <span>Total</span>
+                      <span className="text-ui-accent">{formatPhp(order.totalPhp)}</span>
+                    </div>
                   </div>
                 </article>
               );

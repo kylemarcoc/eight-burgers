@@ -14,6 +14,7 @@
   --ui-on-accent: #fffbf7;
   --ui-focus-color: #c2410c;
   --ui-status-error: #b91c1c;
+  --ui-on-error: #fffbf7;
 }
 
 [data-ui-theme='dark'] {
@@ -29,6 +30,7 @@
   --ui-on-accent: #1c1917;
   --ui-focus-color: #fb923c;
   --ui-status-error: #fca5a5;
+  --ui-on-error: #1c1917;
 }
 
 @theme inline {
@@ -43,6 +45,7 @@
   --color-ui-on-accent: var(--ui-on-accent);
   --color-ui-focus: var(--ui-focus-color);
   --color-ui-error: var(--ui-status-error);
+  --color-ui-on-error: var(--ui-on-error);
 }
 
 @custom-variant dark (&:where([data-ui-theme='dark'], [data-ui-theme='dark'] *));

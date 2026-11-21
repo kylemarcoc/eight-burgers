@@ -31,7 +31,29 @@ export type CartLineItem = {
   addonIds: MenuAddonId[];
 };
 
-export type FulfillmentMode = 'kiosk-pickup' | 'makati-delivery';
+export type FulfillmentMode = 'kiosk-pickup' | 'delivery';
+
+export type GeoCoordinates = {
+  lat: number;
+  lng: number;
+};
+
+export type DeliveryZone = {
+  id: string;
+  name: string;
+  areas: string;
+  maxDistanceKm: number;
+  feePhp: number;
+  etaMinutes: string;
+  enabled: boolean;
+};
+
+export type DeliveryZoneInput = Omit<DeliveryZone, 'id'>;
+
+export type DeliveryPricingConfig = {
+  zones: DeliveryZone[];
+  freeDeliveryMinSubtotalPhp: number | null;
+};
 
 export type PaymentMethod = 'cash' | 'gcash' | 'maya';
 
@@ -52,6 +74,8 @@ export type OrderCustomerInput = {
   customerName: string;
   contactNumber: string;
   fulfillment: FulfillmentMode;
+  deliveryZoneId?: string;
+  deliveryPin?: GeoCoordinates;
   addressOrNotes: string;
   paymentMethod: PaymentMethod;
 };
@@ -62,6 +86,10 @@ export type OrderRecord = OrderCustomerInput & {
   lines: OrderLineSnapshot[];
   subtotalPhp: number;
   deliveryFeePhp: number;
+  deliveryZoneName?: string;
+  deliveryEtaMinutes?: string;
+  deliveryDistanceKm?: number;
+  deliveryFeeWaived?: boolean;
   totalPhp: number;
   status: OrderStatus;
   createdAtIso: string;

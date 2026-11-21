@@ -1,4 +1,11 @@
-import type { MenuAddon, MenuCategory, MenuItem } from './types';
+import type {
+  DeliveryPricingConfig,
+  DeliveryZone,
+  GeoCoordinates,
+  MenuAddon,
+  MenuCategory,
+  MenuItem,
+} from './types';
 
 function menuImage(filename: string): string {
   return `${import.meta.env.BASE_URL}images/menu/${filename}`;
@@ -48,6 +55,77 @@ export const MENU_ADDONS: readonly MenuAddon[] = [
   { id: 'veggies', name: 'Extra Veggies', pricePhp: 26 },
   { id: 'pineapple', name: 'Grilled Pineapple', pricePhp: 26 },
 ];
+
+export const STORE_ORIGIN_COORDS: GeoCoordinates = {
+  lat: 14.5608,
+  lng: 121.0124,
+};
+
+export const METRO_MANILA_LANDMARK_PINS: readonly {
+  label: string;
+  coords: GeoCoordinates;
+}[] = [
+  { label: 'Chino Roces', coords: { lat: 14.5608, lng: 121.0124 } },
+  { label: 'Makati CBD', coords: { lat: 14.5547, lng: 121.0244 } },
+  { label: 'BGC', coords: { lat: 14.5515, lng: 121.0503 } },
+  { label: 'Ortigas', coords: { lat: 14.5869, lng: 121.0614 } },
+  { label: 'Alabang', coords: { lat: 14.417, lng: 121.041 } },
+];
+
+export const DEFAULT_FREE_DELIVERY_MIN_SUBTOTAL_PHP = 500;
+
+export const DEFAULT_DELIVERY_ZONES: readonly DeliveryZone[] = [
+  {
+    id: 'chino-roces-san-antonio',
+    name: 'Chino Roces & San Antonio',
+    areas: 'Eton WestEnd, Yakal, Malugay, San Antonio Village',
+    maxDistanceKm: 2.5,
+    feePhp: 35,
+    etaMinutes: '15–25 min',
+    enabled: true,
+  },
+  {
+    id: 'makati-cbd-poblacion',
+    name: 'Makati CBD, Poblacion & Rockwell',
+    areas: 'Legazpi, Salcedo, Ayala Ave, Bel-Air, Rockwell, Circuit',
+    maxDistanceKm: 5,
+    feePhp: 49,
+    etaMinutes: '20–35 min',
+    enabled: true,
+  },
+  {
+    id: 'bgc-pasay-mandaluyong',
+    name: 'BGC, Pasay & Mandaluyong',
+    areas: 'Bonifacio High Street, Uptown, MOA, Newport, Greenfield, Shaw',
+    maxDistanceKm: 10,
+    feePhp: 75,
+    etaMinutes: '30–45 min',
+    enabled: true,
+  },
+  {
+    id: 'manila-ortigas-pasig',
+    name: 'Manila, Ortigas & Pasig',
+    areas: 'Malate, Ermita, Taft, Ortigas Center, Kapitolyo, San Juan',
+    maxDistanceKm: 16,
+    feePhp: 95,
+    etaMinutes: '40–55 min',
+    enabled: true,
+  },
+  {
+    id: 'qc-south-metro',
+    name: 'Quezon City, Parañaque & Alabang',
+    areas: 'Cubao, Timog, Diliman, BF Homes, Sucat, Filinvest Alabang',
+    maxDistanceKm: 25,
+    feePhp: 125,
+    etaMinutes: '50–70 min',
+    enabled: true,
+  },
+];
+
+export const DEFAULT_DELIVERY_PRICING: DeliveryPricingConfig = {
+  zones: DEFAULT_DELIVERY_ZONES.map((zone) => ({ ...zone })),
+  freeDeliveryMinSubtotalPhp: DEFAULT_FREE_DELIVERY_MIN_SUBTOTAL_PHP,
+};
 
 export const IMAGE_PRESETS: readonly { label: string; url: string }[] = [
   {

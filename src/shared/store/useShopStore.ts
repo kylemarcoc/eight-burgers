@@ -3,20 +3,28 @@ import { create } from 'zustand';
 import { persist, type PersistStorage, type StorageValue } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import {
-  MAKATI_DELIVERY_FEE_PHP,
+  MAX_PERSISTED_ORDERS,
   SHOP_STORAGE_KEY,
   buildCartLineId,
   calculateCartDetails,
+  calculateDeliveryQuote,
+  createDefaultDeliveryPricing,
   createInitialShopState,
+  isValidCoordinates,
   normalizeAddonIds,
+  normalizeFreeDeliveryThreshold,
+  sanitizeDeliveryZoneInput,
   sanitizeMenuItemInput,
   sanitizePersistedShopPayload,
   slugifyMenuId,
+  slugifyZoneId,
   type CartSummary,
   type PersistedShopPayload,
   type ShopState,
 } from '@/shared/shop/shop-storage';
 import type {
+  DeliveryPricingConfig,
+  DeliveryZoneInput,
   MenuAddonId,
   MenuItem,
   MenuItemInput,
@@ -37,6 +45,12 @@ export type ShopActions = {
   toggleItemAvailability: (id: string) => void;
   deleteMenuItem: (id: string) => void;
   resetCatalog: () => void;
+  setFreeDeliveryThreshold: (minSubtotalPhp: number | null) => void;
+  createDeliveryZone: (input: DeliveryZoneInput) => void;
+  updateDeliveryZone: (id: string, input: DeliveryZoneInput) => void;
+  toggleDeliveryZone: (id: string) => void;
+  deleteDeliveryZone: (id: string) => void;
+  resetDeliveryPricing: () => void;
   placeOrder: (customer: OrderCustomerInput) => void;
   updateOrderStatus: (orderId: string, status: OrderStatus) => void;
   dismissLastOrder: () => void;
@@ -65,6 +79,7 @@ function pickPersistedPayload(
     menu: state.menu,
     cart: state.cart,
     orders: state.orders,
+    deliveryPricing: state.deliveryPricing,
     nextQueueSeq: state.nextQueueSeq,
   };
 }
@@ -74,6 +89,7 @@ function arePersistedSlicesEqual(a: PersistedShopPayload, b: PersistedShopPayloa
     a.menu === b.menu &&
     a.cart === b.cart &&
     a.orders === b.orders &&
+    a.deliveryPricing === b.deliveryPricing &&
     a.nextQueueSeq === b.nextQueueSeq
   );
 }
@@ -253,13 +269,66 @@ export const useShopStore = create<ShopStoreState>()(
               syncCartSummary(draft);
             }),
 
+          setFreeDeliveryThreshold: (minSubtotalPhp) =>
+            set((draft) => {
+              draft.deliveryPricing.freeDeliveryMinSubtotalPhp =
+                normalizeFreeDeliveryThreshold(minSubtotalPhp);
+            }),
+
+          createDeliveryZone: (input) =>
+            set((draft) => {
+              const existingIds = new Set(draft.deliveryPricing.zones.map((zone) => zone.id));
+              const clean = sanitizeDeliveryZoneInput(input);
+              draft.deliveryPricing.zones.push({
+                id: slugifyZoneId(clean.name, existingIds),
+                ...clean,
+              });
+            }),
+
+          updateDeliveryZone: (id, input) =>
+            set((draft) => {
+              const idx = draft.deliveryPricing.zones.findIndex((zone) => zone.id === id);
+              if (idx === -1) return;
+              const clean = sanitizeDeliveryZoneInput(input);
+              draft.deliveryPricing.zones[idx] = { id, ...clean };
+            }),
+
+          toggleDeliveryZone: (id) =>
+            set((draft) => {
+              const target = draft.deliveryPricing.zones.find((zone) => zone.id === id);
+              if (!target) return;
+              target.enabled = !target.enabled;
+            }),
+
+          deleteDeliveryZone: (id) =>
+            set((draft) => {
+              draft.deliveryPricing.zones = draft.deliveryPricing.zones.filter(
+                (zone) => zone.id !== id,
+              );
+            }),
+
+          resetDeliveryPricing: () =>
+            set((draft) => {
+              draft.deliveryPricing = createDefaultDeliveryPricing();
+            }),
+
           placeOrder: (customer) =>
             set((draft) => {
               const summary = calculateCartDetails(draft.cart, draft.menu);
               if (summary.lines.length === 0) return;
 
-              const deliveryFeePhp =
-                customer.fulfillment === 'makati-delivery' ? MAKATI_DELIVERY_FEE_PHP : 0;
+              const quote = calculateDeliveryQuote({
+                fulfillment: customer.fulfillment,
+                subtotalPhp: summary.subtotalPhp,
+                deliveryPricing: draft.deliveryPricing,
+                zoneId: customer.deliveryZoneId,
+                pin: customer.deliveryPin,
+              });
+              if (customer.fulfillment === 'delivery' && (!quote.available || quote.outOfRange)) {
+                return;
+              }
+
+              const deliveryFeePhp = quote.feePhp;
               const lines: OrderLineSnapshot[] = summary.lines.map((line) => ({
                 lineId: line.lineId,
                 itemId: line.item.id,
@@ -278,6 +347,23 @@ export const useShopStore = create<ShopStoreState>()(
                 customerName: customer.customerName.trim() || 'Walk-in Guest',
                 contactNumber: customer.contactNumber.trim(),
                 fulfillment: customer.fulfillment,
+                ...(quote.zone
+                  ? {
+                      deliveryZoneId: quote.zone.id,
+                      deliveryZoneName: quote.zone.name,
+                      deliveryEtaMinutes: quote.zone.etaMinutes,
+                    }
+                  : {}),
+                ...(customer.fulfillment === 'delivery' && isValidCoordinates(customer.deliveryPin)
+                  ? {
+                      deliveryPin: {
+                        lat: customer.deliveryPin.lat,
+                        lng: customer.deliveryPin.lng,
+                      },
+                    }
+                  : {}),
+                ...(quote.distanceKm !== null ? { deliveryDistanceKm: quote.distanceKm } : {}),
+                ...(quote.isFreeDelivery ? { deliveryFeeWaived: true } : {}),
                 addressOrNotes: customer.addressOrNotes.trim(),
                 paymentMethod: customer.paymentMethod,
                 lines,
@@ -290,6 +376,9 @@ export const useShopStore = create<ShopStoreState>()(
 
               draft.cart = [];
               draft.orders.unshift(newOrder);
+              if (draft.orders.length > MAX_PERSISTED_ORDERS) {
+                draft.orders.length = MAX_PERSISTED_ORDERS;
+              }
               draft.lastPlacedOrder = newOrder;
               draft.nextQueueSeq = seq + 1;
               syncCartSummary(draft);
@@ -358,5 +447,8 @@ export const useShopLastPlacedOrder = (): OrderRecord | null =>
   useShopStore((state) => state.lastPlacedOrder);
 
 export const useShopOrders = (): readonly OrderRecord[] => useShopStore((state) => state.orders);
+
+export const useShopDeliveryPricing = (): DeliveryPricingConfig =>
+  useShopStore((state) => state.deliveryPricing);
 
 export const useShopActions = (): ShopActions => useShopStore((state) => state.actions);
