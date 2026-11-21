@@ -57,7 +57,7 @@ export function ResourceLink({ destination, label, allowedOrigins }: ResourceLin
 }
 ```
 
-Use controlled destinations for internal redirects and encoded fields for `mailto:`. Validate external responses from `unknown` using runtime schemas (such as Zod) or focused guards, and verify file size, content headers, ownership, and workflow state on the server rather than trusting browser `accept` hints. See [Coding standards](coding-standards.md#typescript), [API design](api-design.md#runtime-validation-and-errors), and [OWASP File Upload](https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html).
+Use controlled destinations for internal redirects, and sanitized targets with URL-encoded fields for `mailto:`, `sms:`, and `tel:` links. Validate external responses and hydrated Web Storage payloads from `unknown` using runtime schemas (such as Zod) or focused guards, and verify file size, content headers, ownership, and workflow state on the server rather than trusting browser `accept` hints. See [Coding standards](coding-standards.md#typescript), [API design](api-design.md#runtime-validation-and-errors), and [OWASP File Upload](https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html).
 
 ## API communication, private storage, and browser storage
 
@@ -69,8 +69,8 @@ Use controlled destinations for internal redirects and encoded fields for `mailt
 
 ## Secrets and deployment
 
-- Treat all client-delivered values, static assets, bundles, source maps, `VITE_*`, `NEXT_PUBLIC_*` variables as public. Keep private keys, service-role keys, signing keys, and connection strings out of Git, client config, logs, and artifacts.
-- Keep server credentials in runtime environment variables documented (without values) in `.env.example`, keep local `.env.local` files gitignored, and keep builds and tests runnable without live credentials.
+- Treat all client-delivered values, static assets, bundles, source maps, `VITE_*` variables as public. Public client UI visibility flags (such as hiding an admin navigation link) are UX conveniences only—never access control. Keep private keys, service-role keys, signing keys, and connection strings out of Git, client config, logs, and artifacts.
+- Keep server credentials in runtime environment variables documented (without secret values) in `.env.example`, keep local `.env.local` files gitignored (verifying local flag overrides do not inadvertently alter production builds), and keep builds and tests runnable without live credentials.
 
 See [Architecture](architecture.md#release-workflow) for release permissions and `README.md` for app-specific environment setup.
 

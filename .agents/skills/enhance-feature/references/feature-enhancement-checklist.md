@@ -5,8 +5,9 @@ Use this reference when enhancing, hardening, or cleaning up an existing feature
 ## 1. Common enhancement focus areas
 
 - **State & effect hygiene**:
-  - Eliminate duplicated sources of truth (replace state-syncing `useEffect` blocks with render-time derivation or pure selectors).
+  - Eliminate duplicated sources of truth (replace state-syncing `useEffect` blocks with render-time derivation, pure selectors, key-based resets (`key={id}`), or prop-derived fallback state such as `failedSrc === src` for resilient media fallbacks).
   - Keep `useReducer` transitions pure, deterministic, and unit-testable with discriminated union actions.
+  - Keep ephemeral UI flags out of persisted client stores (or `partialize` durable slices only), sanitize hydrated payloads from `unknown`, and handle storage quota or unavailable-storage errors cleanly.
   - Guard against race conditions: cancel superseded requests via `AbortSignal`, ignore stale async responses after reset/unmount/revision change, and revoke created object URLs on cleanup.
 - **Validation & error recovery**:
   - Parse untrusted external payloads from `unknown` at the adapter or action boundary before mapping to domain types.
@@ -14,7 +15,7 @@ Use this reference when enhancing, hardening, or cleaning up an existing feature
   - Preserve user edits on submission failures and block duplicate submits while pending.
 - **UX edge states & accessibility**:
   - Verify loading, empty, error, disabled, and confirmation states at narrow and wide viewports.
-  - Ensure visible labels, `aria-invalid`/`aria-describedby` error wiring, keyboard accessibility, focus restoration on modals, and `role="status"` / `role="alert"` announcements.
+  - Ensure visible labels, `aria-invalid`/`aria-describedby` error wiring, keyboard accessibility, focus restoration on modals, and `role="status"` / `role="alert"` announcements (including graceful fallback feedback when browser APIs such as `navigator.clipboard.writeText` are unavailable or denied).
 - **Evidence-based performance**:
   - Separate data-computation cost from DOM rendering cost before optimizing.
   - Evaluate virtualization or lazy boundaries only when measurements justify them.
@@ -23,10 +24,10 @@ Use this reference when enhancing, hardening, or cleaning up an existing feature
 
 ### Vite + React
 
-- **Routing & URL state**: Keep `BrowserRouter` base path (`import.meta.env.BASE_URL`) intact when React Router is used. Validate and default `useSearchParams` at the route boundary and preserve unrelated params on update.
+- **Routing & URL state**: Keep `BrowserRouter` base path (`import.meta.env.BASE_URL`) and subpath-safe `public/` asset URLs intact when React Router is used. Validate and default `useSearchParams` at the route boundary and preserve unrelated params on update. Avoid nested `<main>` landmarks inside layout `<Outlet />` routes.
 - **Forms & adapters**: Keep simple forms lightweight and use typed `defaultValues` + `isSubmitting` protection when using React Hook Form. Keep HTTP/realtime transport logic inside `src/features/<feature>/api/` with clean subscription teardown.
 - **Localization & theme**: If `i18next` locale resources exist, update every configured locale file together for all visible text, accessible labels, and validation/status messages. Verify light and dark theme parity when `ThemeProvider` is used.
-- **Testing**: Colocate `*.test.ts(x)` files with explicit Vitest imports (`afterEach`, `describe`, `expect`, `it`, `vi`), `afterEach(cleanup)`, fresh router/i18n/store providers per test, and injected transport doubles.
+- **Testing**: Colocate `*.test.ts(x)` files with explicit Vitest imports (`afterEach`, `describe`, `expect`, `it`, `vi`), `afterEach(cleanup)`, `async`/`findBy*` assertions for lazy-loaded routes/panels, fresh router/i18n/store providers per test, and injected transport doubles.
 
 ## 3. Oxlint & architectural boundaries (`.oxlintrc.json`)
 

@@ -56,8 +56,8 @@ Keep render functions and hooks strictly pure (following the Rules of React) so 
 
 ### Images, fonts, and motion
 
-- Serve images close to their displayed size (`srcSet`/`sizes` or `<picture>`), evaluate AVIF or WebP, and reserve dimensions or aspect ratios to prevent layout shift.
-- Use `loading="lazy"` for below-the-fold images; keep the measured LCP image eager and discoverable early. See [LCP resource loading](https://web.dev/articles/optimize-lcp).
+- Serve images close to their displayed size (`srcSet`/`sizes` or `<picture>`), evaluate AVIF or WebP, reference Vite `public/` assets via `import.meta.env.BASE_URL`, and reserve dimensions or aspect ratios to prevent layout shift.
+- Use `loading="lazy"` and `decoding="async"` for below-the-fold or non-critical images; keep the measured LCP image eager with default decoding and discoverable early. Add `<link rel="preload" as="image">` only when a trace shows delayed LCP discovery, scoped to routes that render the asset (matching `%BASE_URL%` in SPA shells, accounting for CSP nonce/hash requirements if scripted) so secondary routes do not waste bandwidth or emit unused-preload warnings. See [LCP resource loading](https://web.dev/articles/optimize-lcp).
 - Serve only used font weights and subsets (preferring WOFF2) with intentional `font-display` and fallback metrics.
 - Preserve layout dimensions, responsive behavior, and `@media (prefers-reduced-motion: reduce)` fallbacks.
 
@@ -81,7 +81,7 @@ export function DeferredSecondary({ loadingLabel }: { loadingLabel: string }) {
 }
 ```
 
-Reserve fallback space to prevent layout shifts. Vite exposes `vite:preloadError` for failed dynamic imports after deployments—offer a controlled recovery path without automatic reload loops. See [Vite load error handling](https://vite.dev/guide/build#load-error-handling).
+Reserve fallback space (`min-h-*`) to prevent layout shifts, and pair `Suspense` with a route error boundary (`role="alert"` + reload recovery). Vite exposes `vite:preloadError` for failed dynamic imports after deployments—guard any automatic reload with a single-retry `sessionStorage` flag (falling back to the error boundary if storage is unavailable) so broken assets never trigger reload loops. See [Vite load error handling](https://vite.dev/guide/build#load-error-handling).
 
 ## Virtualization
 

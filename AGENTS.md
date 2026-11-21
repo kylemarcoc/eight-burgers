@@ -32,7 +32,7 @@ Project skills live under `.agents/skills/`. Use an available skill when its wor
 
 ## Validation
 
-Run authorized checks from the repository root. Use `npm ci` for locked installs once `package-lock.json` is committed.
+Run authorized checks from the repository root. Use `npm ci` for locked installs from `package-lock.json`.
 
 - Root scripts in [package.json](package.json) include `npm run lint`, `npm run format:check`, `npm run test`, `npm run typecheck`, and `npm run build`.
 - For documentation-only edits, check changed files with `npx --no-install prettier --check <changed-files>` and verify relative links and heading fragments. Use `npm.cmd` and `npx.cmd` if PowerShell blocks `.ps1` launchers.

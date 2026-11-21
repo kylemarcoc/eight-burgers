@@ -44,11 +44,15 @@ Use `npm.cmd` and `npx.cmd` on Windows PowerShell if `.ps1` launchers are blocke
 
 Inspect configuration files directly against `docs/architecture.md`:
 
+- **Vite base paths, assets, and public env flags:**
+  - Confirm `vite.config.*` `base`, router `basename={import.meta.env.BASE_URL}` (when React Router is used), and `public/` asset URLs (`BASE_URL` / `%BASE_URL%`) stay subpath-safe.
+  - Confirm `.env.example` documents public `VITE_*` build flags and verify local `.env.local` overrides do not inadvertently alter the release bundle under test.
+
 ## 5. Run built-app release checks
 
 Execute every runnable check and explicitly record what requires manual or live-host confirmation:
 
-- **Built Vite apps:** Serve with `npm run preview` (after building). Check direct base URL load and reload, browser console/network for missing assets or base-path errors, unknown-route fallback, responsive narrow/wide layouts, theme toggling/persistence (where supported), configured locales (in localized apps), and modal keyboard navigation.
+- **Built Vite apps:** Serve with `npm run preview` (after building). Check direct base URL load and reload, secondary routes and lazy-chunk loading, browser console/network for missing `public/` assets, unused `<link rel="preload">` warnings, or base-path errors, unknown-route fallback, responsive narrow/wide layouts, theme toggling/persistence (where supported), configured locales (in localized apps), and modal keyboard navigation.
 - **Clean up temporary artifacts/processes:** Stop any started local preview/dev servers and confirm `git status` is clean of stray build artifacts.
 
 ## 6. Respect approval gates

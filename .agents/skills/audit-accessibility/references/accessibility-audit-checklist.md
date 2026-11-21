@@ -16,6 +16,7 @@ Use this reference alongside `docs/component-guidelines.md` and `docs/testing-st
 ### Semantics, landmarks, and headings
 
 - Page-level `<header>` and `<footer>` sit outside `<main>` and sectioning elements so banner and content-info landmarks expose cleanly.
+- Render only one `<main>` landmark per page—when a layout shell (such as `<Outlet />` or layout `children`) already renders `<main>`, child and fallback/not-found views must render `<section aria-labelledby="...">` or `<div>`, never a nested `<main>`.
 - Skip-to-content link targets `<main>` (or primary content container) and becomes visible on keyboard focus.
 - Multiple `<nav>` landmarks carry distinct accessible names (`aria-label` or `aria-labelledby`).
 - Interactive actions use `<button type="button">` (or explicit `type="submit"` inside forms) and navigation uses `<a href>` (or router link). No clickable `<div>`/`<span>` pretending to be controls.
@@ -27,7 +28,7 @@ Use this reference alongside `docs/component-guidelines.md` and `docs/testing-st
 - Invalid controls set `aria-invalid="true"` (or `Boolean(error)`) and link to visible error text via `aria-describedby`.
 - Icon-only buttons supply an accessible name (`aria-label`), while decorative icons set `aria-hidden="true"`.
 - Pending actions preserve the control's accessible name and expose `aria-busy="true"`.
-- Async results and status updates render in a persistent polite live region (`role="status"`, `aria-live="polite"`); urgent failures use `role="alert"`.
+- Async results, copy or action confirmations, and status updates render in a persistent polite live region (`role="status"`, `aria-live="polite"`); urgent failures use `role="alert"`.
 
 ### Keyboard navigation, focus, and modals/widgets
 

@@ -37,7 +37,7 @@ Consult `docs/` selectively:
 Inspect only the surfaces relevant to the target scope using actual source and styles:
 
 1. **Landmarks, headings, and native semantics:**
-   - Verify page landmarks (`<header>`, `<nav>`, `<main>`, `<footer>`, skip-to-content link) are properly nested (page-level header/footer outside `<main>`) and multiple `<nav>` regions have distinct accessible names.
+   - Verify page landmarks (`<header>`, `<nav>`, `<main>`, `<footer>`, skip-to-content link) are properly nested (page-level header/footer outside `<main>`, only one `<main>` per page so child and fallback/not-found routes inside a layout shell render `<section>` or `<div>`) and multiple `<nav>` regions have distinct accessible names.
    - Verify heading hierarchy is logical and meaningful (no skipped structural levels for styling).
    - Flag clickable `<div>`/`<span>` elements imitating controls; require native `<button type="button">` (or explicit `type="submit"`), `<a href>`, `<input>`, `<select>`, `<textarea>`, or `<details>/<summary>`.
 2. **Labels, forms, and error/status announcements:**

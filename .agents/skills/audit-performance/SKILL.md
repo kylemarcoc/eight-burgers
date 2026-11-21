@@ -43,7 +43,7 @@ Inspect only the surfaces relevant to the target scope using actual source and p
 1. **Bundle size, code splitting, and dependency weight:**
    - Run or inspect production build output (`dist/`) to identify large entry chunks, heavy third-party imports, wide re-export barrels on hot entry paths, or namespace icon imports (`import * as Icons`).
    - Check `package-lock.json` for duplicate large packages or heavy dependencies used for trivial operations.
-   - Verify Vite 8 custom chunking uses `build.rolldownOptions` (never deprecated `build.rollupOptions`) and keep automatic chunking unless traces show concrete caching/loading gains. In React Router declarative mode, verify deferred routes/features use module-scope `React.lazy` + `Suspense` with space-preserving fallbacks and `vite:preloadError` recovery.
+   - Verify Vite 8 custom chunking uses `build.rolldownOptions` (never deprecated `build.rollupOptions`) and keep automatic chunking unless traces show concrete caching/loading gains. In React Router declarative mode, verify deferred routes/features use module-scope `React.lazy` + `Suspense` with space-preserving fallbacks, a route error boundary, and single-retry `vite:preloadError` recovery (no reload loops).
 2. **React rendering, state subscriptions, and compiler readiness:**
    - Check for overly broad Context providers carrying fast-changing values, unindexed or broad store subscriptions (missing focused selectors or `useShallow`), or state-syncing `useEffect` chains.
    - Verify render functions and hooks remain strictly pure (compiler-ready: no prop/state mutation or `ref.current` reads/writes during render).
@@ -53,7 +53,7 @@ Inspect only the surfaces relevant to the target scope using actual source and p
    - Check whether large unbounded DOM lists should first be bounded/paginated at the API or virtualized when measurements justify it.
 4. **Network waterfalls, caching, assets, and Core Web Vitals (LCP, INP, CLS):**
    - Check for sequential `await` chains that can run concurrently with `Promise.all`, duplicate reads missing shared keys/deduplication, or missing `AbortSignal` cancellation on superseded reads.
-   - Inspect images and fonts for reserved dimensions/aspect ratios (CLS), hidden responsive artwork downloading unnecessarily, and eager loading of the LCP element.
+   - Inspect images and fonts for reserved dimensions/aspect ratios (CLS), hidden responsive artwork downloading unnecessarily, route-scoped `<link rel="preload">` hints (avoiding unused preload warnings on secondary routes), and eager loading of the LCP element.
 
 ## 4. Optimize with matched evidence (Mode B only)
 

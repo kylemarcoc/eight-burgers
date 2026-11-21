@@ -177,6 +177,8 @@ export const useSidebarOpen = () => useWorkspaceUiStore((state) => state.sidebar
 export const useSelectedPanel = () => useWorkspaceUiStore((state) => state.selectedPanel);
 ```
 
+When combining Zustand with `immer` and `persist`, compose `persist(immer(...))`, keep ephemeral UI flags in local state or a separate non-persisted store (and `partialize` only durable slices), select individual actions (or a stable `actions` object) so action-only consumers do not re-render, validate/sanitize hydrated storage payloads from `unknown` in `merge` or custom `PersistStorage`, and handle storage quota or restricted-mode errors cleanly.
+
 ## Server state
 
 Prefer **TanStack Query v5** as the default for cached client-side server state, API fetching, mutations, pagination, and cache invalidation. Add `@tanstack/react-query` only when adopting cached remote reads; features using Server Actions, polling loops, or realtime channels can keep those patterns when they fit. Keep one authoritative cache for each remote resource. See [API design](api-design.md) for transport and error contracts.
@@ -244,7 +246,7 @@ Subscribe to the smallest useful value with a focused Zustand selector (using `u
 
 ## Persistence and session boundaries
 
-Persist only non-sensitive values with a clear reload or cross-session need, such as theme or language preferences. Validate saved values and fall back when storage is unavailable. Keep credentials and sensitive data out of Web Storage and URLs. Treat frontend authentication state as UI input and enforce authorization on the server. See [Security](security.md#authentication-and-authorization).
+Persist only non-sensitive values with a clear reload or cross-session need, such as theme or language preferences. Always validate and sanitize hydrated storage payloads from `unknown` and fall back when storage is unavailable. Keep credentials, secrets, and sensitive personal data out of Web Storage and URLs; if a client-only or offline-first app persists non-sensitive local app state, document the retention scope, clearing mechanism, and limitations explicitly in `README.md`. Treat frontend authentication state as UI input and enforce authorization on the server. See [Security](security.md#authentication-and-authorization).
 
 For authenticated or session-scoped features, define what resets on logout, expiry, or account switch. Stop old-session polling and fetches, revoke temporary object URLs, cancel and remove user-scoped query cache entries, reset user-owned Zustand or Redux stores and drafts, and ignore late results from the old session. Partition private cache keys by account or session scope without including credentials.
 

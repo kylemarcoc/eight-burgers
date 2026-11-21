@@ -16,8 +16,8 @@ Use this reference alongside `docs/security.md` when auditing or hardening appli
 ### XSS, untrusted inputs, URLs, and file uploads
 
 - Untrusted strings render as JSX text; no unguarded `dangerouslySetInnerHTML`, `innerHTML`, `eval`, or `new Function`.
-- External API responses, query strings, realtime payloads, `postMessage` events, and form/action inputs are parsed from `unknown` with Zod or narrow type guards.
-- Dynamic external URLs parse via `new URL(...)`, require `https:` (no `javascript:`, `data:`, or embedded `username`/`password`), and check exact `url.origin` against an allowlist when destinations are known.
+- External API responses, hydrated Web Storage (`localStorage`/`sessionStorage`) payloads, query strings, realtime payloads, `postMessage` events, and form/action inputs are parsed from `unknown` with Zod or narrow type guards.
+- Dynamic external URLs parse via `new URL(...)`, require `https:` (no `javascript:`, `data:`, or embedded `username`/`password`), and check exact `url.origin` against an allowlist when destinations are known; URI-scheme links (`mailto:`, `sms:`, `tel:`) sanitize recipient targets (rejecting control characters or injected parameters) and URL-encode query/body fields.
 - `target="_blank"` external links include `rel="noopener noreferrer"`; `postMessage` validates `event.origin`, `event.source`, and payload schema.
 - File uploads validate size, format/headers, ownership, and workflow state on the server (never relying solely on client `accept` attributes).
 
@@ -31,8 +31,8 @@ Use this reference alongside `docs/security.md` when auditing or hardening appli
 
 ### Secrets, client exposure, and redacted diagnostics
 
-- Static Vite bundles `VITE_*` variables contain no secrets or private tokens.
-- Server credentials come from runtime environment variables documented (without values) in `.env.example`; local `.env.local` files remain gitignored, and builds/tests run without live credentials.
+- Static Vite bundles `VITE_*` variables contain no secrets or private tokens. Client-side UI visibility flags (such as hiding an admin nav link) are UX conveniences only—never access control—and must not be relied upon to guard routes or mutations.
+- Server credentials and public feature flags are documented (without secret values) in `.env.example`; local `.env.local` files remain gitignored, builds/tests run without live credentials, and release builds are checked against unintended `.env.local` overrides.
 - Console logs, server diagnostics, background job event payloads, and UI errors use an allowlist of safe fields (operation, status, category, opaque correlation ID) and omit cookies, auth headers, signed URLs, raw bodies, filenames, and private contents.
 
 ### Hosting headers and CI/CD workflows

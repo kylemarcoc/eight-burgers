@@ -15,6 +15,7 @@ Use this reference alongside `docs/performance.md` when auditing or optimizing a
 ### Bundle & entry graph
 
 - Inspect emitted Vite assets (`dist/assets/`) comparing raw and compressed sizes consistently. Confirm Vite 8 chunking uses `build.rolldownOptions` (never deprecated `build.rollupOptions`) and avoids premature manual chunk splitting.
+- Verify deferred secondary routes or heavy panels use module-scope `React.lazy`, space-preserving `<Suspense>` (`role="status"`), a route error boundary (`role="alert"` + reload recovery), and a `sessionStorage`-guarded `vite:preloadError` single-retry handler.
 - Check for namespace imports that defeat tree shaking (for example, `import * as Icons from 'lucide-react'`).
 - Check for wide re-export barrels pulled into cold entry routes or heavy optional SDKs imported statically instead of via dynamic `import()`.
 - Inspect `package-lock.json` for duplicate heavy packages or large utilities added for trivial tasks.
@@ -22,7 +23,7 @@ Use this reference alongside `docs/performance.md` when auditing or optimizing a
 ### React rendering, state scope, and React 19 primitives
 
 - Verify interaction state lives close to its consumers and fast-changing values are not placed in broad Context providers.
-- Verify Zustand/store consumers subscribe to narrow slices (`useShallow` when deriving objects/arrays) and TanStack Query consumers use `select` where appropriate.
+- Verify Zustand/store consumers subscribe to narrow slices (`useShallow` when deriving objects/arrays) and stable action selectors; keep ephemeral UI flags out of persisted stores (and `partialize` only durable slices). Verify TanStack Query consumers use `select` where appropriate.
 - Flag `useEffect` blocks that mirror props, query results, or derived calculations back into state.
 - Verify render functions and hooks stay strictly pure (compiler-ready: no mutations or `ref.current` reads/writes during render).
 - Reject speculative `memo`, `useMemo`, and `useCallback` wrappers without measured render cost or an explicit stable-identity contract.
@@ -39,7 +40,7 @@ Use this reference alongside `docs/performance.md` when auditing or optimizing a
 
 - Check for sequential independent `await` calls that can run concurrently via `Promise.all`.
 - Check for missing `AbortSignal` forwarding on cancellable reads and redundant refetches missing shared keys or cache lifetimes.
-- **LCP (<= 2.5 s):** Verify the LCP image/content is discoverable early, not `loading="lazy"`, sized appropriately (`srcSet`/`sizes` or `<picture>`), and prioritized (`fetchPriority="high"`) only when the waterfall supports it.
+- **LCP (<= 2.5 s) & images:** Verify the LCP image/content is discoverable early, not `loading="lazy"` (keeping default decoding rather than forcing `decoding="async"`), sized appropriately (`srcSet`/`sizes` or `<picture>`), and references local Vite `public/` assets via `BASE_URL`. Use `loading="lazy"` and `decoding="async"` for non-critical below-the-fold images, and apply `fetchPriority="high"` or route-scoped `<link rel="preload" as="image">` (matching `%BASE_URL%` in SPA shells and accounting for CSP if scripted) only when a trace shows delayed LCP discovery so secondary routes avoid wasted fetches and unused-preload warnings.
 - **CLS (<= 0.1):** Verify images, media, and async `Suspense` fallbacks reserve explicit dimensions or aspect ratios, and web fonts avoid layout shifts.
 - **Server & background jobs:** Measure upload, queue wait, execution, and download stages separately on representative synthetic fixtures; verify large binary transfers bypass serverless request limits via signed storage URLs.
 

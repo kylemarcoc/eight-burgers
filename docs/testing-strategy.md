@@ -39,7 +39,7 @@ it('sums line items and applies a valid percentage discount', () => {
 ### Components and hooks
 
 - Exercise interactions and assert the visible result, accessible state, or public callback. Cover loading, empty, error, and success when the component owns those states. Use roles with accessible names and labels for form controls. Scope repeated controls with `within`.
-- Use `getByRole` for present elements, `findBy*` for asynchronous appearance, and `queryBy*` for absence. Use `waitFor` for assertions without a matching query, triggering actions outside `waitFor`. [Testing Library queries](https://testing-library.com/docs/queries/about/).
+- Use `getByRole` for present elements, `findBy*` (in `async` tests) for asynchronous appearance and `React.lazy` route/panel resolution, and `queryBy*` for absence. Use `waitFor` for assertions without a matching query, triggering actions outside `waitFor`. [Testing Library queries](https://testing-library.com/docs/queries/about/).
 - Test hooks through a consuming component or `renderHook` with required providers (`wrapper`). Assert cleanup when cancellation or unmount matters. [React Testing Library API](https://testing-library.com/docs/react-testing-library/api/).
 
 ```tsx

@@ -10,7 +10,7 @@ Implement a **complete, reviewable feature slice** while preserving existing rou
 
 ## 1. Establish scope and inspect configuration
 
-1. Read `AGENTS.md` and inspect`package.json`, framework config, `.oxlintrc.json`, and nearby code before proposing changes.
+1. Read `AGENTS.md` and inspect `package.json`, framework config, `.oxlintrc.json`, and nearby code before proposing changes.
 2. Clarify underspecified requirements, data contracts, or persistence expectations before editing.
 3. Preserve deployment base paths, localization setup, theme behavior, and any documented inactive routes or sections unless explicitly asked to change them.
 

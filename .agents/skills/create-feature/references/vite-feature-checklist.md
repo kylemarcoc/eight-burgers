@@ -19,14 +19,16 @@ Check these locations before designing the slice:
 
 - Keep `BrowserRouter` `basename={import.meta.env.BASE_URL}` (when React Router is used) intact so subpath deployments continue to work.
 - Keep small, single-route UI colocated under `src/routes/<PageName>/` (or `src/app/`). Create `src/features/<kebab-case-name>/` with a public `index.ts` when the capability has independent business logic, external/realtime state, or multiple route consumers.
+- When a layout route (`<Outlet />`) already renders `<main>`, child route views (including `NotFoundPage`) must render `<section>` or `<div>` so only one `<main>` landmark exists per page.
+- When deferring secondary routes or heavy feature panels with module-scope `React.lazy`, pair `<Suspense>` (with a space-preserving `role="status"` fallback) with a route error boundary (`role="alert"` + reload recovery) and a `sessionStorage`-guarded `vite:preloadError` single-retry handler in `src/main.tsx`.
 - Compose sibling features in the owning route or `src/app/`, passing data via props and actions via callbacks.
-- Respect any static-host SPA fallback rules (such as GitHub Pages `404.html` or Vercel rewrites) configured for the app.
+- Respect any static-host SPA fallback rules (such as GitHub Pages `404.html` or Vercel rewrites) configured for the app, and reference `public/` static assets via `${import.meta.env.BASE_URL}...` (or `%BASE_URL%` in `index.html`).
 
 ## 3. State, API, and forms
 
 - **Forms**: Prefer React Hook Form + Zod for complex forms and schema validation (keep simple forms on lightweight React state). Use typed `defaultValues`, `isSubmitting` protection, accessible `aria-invalid` / `aria-describedby` messages, and preserved input on failure.
 - **External / realtime adapters**: Put transport logic in `src/features/<feature>/api/<kebab-case>.ts`. Validate incoming payloads from `unknown` with focused type guards or schemas before returning domain types, clean up subscriptions and forward `AbortSignal`, and keep credentials out of logs and public payloads. Treat `VITE_*` variables as public.
-- **Feature state**: Start with `useState`, `useReducer`, and React Context. Introduce Zustand only when shared client state across distant components or features justifies it—place feature stores in `src/features/<feature>/store/` (or `src/shared/store/` for cross-feature stores, never `src/app/store/` for feature imports), with typed actions, focused selectors, and an explicit `reset` action.
+- **Feature state**: Start with `useState`, `useReducer`, and React Context. Introduce Zustand only when shared client state justifies it—place stores in `src/features/<feature>/store/` (or `src/shared/store/` for cross-feature state, never `src/app/store/` for feature imports) with focused selectors, stable action selectors, and an explicit `reset` action. When using `persist(immer(...))`, keep ephemeral UI flags out of persisted stores (or `partialize` durable slices only), sanitize hydrated storage from `unknown`, and handle storage errors cleanly (see `docs/state-management.md`).
 - **Server state (when adopting HTTP caching)**: Prefer TanStack Query v5 (`QueryClientProvider` in `src/app/providers/`), serializable query keys, `skipToken`/`enabled` for conditional reads, `AbortSignal` forwarding, and `useMutation` for writes; never mirror remote query data into Zustand, Redux, or Context.
 - **URL state**: Use `useSearchParams` (from `react-router-dom`) when filters, search, sorting, or pagination should survive reload or Back navigation; validate/default parameters at the route and preserve unrelated parameters.
 
@@ -41,4 +43,4 @@ Check these locations before designing the slice:
 
 - Place `ComponentName.test.tsx` beside components/routes, `useSomething.test.ts(x)` beside hooks, and `<module>.test.ts` beside API/utility modules.
 - Import Vitest APIs explicitly (`afterEach`, `describe`, `expect`, `it`, `vi`), call `afterEach(cleanup)`, and use Testing Library `fireEvent` (unless `@testing-library/user-event` is declared).
-- Wrap route/hook tests in fresh router (`MemoryRouter`), i18n, and (when adopted) `QueryClient` (`retry: false` for non-retry scenarios) instances per test; reset Zustand stores, inject transport doubles, and restore mocks/stubs after each test.
+- Wrap route/hook tests in fresh router (`MemoryRouter`), i18n, and (when adopted) `QueryClient` (`retry: false` for non-retry scenarios) instances per test; use `async` tests with `findBy*` queries for `React.lazy` routes/panels; reset Zustand stores, clear Web Storage, inject transport doubles, and restore mocks/stubs after each test.

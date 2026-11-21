@@ -40,8 +40,8 @@ Inspect only the surfaces relevant to the target scope using actual source and c
 
 1. **Input validation, XSS, files, and URLs:**
    - Check for raw HTML sinks (`dangerouslySetInnerHTML`, `innerHTML`), dynamic code evaluation, or unvalidated `href`/redirect targets.
-   - Verify external JSON, query params, realtime messages, `postMessage` events, and form/action inputs are validated from `unknown` (Zod or focused type guards).
-   - Verify URL destinations enforce `https:` (or controlled `mailto:`/internal paths), reject embedded credentials, and match an allowlisted origin where expected.
+   - Verify external JSON, persisted Web Storage payloads, query params, realtime messages, `postMessage` events, and form/action inputs are validated from `unknown` (Zod or focused type guards).
+   - Verify URL destinations enforce `https:` (or controlled `mailto:`/`sms:`/`tel:` with sanitized targets and URL-encoded bodies, or internal paths), reject embedded credentials, and match an allowlisted origin where expected.
    - Confirm server-side file upload handlers enforce size, content/header checks, ownership, and workflow state independently of browser `accept` hints.
 1. **Credentials, private storage, and browser state:**
    - Verify bearer tokens stay in memory only (or `HttpOnly` cookies), never in URLs, router state, query keys, `localStorage`, `sessionStorage`, or IndexedDB.
@@ -49,8 +49,8 @@ Inspect only the surfaces relevant to the target scope using actual source and c
    - Confirm private JSON/session responses send `Cache-Control: no-store`.
    - Confirm logout, session expiry, or account switch cancels in-flight work (`AbortSignal`), revokes object URLs, and clears private caches/drafts/state.
 1. **Secrets, public bundles, and error/log redaction:**
-   - Verify no private keys, service-role keys, signing secrets, or connection strings appear in Git, client configs, `VITE_*` / `NEXT_PUBLIC_*` env vars, public realtime payloads.
-   - Verify `.env.example` documents variable names without secret values and builds/tests run without live credentials.
+   - Verify no private keys, service-role keys, signing secrets, or connection strings appear in Git, client configs, `VITE_*` env vars, public realtime payloads, and confirm public client UI flags (such as hiding admin navigation links) are treated strictly as UX toggles rather than authorization.
+   - Verify `.env.example` documents variable names without secret values, `.env.local` remains gitignored without leaking unintended flag overrides into release builds, and builds/tests run without live credentials.
    - Inspect `console.*`, logger calls, and error handlers to ensure stack traces, raw provider errors, cookies, auth headers, signed URLs, filenames, and private contents are redacted or omitted.
 1. **Security headers, embeds, and CI/CD workflows:**
    - Inspect framework configs for open redirects, overly permissive rewrites/CORS, or missing header policy. Mark live response headers (CSP, HSTS, `frame-ancestors`, `X-Content-Type-Options`, `Referrer-Policy`) as **unverified** unless observed from a live host.
