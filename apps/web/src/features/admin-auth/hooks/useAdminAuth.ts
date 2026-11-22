@@ -18,6 +18,7 @@ export function useAdminLoginMutation() {
     onSuccess: (session) => {
       queryClient.setQueryData(adminAuthKeys.session(), session);
       void queryClient.invalidateQueries({ queryKey: ['admin', 'orders'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'team'] });
     },
   });
 }
@@ -29,6 +30,7 @@ export function useAdminLogoutMutation() {
     onSettled: async () => {
       await queryClient.cancelQueries({ queryKey: ['admin'] });
       queryClient.removeQueries({ queryKey: ['admin', 'orders'] });
+      queryClient.removeQueries({ queryKey: ['admin', 'team'] });
       queryClient.setQueryData(adminAuthKeys.session(), {
         authenticated: false,
         user: null,

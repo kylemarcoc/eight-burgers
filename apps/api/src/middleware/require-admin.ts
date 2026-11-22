@@ -1,3 +1,4 @@
+import { hasAdminRole, type AdminRole } from '@eight-burgers/contracts';
 import type { MiddlewareHandler } from 'hono';
 import { refreshAdminSessionSingleFlight } from '../lib/auth-refresh';
 import { clearAuthCookies, readAuthCookies, setAuthCookies } from '../lib/cookies';
@@ -39,7 +40,34 @@ export function createRequireAdminMiddleware(
       status: 401,
       code: 'UNAUTHENTICATED',
       title: 'Unauthorized',
-      detail: 'Owner admin sign-in is required to access this resource.',
+      detail: 'Staff Portal sign-in is required to access this resource.',
     });
+  };
+}
+
+export function createRequireAdminRolesMiddleware(
+  allowedRoles: readonly AdminRole[],
+): MiddlewareHandler<ApiEnv> {
+  return async (c, next) => {
+    const adminUser = c.get('adminUser');
+    if (!adminUser) {
+      return problemResponse(c, {
+        status: 401,
+        code: 'UNAUTHENTICATED',
+        title: 'Unauthorized',
+        detail: 'Staff Portal sign-in is required to access this resource.',
+      });
+    }
+
+    if (!hasAdminRole(adminUser.role, allowedRoles)) {
+      return problemResponse(c, {
+        status: 403,
+        code: 'INSUFFICIENT_ROLE',
+        title: 'Forbidden',
+        detail: 'Your Staff Portal role does not have permission to perform this action.',
+      });
+    }
+
+    await next();
   };
 }

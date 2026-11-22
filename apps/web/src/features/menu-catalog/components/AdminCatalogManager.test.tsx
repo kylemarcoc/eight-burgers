@@ -154,7 +154,7 @@ describe('AdminCatalogManager', () => {
     });
   });
 
-  it('enforces the Owner Admin login gate before showing Menu & Delivery Manager', async () => {
+  it('enforces the Staff Portal login gate before showing Menu & Delivery Manager', async () => {
     installMockShopApi({ authenticated: false });
     render(
       <TestQueryWrapper>
@@ -165,20 +165,53 @@ describe('AdminCatalogManager', () => {
     );
 
     expect(
-      await screen.findByRole('heading', { level: 1, name: /owner admin sign-in/i }),
+      await screen.findByRole('heading', { level: 1, name: /staff portal sign-in/i }),
     ).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText(/admin email/i), {
+    fireEvent.change(screen.getByLabelText(/staff email/i), {
       target: { value: 'owner@eightburgers.local' },
     });
     fireEvent.change(screen.getByLabelText(/password/i), {
       target: { value: 'EightBurgersDev123!' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /sign in to owner admin/i }));
+    fireEvent.click(screen.getByRole('button', { name: /sign in to staff portal/i }));
 
     expect(
       await screen.findByRole('heading', { level: 1, name: /menu & delivery manager/i }),
     ).toBeTruthy();
+  });
+
+  it('allows cashier and staff roles to toggle In Stock / Sold Out while hiding CRUD, reset, and delivery settings', async () => {
+    for (const role of ['cashier', 'staff'] as const) {
+      installMockShopApi({ authenticated: true, role });
+      render(
+        <TestQueryWrapper>
+          <AdminCatalogManager role={role} />
+        </TestQueryWrapper>,
+      );
+
+      expect(
+        await screen.findByRole('heading', { level: 1, name: /menu stock manager/i }),
+      ).toBeTruthy();
+      expect(await screen.findByRole('heading', { level: 3, name: 'Burger Deluxe' })).toBeTruthy();
+
+      expect(screen.queryByRole('heading', { level: 2, name: /add new menu item/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /restore default menu/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /edit burger deluxe/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /delete burger deluxe/i })).toBeNull();
+      expect(screen.queryByLabelText(/min\. subtotal \(₱\)/i)).toBeNull();
+
+      const toggleButton = screen.getByRole('button', {
+        name: /in stock — toggle burger deluxe/i,
+      });
+      fireEvent.click(toggleButton);
+      expect(
+        await screen.findByRole('button', { name: /sold out — toggle burger deluxe/i }),
+      ).toBeTruthy();
+
+      cleanup();
+      vi.restoreAllMocks();
+    }
   });
 
   it('syncs editingVersion after toggling availability of the item currently being edited and recovers from 409 conflicts', async () => {

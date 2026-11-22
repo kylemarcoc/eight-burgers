@@ -71,7 +71,7 @@ export function KioskShell() {
                   }`
                 }
               >
-                Owner Admin
+                Staff Portal
               </NavLink>
             ) : null}
             {!isAdminRoute ? (

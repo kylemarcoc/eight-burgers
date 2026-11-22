@@ -7,6 +7,7 @@ import { securityHeadersMiddleware } from './middleware/security-headers';
 import { createAdminDeliveryRoutes } from './routes/admin-delivery';
 import { createAdminMenuRoutes } from './routes/admin-menu';
 import { createAdminOrderRoutes } from './routes/admin-orders';
+import { createAdminUserRoutes } from './routes/admin-users';
 import { createAuthRoutes } from './routes/auth';
 import { createCatalogRoutes } from './routes/catalog';
 import { createHealthRoutes } from './routes/health';
@@ -32,6 +33,7 @@ export function createApp(deps: ApiDeps): Hono<ApiEnv> {
   adminV1.route('/', createAdminMenuRoutes(deps));
   adminV1.route('/', createAdminDeliveryRoutes(deps));
   adminV1.route('/', createAdminOrderRoutes(deps));
+  adminV1.route('/', createAdminUserRoutes(deps));
 
   apiV1.route('/admin', adminV1);
   app.route('/api/v1', apiV1);

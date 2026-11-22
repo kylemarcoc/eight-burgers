@@ -5,12 +5,14 @@ import {
 } from '@eight-burgers/contracts';
 import { Hono } from 'hono';
 import { problemResponse, zodFieldErrors } from '../lib/problem';
+import { createRequireAdminRolesMiddleware } from '../middleware/require-admin';
 import type { ApiDeps, ApiEnv } from '../types';
 
 export function createAdminDeliveryRoutes(deps: Pick<ApiDeps, 'gateway'>): Hono<ApiEnv> {
   const app = new Hono<ApiEnv>();
+  const requireOwner = createRequireAdminRolesMiddleware(['owner']);
 
-  app.patch('/delivery-pricing', async (c) => {
+  app.patch('/delivery-pricing', requireOwner, async (c) => {
     const accessToken = c.get('adminAccessToken') ?? '';
     let rawBody: unknown;
     try {
@@ -60,13 +62,13 @@ export function createAdminDeliveryRoutes(deps: Pick<ApiDeps, 'gateway'>): Hono<
     return c.json({ data: result.data }, 200);
   });
 
-  app.post('/delivery-pricing/reset', async (c) => {
+  app.post('/delivery-pricing/reset', requireOwner, async (c) => {
     const accessToken = c.get('adminAccessToken') ?? '';
     const updated = await deps.gateway.resetDeliveryPricing(accessToken);
     return c.json({ data: updated }, 200);
   });
 
-  app.post('/delivery-zones', async (c) => {
+  app.post('/delivery-zones', requireOwner, async (c) => {
     const accessToken = c.get('adminAccessToken') ?? '';
     let rawBody: unknown;
     try {
@@ -96,7 +98,7 @@ export function createAdminDeliveryRoutes(deps: Pick<ApiDeps, 'gateway'>): Hono<
     return c.json({ data: created }, 201);
   });
 
-  app.put('/delivery-zones/:id', async (c) => {
+  app.put('/delivery-zones/:id', requireOwner, async (c) => {
     const accessToken = c.get('adminAccessToken') ?? '';
     const id = c.req.param('id');
     let rawBody: unknown;
@@ -144,7 +146,7 @@ export function createAdminDeliveryRoutes(deps: Pick<ApiDeps, 'gateway'>): Hono<
     return c.json({ data: result.data }, 200);
   });
 
-  app.patch('/delivery-zones/:id/enabled', async (c) => {
+  app.patch('/delivery-zones/:id/enabled', requireOwner, async (c) => {
     const accessToken = c.get('adminAccessToken') ?? '';
     const id = c.req.param('id');
     let rawBody: unknown;
@@ -196,7 +198,7 @@ export function createAdminDeliveryRoutes(deps: Pick<ApiDeps, 'gateway'>): Hono<
     return c.json({ data: result.data }, 200);
   });
 
-  app.delete('/delivery-zones/:id', async (c) => {
+  app.delete('/delivery-zones/:id', requireOwner, async (c) => {
     const accessToken = c.get('adminAccessToken') ?? '';
     const id = c.req.param('id');
     const result = await deps.gateway.deleteDeliveryZone(accessToken, id);

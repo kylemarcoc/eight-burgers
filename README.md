@@ -1,12 +1,12 @@
 # Eight Burgers (Chino Roces Avenue)
 
-Full-stack ordering storefront, owner admin console, REST BFF, and local Supabase PostgreSQL 17 backend for **8Burgers — Chino Roces Avenue, Makati**, built as an npm workspaces monorepo (`apps/web`, `apps/api`, `packages/contracts`, `supabase/`).
+Full-stack ordering storefront, role-protected Staff Portal console, REST BFF, and local Supabase PostgreSQL 17 backend for **8Burgers — Chino Roces Avenue, Makati**, built as an npm workspaces monorepo (`apps/web`, `apps/api`, `packages/contracts`, `supabase/`).
 
 ## Implemented Capabilities
 
 - **Storefront (`apps/web`, `/`)**: Live PostgreSQL-backed menu and Metro Manila delivery pricing fetched via `GET /api/v1/catalog` and cached in TanStack Query v5. Includes self-hosted WebP imagery (`apps/web/public/images/menu/`), category filtering, keyword search, in-stock filter, burger add-ons (_Sliced Cheese +₱20_, _Crispy Bacon +₱20_, _Extra Veggies +₱26_, _Grilled Pineapple +₱26_), and instant add-to-cart actions.
 - **Floating Cart & Server-Verified Checkout**: Local cart persistence (`apps/web/src/shared/store/useCartStore.ts`) stores only non-sensitive cart line items under `eight-burgers:cart:v2` and automatically migrates/purges legacy `eight-burgers:state:v1` guest PII. Submitting an order calls `POST /api/v1/orders` with a per-attempt `Idempotency-Key`; PostgreSQL `place_order(...)` calculates authoritative totals, delivery zones/waivers, and atomic `#8B-101+` queue numbers inside a single transaction.
-- **Owner Admin (`apps/web`, `/admin`)**: Protected by server-backed Supabase Auth + `public.admin_users` allowlist + `HttpOnly; SameSite=Lax; Path=/api` session cookies (`AdminAuthGuard` + `AdminLoginForm`). Supports live menu CRUD, sold-out toggles, default menu restoration, Metro Manila delivery zone & free-delivery threshold management, and order status updates with optimistic concurrency checks (`409 Conflict` on stale updates).
+- **Staff Portal (`apps/web`, `/admin`)**: Protected by server-backed Supabase Auth + `public.admin_users` allowlist + `HttpOnly; SameSite=Lax; Path=/api` session cookies (`AdminAuthGuard` + `AdminLoginForm`) with role-based access control (`owner`, `cashier`, `staff`) enforced across PostgreSQL RLS/triggers, API routes, and UI. `owner` manages live menu CRUD, WebP photo uploads, default menu restoration, Metro Manila delivery zones & free-delivery threshold, customer orders, and the **Team & Roles** tab (`/admin/team`) to register Cashier/Staff logins, change roles, or disable accounts; `cashier` and `staff` manage live customer orders (all stages including `cancelled`) and menu `In Stock / Sold Out` toggles with optimistic concurrency checks (`409 Conflict` on stale updates).
 - **REST BFF (`apps/api`, Hono + Node 22)**: Same-origin `/api/v1/*` API proxied by Vite in local dev, enforcing CSRF (`Origin` + `X-Requested-With: fetch`), sliding-window rate limits (`429` + `Retry-After`), RFC 9457 Problem Details (`application/problem+json`), SHA-256 guest receipt tokens (`X-Order-Receipt-Token`), and user-scoped JWT forwarding so PostgreSQL Row-Level Security executes on every admin operation.
 - **Shared Contracts (`packages/contracts`)**: Single source of truth for Zod v4 schemas, domain types, and pure Haversine/delivery pricing math shared across `apps/web` and `apps/api`.
 
@@ -41,7 +41,10 @@ Use `npm install` when updating dependencies. If PowerShell blocks `npm` or `npx
 
    `npm run db:reset` applies all migrations in `supabase/migrations/` and seeds:
    - `supabase/seeds/catalog.sql` — 16 Chino Roces menu items, 4 add-ons, store settings, and 5 Metro Manila delivery zones.
-   - `supabase/seeds/dev_admin.sql` — local-dev-only owner account (`owner@eightburgers.local` / `EightBurgersDev123!`). **Never apply `dev_admin.sql` to staging or production.**
+   - `supabase/seeds/dev_admin.sql` — local-dev-only Staff Portal accounts (all share password `EightBurgersDev123!`). **Never apply `dev_admin.sql` to staging or production.**
+     - **Owner**: `owner@eightburgers.local` / `EightBurgersDev123!` — full Menu CRUD, photos, Delivery settings, Customer Orders, and Team & Roles (`/admin/team`).
+     - **Cashier**: `cashier@eightburgers.local` / `EightBurgersDev123!` — Customer Orders and Menu `In Stock / Sold Out` toggles.
+     - **Staff**: `staff@eightburgers.local` / `EightBurgersDev123!` — Customer Orders and Menu `In Stock / Sold Out` toggles.
 
 2. Copy the local `anon key` and `service_role key` from `npm run db:status` into a gitignored `apps/api/.env.local` file (see [.env.example](./.env.example)):
 
@@ -61,7 +64,7 @@ Use `npm install` when updating dependencies. If PowerShell blocks `npm` or `npx
    ```
 
    - Storefront: <http://localhost:5173/>
-   - Owner Admin: <http://localhost:5173/admin>
+   - Staff Portal: <http://localhost:5173/admin>
    - Local Supabase Studio: <http://127.0.0.1:54323/>
    - Local Mailpit: <http://127.0.0.1:54324/>
 
@@ -70,7 +73,7 @@ Use `npm install` when updating dependencies. If PowerShell blocks `npm` or `npx
 Environment variables are documented in [.env.example](./.env.example):
 
 - `VITE_API_BASE_URL` (`/api/v1` by default): Public relative API base path proxied to `http://127.0.0.1:8787` during local development.
-- `VITE_HIDE_PUBLIC_ADMIN` (`false` by default): Optional UI toggle to hide the `"Owner Admin"` header link. Access control is always enforced server-side on `/api/v1/admin/*` via `HttpOnly` session cookies and PostgreSQL RLS.
+- `VITE_HIDE_PUBLIC_ADMIN` (`false` by default): Optional UI toggle to hide the `"Staff Portal"` header link. Access control is always enforced server-side on `/api/v1/admin/*` via `HttpOnly` session cookies and PostgreSQL RLS.
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`: Server-only credentials consumed exclusively by `apps/api` (never prefixed with `VITE_`).
 
 ## Project structure

@@ -7,8 +7,11 @@ import {
   normalizeQueueNumber,
   slugifyMenuId,
   slugifyZoneId,
+  type AdminRole,
+  type AdminTeamMember,
   type AdminUser,
   type CancelPublicOrderByQueueRequest,
+  type CreateAdminUserRequest,
   type DeliveryPricingConfig,
   type DeliveryZoneInput,
   type MenuItem,
@@ -17,6 +20,7 @@ import {
   type OrderStatus,
   type PlaceOrderRequest,
   type PublicOrderTracker,
+  type UpdateAdminUserRequest,
 } from '@eight-burgers/contracts';
 import { vi } from 'vitest';
 
@@ -40,17 +44,35 @@ function toPublicOrderTracker(order: OrderRecord): PublicOrderTracker {
 
 export type MockApiOptions = {
   authenticated?: boolean;
+  role?: AdminRole;
+  user?: AdminUser;
   initialMenu?: MenuItem[];
   initialDeliveryPricing?: DeliveryPricingConfig;
   initialOrders?: OrderRecord[];
   onExternalFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 };
 
-const TEST_ADMIN_USER: AdminUser = {
-  id: '11111111-1111-4111-8111-111111111111',
-  email: 'owner@eightburgers.local',
-  role: 'owner',
+const TEST_ADMIN_USERS: Record<AdminRole, AdminUser> = {
+  owner: {
+    id: '11111111-1111-4111-8111-111111111111',
+    email: 'owner@eightburgers.local',
+    role: 'owner',
+  },
+  cashier: {
+    id: '22222222-2222-4222-8222-222222222222',
+    email: 'cashier@eightburgers.local',
+    role: 'cashier',
+  },
+  staff: {
+    id: '33333333-3333-4333-8333-333333333333',
+    email: 'staff@eightburgers.local',
+    role: 'staff',
+  },
 };
+
+const TEST_USERS_BY_EMAIL = new Map<string, AdminUser>(
+  Object.values(TEST_ADMIN_USERS).map((user) => [user.email, user]),
+);
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -76,16 +98,27 @@ function problemJson(status: number, code: string, detail: string): Response {
 }
 
 export function installMockShopApi(options: MockApiOptions = {}) {
+  const initialUser = options.user ?? TEST_ADMIN_USERS[options.role ?? 'owner'];
   const state: {
     authenticated: boolean;
+    activeUser: AdminUser | null;
+    team: AdminTeamMember[];
     menu: MenuItem[];
     deliveryPricing: DeliveryPricingConfig;
     orders: OrderRecord[];
     uploadedImages: Set<string>;
     nextQueueSeq: number;
     nextImageSeq: number;
+    nextUserSeq: number;
   } = {
     authenticated: options.authenticated ?? false,
+    activeUser: options.authenticated ? initialUser : null,
+    team: Object.values(TEST_ADMIN_USERS).map((user) => ({
+      ...user,
+      active: true,
+      createdAt: '2026-11-22T01:00:00.000Z',
+      updatedAt: '2026-11-22T01:00:00.000Z',
+    })),
     menu: (options.initialMenu ?? DEFAULT_MENU_ITEMS).map((item) => ({
       ...item,
       version: item.version ?? 1,
@@ -111,6 +144,7 @@ export function installMockShopApi(options: MockApiOptions = {}) {
     uploadedImages: new Set<string>(),
     nextQueueSeq: 101,
     nextImageSeq: 1,
+    nextUserSeq: 4,
   };
 
   const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
@@ -305,29 +339,47 @@ export function installMockShopApi(options: MockApiOptions = {}) {
 
     if (method === 'GET' && path === '/auth/session') {
       return jsonResponse({
-        data: state.authenticated
-          ? { authenticated: true, user: TEST_ADMIN_USER }
-          : { authenticated: false, user: null },
+        data:
+          state.authenticated && state.activeUser
+            ? { authenticated: true, user: state.activeUser }
+            : { authenticated: false, user: null },
       });
     }
 
     if (method === 'POST' && path === '/auth/login') {
       const creds = body as { email: string; password: string };
-      if (creds.email === TEST_ADMIN_USER.email && creds.password === 'EightBurgersDev123!') {
+      const matchedUser = TEST_USERS_BY_EMAIL.get(creds.email);
+      if (matchedUser && creds.password === 'EightBurgersDev123!') {
         state.authenticated = true;
-        return jsonResponse({ data: { authenticated: true, user: TEST_ADMIN_USER } });
+        state.activeUser = matchedUser;
+        return jsonResponse({ data: { authenticated: true, user: matchedUser } });
       }
       return problemJson(401, 'INVALID_CREDENTIALS', 'Invalid email or password.');
     }
 
     if (method === 'POST' && path === '/auth/logout') {
       state.authenticated = false;
+      state.activeUser = null;
       return new Response(null, { status: 204 });
     }
 
     if (path.startsWith('/admin/')) {
-      if (!state.authenticated) {
+      if (!state.authenticated || !state.activeUser) {
         return problemJson(401, 'UNAUTHENTICATED', 'Sign-in required.');
+      }
+
+      const isOwner = state.activeUser.role === 'owner';
+      const isAvailabilityPatch =
+        method === 'PATCH' &&
+        path.startsWith('/admin/menu-items/') &&
+        path.endsWith('/availability');
+      const isOrderRoute = path === '/admin/orders' || path.startsWith('/admin/orders/');
+      if (!isOwner && !isOrderRoute && !isAvailabilityPatch) {
+        return problemJson(
+          403,
+          'INSUFFICIENT_ROLE',
+          'Your Staff Portal role does not have permission to perform this action.',
+        );
       }
 
       if (method === 'GET' && path === '/admin/orders') {
@@ -589,6 +641,71 @@ export function installMockShopApi(options: MockApiOptions = {}) {
         const id = path.slice('/admin/delivery-zones/'.length);
         state.deliveryPricing.zones = state.deliveryPricing.zones.filter((zone) => zone.id !== id);
         return new Response(null, { status: 204 });
+      }
+
+      if (method === 'GET' && path === '/admin/users') {
+        return jsonResponse({ data: state.team });
+      }
+
+      if (method === 'POST' && path === '/admin/users') {
+        const payload = body as CreateAdminUserRequest;
+        const normalizedEmail = payload.email.trim().toLowerCase();
+        if (state.team.some((member) => member.email.toLowerCase() === normalizedEmail)) {
+          return problemJson(
+            409,
+            'EMAIL_ALREADY_REGISTERED',
+            'An account with this email address is already registered.',
+          );
+        }
+        const seq = state.nextUserSeq;
+        state.nextUserSeq += 1;
+        const now = new Date().toISOString();
+        const created: AdminTeamMember = {
+          id: `00000000-0000-4000-8000-${String(seq).padStart(12, '0')}`,
+          email: normalizedEmail,
+          role: payload.role,
+          active: true,
+          createdAt: now,
+          updatedAt: now,
+        };
+        state.team.push(created);
+        return jsonResponse({ data: created }, 201);
+      }
+
+      if (method === 'PATCH' && path.startsWith('/admin/users/')) {
+        const userId = decodeURIComponent(path.slice('/admin/users/'.length));
+        if (state.activeUser.id === userId) {
+          return problemJson(
+            400,
+            'CANNOT_MODIFY_SELF',
+            'You cannot change your own role or disable your own Staff Portal account.',
+          );
+        }
+        const member = state.team.find((entry) => entry.id === userId);
+        if (!member) {
+          return problemJson(404, 'ADMIN_USER_NOT_FOUND', 'Team account could not be found.');
+        }
+        const payload = body as UpdateAdminUserRequest;
+        const nextRole = payload.role ?? member.role;
+        const nextActive = payload.active ?? member.active;
+        if (
+          member.role === 'owner' &&
+          member.active &&
+          (nextRole !== 'owner' || !nextActive) &&
+          !state.team.some(
+            (entry) => entry.id !== member.id && entry.role === 'owner' && entry.active,
+          )
+        ) {
+          return problemJson(
+            409,
+            'LAST_ACTIVE_OWNER',
+            'At least one active Owner account must remain enabled.',
+          );
+        }
+        member.role = nextRole;
+        member.active = nextActive;
+        member.updatedAt = new Date().toISOString();
+        return jsonResponse({ data: member });
       }
     }
 
