@@ -2,6 +2,8 @@
 
 Full-stack ordering storefront, role-protected Staff Portal console, REST BFF, and local Supabase PostgreSQL 17 backend for **8Burgers — Chino Roces Avenue, Makati**, built as an npm workspaces monorepo (`apps/web`, `apps/api`, `packages/contracts`, `supabase/`).
 
+![Eight Burgers Chino Roces storefront](./docs/screenshots/storefront-hero.webp)
+
 ## Implemented Capabilities
 
 - **Storefront (`apps/web`, `/`)**: Live PostgreSQL-backed menu and Metro Manila delivery pricing fetched via `GET /api/v1/catalog` and cached in TanStack Query v5. Includes self-hosted WebP imagery (`apps/web/public/images/menu/`), category filtering, keyword search, in-stock filter, burger add-ons (_Sliced Cheese +₱20_, _Crispy Bacon +₱20_, _Extra Veggies +₱26_, _Grilled Pineapple +₱26_), and instant add-to-cart actions.
@@ -9,6 +11,34 @@ Full-stack ordering storefront, role-protected Staff Portal console, REST BFF, a
 - **Staff Portal (`apps/web`, `/admin`)**: Protected by server-backed Supabase Auth + `public.admin_users` allowlist + `HttpOnly; SameSite=Lax; Path=/api` session cookies (`AdminAuthGuard` + `AdminLoginForm`) with role-based access control (`owner`, `cashier`, `staff`) enforced across PostgreSQL RLS/triggers, API routes, and UI. `owner` manages live menu CRUD, WebP photo uploads, default menu restoration, Metro Manila delivery zones & free-delivery threshold, customer orders, and the **Team & Roles** tab (`/admin/team`) to register Cashier/Staff logins, change roles, or disable accounts; `cashier` and `staff` manage live customer orders (all stages including `cancelled`) and menu `In Stock / Sold Out` toggles with optimistic concurrency checks (`409 Conflict` on stale updates).
 - **REST BFF (`apps/api`, Hono + Node 22)**: Same-origin `/api/v1/*` API proxied by Vite in local dev, enforcing CSRF (`Origin` + `X-Requested-With: fetch`), sliding-window rate limits (`429` + `Retry-After`), RFC 9457 Problem Details (`application/problem+json`), SHA-256 guest receipt tokens (`X-Order-Receipt-Token`), and user-scoped JWT forwarding so PostgreSQL Row-Level Security executes on every admin operation.
 - **Shared Contracts (`packages/contracts`)**: Single source of truth for Zod v4 schemas, domain types, and pure Haversine/delivery pricing math shared across `apps/web` and `apps/api`.
+
+## Screenshots
+
+| Cart & Delivery Map                                                                     | Order Receipt & Live Tracker                                                             |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| ![Cart drawer and Metro Manila delivery map](./docs/screenshots/cart-delivery-map.webp) | ![Order receipt and live 4-stage tracker](./docs/screenshots/order-receipt-tracker.webp) |
+
+| Owner — Menu & Delivery Console                                                 | Staff Portal — Live Customer Orders                                       |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| ![Owner menu and delivery manager](./docs/screenshots/admin-menu-delivery.webp) | ![Live customer orders queue](./docs/screenshots/admin-orders-queue.webp) |
+
+| Cashier — Menu Stock Manager                                              | Owner — Team & Roles (`/admin/team`)                                      |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| ![Cashier menu stock manager](./docs/screenshots/cashier-menu-stock.webp) | ![Owner team and roles manager](./docs/screenshots/admin-team-roles.webp) |
+
+## Screenshots
+
+| Cart & Delivery Map | Order Receipt & Live Tracker |
+| --- | --- |
+| ![Cart drawer and Metro Manila delivery map](./docs/screenshots/cart-delivery-map.webp) | ![Order receipt and live 4-stage tracker](./docs/screenshots/order-receipt-tracker.webp) |
+
+| Owner — Menu & Delivery Console | Staff Portal — Live Customer Orders |
+| --- | --- |
+| ![Owner menu and delivery manager](./docs/screenshots/admin-menu-delivery.webp) | ![Live customer orders queue](./docs/screenshots/admin-orders-queue.webp) |
+
+| Cashier — Menu Stock Manager | Owner — Team & Roles (`/admin/team`) |
+| --- | --- |
+| ![Cashier menu stock manager](./docs/screenshots/cashier-menu-stock.webp) | ![Owner team and roles manager](./docs/screenshots/admin-team-roles.webp) |
 
 ## Technology stack
 
