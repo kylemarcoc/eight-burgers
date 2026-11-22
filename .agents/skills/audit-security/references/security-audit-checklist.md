@@ -1,79 +1,64 @@
 # Security Audit Checklist & Verification
 
-Use this reference alongside `docs/security.md` when auditing or hardening applications, hosting configs, and CI workflows.
+Use this procedural checklist alongside `AGENTS.md` and repository security/database guides under `docs/` when present. Defer stack-specific implementation mechanics to those repository guides.
 
 ## 1. Severity classification
 
-| Severity | Criteria                                                                                                                        |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Critical | Direct compromise of credentials, unauthorized access to private data/actions, arbitrary script/code execution, or leaked keys. |
-| High     | Missing server-side ownership/expiry checks, token leakage into storage/URLs/logs, unvalidated signed-URL transfers, open XSS.  |
-| Medium   | Missing `Cache-Control: no-store` on private responses, incomplete session teardown, unpinned CI actions, overly broad CORS.    |
-| Low      | Defense-in-depth gaps, missing regression tests for existing guards, or documentation drift on threat-model/header checklists.  |
+| Severity | Criteria                                                                                                                               |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Critical | Direct compromise of credentials, unauthorized access to private data/actions, arbitrary script/code execution, or leaked secret keys. |
+| High     | Missing auth/access-control/CSRF enforcement, spoofable rate-limit bypasses, secret-key misuse, unvalidated uploads, or open XSS.      |
+| Medium   | Missing `no-store` caching headers on private responses, incomplete session teardown, unpinned CI actions, or overly broad CORS.       |
+| Low      | Defense-in-depth gaps, missing regression tests for existing guards, or documentation drift on threat-model/header checklists.         |
 
-## 2. Boundary-by-boundary inspection checks
+## 2. Boundary-by-boundary inspection checklist
 
-### XSS, untrusted inputs, URLs, and file uploads
+### Client & browser boundaries (when present)
 
-- Untrusted strings render as JSX text; no unguarded `dangerouslySetInnerHTML`, `innerHTML`, `eval`, or `new Function`.
-- External API responses, hydrated Web Storage (`localStorage`/`sessionStorage`) payloads, query strings, realtime payloads, `postMessage` events, and form/action inputs are parsed from `unknown` with Zod or narrow type guards.
-- Dynamic external URLs parse via `new URL(...)`, require `https:` (no `javascript:`, `data:`, or embedded `username`/`password`), and check exact `url.origin` against an allowlist when destinations are known; URI-scheme links (`mailto:`, `sms:`, `tel:`) sanitize recipient targets (rejecting control characters or injected parameters) and URL-encode query/body fields.
-- `target="_blank"` external links include `rel="noopener noreferrer"`; `postMessage` validates `event.origin`, `event.source`, and payload schema.
-- File uploads validate size, format/headers, ownership, and workflow state on the server (never relying solely on client `accept` attributes).
+- Ensure untrusted strings render as escaped text; disallow unguarded raw HTML injection or dynamic script evaluation sinks.
+- Ensure external API payloads, hydrated Web Storage entries, and URL query params pass through strict validation schemas or type guards before entering domain state.
+- Validate dynamic URLs via strict parsing: allow only controlled internal single-`/` paths or `https:` without embedded credentials (and check expected origins where constrained); sanitize `mailto:`, `sms:`, and `tel:` targets and add `rel="noopener noreferrer"` on external new-tab links.
+- Verify client bundles and public client-exposed env prefixes contain zero secrets or private keys, and ensure client UI visibility flags or route guards never act as security boundaries.
+- Confirm build, type, and static-analysis boundaries keep server-only modules and credentials out of browser bundles.
+- Verify persistent client storage holds only non-sensitive preferences or non-sensitive draft references (purging legacy sensitive keys on migration), and verify logout/`401` aborts requests, releases temporary blob URLs, and clears private caches and drafts.
 
-### Credentials, storage transfers, and browser storage
+### Backend API / server boundaries (when present)
 
-- App bearer tokens are sent only to intended same-origin or allowlisted endpoints, never attached to redirects or third-party hosts, and never placed in navigable URLs, router state, or query keys.
-- Signed storage URLs are validated for expected HTTPS origin and path and fetched with `credentials: 'omit'` and `referrerPolicy: 'no-referrer'`.
-- Private JSON/session responses send `Cache-Control: no-store`.
-- `localStorage` holds only non-sensitive preferences (such as theme or language); `sessionStorage` holds only non-sensitive tab UI state. Credentials, private documents, and sensitive responses stay out of Web Storage, IndexedDB, and persistent caches.
-- Logout, expiry, or account switching aborts in-flight requests, revokes object URLs, and clears private caches, forms, and drafts.
+- Confirm protected endpoints verify caller identity AND active role/allowlist membership server-side, propagating caller context to database authorization layers when applicable.
+- Verify session cookies set `HttpOnly`, appropriate `SameSite`, narrow path/domain scope, and `Secure` in HTTPS production, with single-flight refresh-token rotation guards and complete clearing on logout or expiry.
+- Verify state-changing HTTP routes enforce CSRF protections (e.g., strict `Origin`/`Referer` verification plus anti-CSRF request headers or tokens appropriate to the auth transport).
+- Inspect rate limiters: confirm proxy forwarding headers (`X-Forwarded-For`, `X-Real-IP`) are trusted only behind an explicit trusted proxy boundary, expired buckets are bounded or evicted cleanly, and login endpoints combine IP limits with per-account throttling.
+- Verify opaque guest/public capability tokens travel via headers (never navigable URLs), store only one-way cryptographic hashes in persistence, and derive from a dedicated domain-separated server secret rather than database root keys.
+- Confirm write routes validate schemas strictly (rejecting unexpected fields) and binary uploads enforce pre-decode byte limits, media header/dimension bounds, safe re-encoding, and metadata stripping.
+- Verify security headers (`X-Content-Type-Options: nosniff`, `Referrer-Policy`, `X-Frame-Options`, `Cache-Control: no-store` on private endpoints) and confirm logs and error responses redact stack traces, raw provider/DB errors, cookies, and tokens.
 
-### Secrets, client exposure, and redacted diagnostics
+### Database & object storage boundaries (when present)
 
-- Static Vite bundles `VITE_*` variables contain no secrets or private tokens. Client-side UI visibility flags (such as hiding an admin nav link) are UX conveniences only—never access control—and must not be relied upon to guard routes or mutations.
-- Server credentials and public feature flags are documented (without secret values) in `.env.example`; local `.env.local` files remain gitignored, builds/tests run without live credentials, and release builds are checked against unintended `.env.local` overrides.
-- Console logs, server diagnostics, background job event payloads, and UI errors use an allowlist of safe fields (operation, status, category, opaque correlation ID) and omit cookies, auth headers, signed URLs, raw bodies, filenames, and private contents.
+- Verify every public table enforces database-level access policies (e.g., RLS), keeping private records and allowlists inaccessible to anonymous roles.
+- Confirm elevated/service credentials stay limited to readiness checks, allowlist verification, or least-privilege elevated database functions—never used as a blanket bypass for standard user/admin CRUD.
+- Confirm elevated database functions pin `search_path`, schema-qualify all references, and revoke public/unprivileged execute rights.
+- Confirm object buckets enforce size/MIME allowlists, object access rules, private signed-URL flows for sensitive objects, and complete reference checks across all stored URL forms before object deletion.
+- Verify local-only developer credential seeds carry clear local-only markers and stay excluded from staging/production pipelines.
 
-### Hosting headers and CI/CD workflows
+### CI/CD & hosting (when present)
 
-- Inspect framework configs for unintended open redirects, overly permissive rewrites/CORS, or missing header policy. Always mark deployed response headers (CSP, HSTS, `frame-ancestors`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`) as unverified unless checked against the live host.
-- Inspect `.github/workflows/*.yml`:
-  - Top-level and job-level `permissions:` follow least privilege (`contents: read` by default; elevated scopes only on the specific deploy job).
-  - Third-party actions are pinned to verified full commit SHAs rather than mutable tags.
-  - `actions/checkout` sets `persist-credentials: false` when git push is not required.
-  - Release/deploy credentials stay out of untrusted PR workflows.
+- Confirm environment example files omit secret values, local secret files remain ignored by version control, and CI runs cleanly without live credentials.
+- Inspect CI workflow definitions for least-privilege token permissions, disabled credential persistence where unneeded, and immutable commit-pinned third-party actions.
+- Keep live-host CSP, HSTS, TLS, and proxy headers marked **unverified** unless tested directly against the deployed host.
 
-## 3. Useful read-only audit searches
+## 3. Conceptual read-only audit searches
 
-Run from the repository root:
+Using the repository's discovered source, DB, and CI directories, search for:
 
-```sh
-git grep -n "dangerouslySetInnerHTML\|innerHTML\|eval(" src
-git grep -n "localStorage\|sessionStorage\|indexedDB" src
-git grep -n "VITE_\|NEXT_PUBLIC_" src
-git grep -n "uses:" .github/workflows
-```
+- Unsafe HTML/script evaluation sinks (`innerHTML`, raw HTML binding helpers, dynamic `eval`).
+- Client storage APIs (`localStorage`, `sessionStorage`, `indexedDB`) storing sensitive fields or unvalidated reads.
+- Public env prefixes and privileged service/root key references across client vs. server code.
+- Third-party CI workflow action pins and workflow `permissions` blocks.
+- Database access-control policies, elevated function definitions, and dev-only credential seeds.
 
-## 4. Verification command matrix
+## 4. Verification steps (Mode B)
 
-Run from the repository root. Use `npm.cmd` and `npx.cmd` on Windows PowerShell if `.ps1` launchers are blocked.
-
-### Format changed files only (Mode B)
-
-```sh
-npx --no-install prettier --write <changed-files>
-npx --no-install prettier --check <changed-files>
-```
-
-### Verification suite (Mode B)
-
-```sh
-npm run lint
-npm run format:check
-npm run test
-npm run typecheck
-npm run build
-```
-
-For npm dependency advisories or Dependabot alerts uncovered during an audit, switch to `triage-dependabot`.
+1. Format modified files using the repository's configured formatter.
+2. Run the repository's configured lint, format-check, test, type-check, and build suite via the project's runner.
+3. If database schemas, access policies, or storage policies changed and local DB services are active, run the repository's configured local database reset and lint checks.
+4. For dependency vulnerability scanner findings or Dependabot alerts, hand off to `triage-dependabot`.

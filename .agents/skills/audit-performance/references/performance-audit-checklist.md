@@ -1,94 +1,72 @@
 # Performance Audit Checklist & Measurement Guide
 
-Use this reference alongside `docs/performance.md` when auditing or optimizing applications.
+Use this procedural checklist alongside `AGENTS.md` and repository performance/database guides under `docs/` when present. Consult repository guides for framework- and stack-specific APIs.
 
 ## 1. Impact classification
 
-| Impact | Criteria                                                                                                                            |
-| ------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| High   | User-visible input lag (INP > 200 ms), large unused JS on the critical entry path, `O(n^2)` hot-path loops, or unreserved LCP/CLS.  |
-| Medium | Avoidable full-subtree re-renders, sequential request waterfalls, heavy optional libraries bundled eagerly, or unbounded DOM lists. |
-| Low    | Minor redundant allocations, unmeasured speculative memoization clutter, or missing regression checks for known hotspots.           |
+| Impact | Criteria                                                                                                                                                             |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| High   | User-visible input lag (INP > 200 ms), large unused code on the critical entry path, `O(n^2)` hot-path loops, unreserved LCP/CLS, or query amplification on polling. |
+| Medium | Avoidable full-subtree re-renders, sequential request waterfalls, heavy optional libraries bundled eagerly, or redundant media decode work.                          |
+| Low    | Minor redundant allocations, unmeasured speculative memoization clutter, or missing regression checks for known hotspots.                                            |
 
-## 2. Surface-by-surface inspection checks
+## 2. Surface-by-surface inspection checklist
 
-### Bundle & entry graph
+### Delivery, bundles, and code splitting (when frontend present)
 
-- Inspect emitted Vite assets (`dist/assets/`) comparing raw and compressed sizes consistently. Confirm Vite 8 chunking uses `build.rolldownOptions` (never deprecated `build.rollupOptions`) and avoids premature manual chunk splitting.
-- Verify deferred secondary routes or heavy panels use module-scope `React.lazy`, space-preserving `<Suspense>` (`role="status"`), a route error boundary (`role="alert"` + reload recovery), and a `sessionStorage`-guarded `vite:preloadError` single-retry handler.
-- Check for namespace imports that defeat tree shaking (for example, `import * as Icons from 'lucide-react'`).
-- Check for wide re-export barrels pulled into cold entry routes or heavy optional SDKs imported statically instead of via dynamic `import()`.
-- Inspect `package-lock.json` for duplicate heavy packages or large utilities added for trivial tasks.
+- Inspect emitted production artifacts in the repository's configured build output directory, comparing raw and compressed sizes consistently.
+- Check lazy-loading boundaries for secondary routes and heavy optional widgets (maps, charts, rich editors), verifying space-preserving loading fallbacks, error recovery, and safe preload-retry handling without reload loops.
+- Flag wildcard/namespace imports that block tree shaking, wide re-export barrels pulled into critical entry paths, and duplicate heavy libraries in the project lockfile.
+- Verify bundler splitting/externalization settings match the installed build tool version and avoid manual chunking without trace evidence.
 
-### React rendering, state scope, and React 19 primitives
+### UI rendering, state scope, and framework primitives (when frontend present)
 
-- Verify interaction state lives close to its consumers and fast-changing values are not placed in broad Context providers.
-- Verify Zustand/store consumers subscribe to narrow slices (`useShallow` when deriving objects/arrays) and stable action selectors; keep ephemeral UI flags out of persisted stores (and `partialize` only durable slices). Verify TanStack Query consumers use `select` where appropriate.
-- Flag `useEffect` blocks that mirror props, query results, or derived calculations back into state.
-- Verify render functions and hooks stay strictly pure (compiler-ready: no mutations or `ref.current` reads/writes during render).
-- Reject speculative `memo`, `useMemo`, and `useCallback` wrappers without measured render cost or an explicit stable-identity contract.
-- Evaluate `useTransition` / `useDeferredValue` when heavy updates block typing/toggling, and `<Activity mode="hidden">` (React 19.2+ apps only).
+- Verify fast-changing interaction state sits near its consumers rather than in broad shared providers.
+- Check client stores and server-query caches for coarse subscriptions that trigger unrelated re-renders, and keep ephemeral UI flags out of persisted storage.
+- Flag effects or lifecycle hooks that mirror props, query results, or derived values back into local state.
+- Reject speculative memoization or caching wrappers added without measured render cost or a documented stable-reference requirement; prefer built-in non-blocking/concurrent update primitives when heavy UI transitions compete with urgent input.
 
-### Algorithmic complexity & large collections
+### Data structures and algorithmic complexity
 
-- Flag `.find()`, `.includes()`, or `.indexOf()` inside loops, `.map()`, `.filter()`, or virtualized row renderers (`O(n*m)` / `O(n^2)`). Replace with pre-indexed `Map` or `Set` lookups (`O(n + m)`).
-- Flag array/object spreading inside `reduce` (`[...acc, item]`) and `shift`/`unshift` inside loops.
-- Keep authoritative state serializable (arrays/plain records) and derive `Map`/`Set` lookup indices during render (memoized only when measured).
-- Prefer `Map` (or `Object.hasOwn`) for dynamic or untrusted string keys to avoid prototype collisions.
+- Flag nested linear searches/membership checks inside loops, mappers, or row renderers (`O(n*m)` / `O(n^2)`); pre-index lookup targets into hash maps/sets (`O(n + m)`) before iterating.
+- Flag repeated array/object cloning inside reductions or front-of-array mutations inside loops.
+- Keep stored state cleanly serializable and derive indexed lookups cleanly during render or transformation (guarding dynamic untrusted keys against prototype/key collisions using safe map structures).
 
-### Network waterfalls, assets, and Core Web Vitals
+### Assets, network waterfalls, and Core Web Vitals (when frontend present)
 
-- Check for sequential independent `await` calls that can run concurrently via `Promise.all`.
-- Check for missing `AbortSignal` forwarding on cancellable reads and redundant refetches missing shared keys or cache lifetimes.
-- **LCP (<= 2.5 s) & images:** Verify the LCP image/content is discoverable early, not `loading="lazy"` (keeping default decoding rather than forcing `decoding="async"`), sized appropriately (`srcSet`/`sizes` or `<picture>`), and references local Vite `public/` assets via `BASE_URL`. Use `loading="lazy"` and `decoding="async"` for non-critical below-the-fold images, and apply `fetchPriority="high"` or route-scoped `<link rel="preload" as="image">` (matching `%BASE_URL%` in SPA shells and accounting for CSP if scripted) only when a trace shows delayed LCP discovery so secondary routes avoid wasted fetches and unused-preload warnings.
-- **CLS (<= 0.1):** Verify images, media, and async `Suspense` fallbacks reserve explicit dimensions or aspect ratios, and web fonts avoid layout shifts.
-- **Server & background jobs:** Measure upload, queue wait, execution, and download stages separately on representative synthetic fixtures; verify large binary transfers bypass serverless request limits via signed storage URLs.
+- Flag sequential independent I/O awaits that can run concurrently, missing request cancellation signals, un-debounced search-as-you-type requests, and background polling that continues when viewing paginated deeper pages or terminal records.
+- **LCP (<= 2.5 s) & images:** Verify the critical LCP visual resource is discovered early, not deferred lazily, sized appropriately, and respects configured public base paths; defer below-the-fold images lazily and apply preload hints only when traces confirm delayed discovery on routes that actually use the asset.
+- **CLS (<= 0.1):** Verify media containers, loading placeholders, and fonts reserve stable space without causing layout shifts.
 
-## 3. Useful read-only audit searches
+### Optional backend API, database, and media processing (when present)
 
-Run from the repository root:
+- Inspect polled or list endpoints for query roundtrip amplification (e.g., `N` parallel count queries or repeated remote auth verification calls) and unbounded in-memory caches/rate-limit maps.
+- Check paginated database queries for composite indexes aligned with filter + tie-breaker cursor sort order rather than deep offset scans on growing tables.
+- Check upload handlers for pre-decode byte limits, bounded image/media decoding, metadata stripping, and immutable long-lived cache headers on content-addressed assets.
 
-```sh
-git grep -n "import \* as" src
-git grep -n "rollupOptions" src
-git grep -n "useMemo\|useCallback\|React\.memo\|memo(" src
-git grep -n "loading=\"lazy\"\|fetchPriority\|<img\|<picture" src
-```
+## 3. Useful read-only audit patterns
 
-## 4. Production measurement & verification commands
+Adapt search patterns to the language and discovered source directories in the repository:
 
-Run from the repository root. Use `npm.cmd` and `npx.cmd` on Windows PowerShell if `.ps1` launchers are blocked.
+- Wildcard/barrel imports on critical entry modules.
+- Deprecated bundler chunking options in build configs.
+- Speculative memoization wrappers lacking profiling rationale.
+- Nested collection lookups inside loop or render bodies.
+- Unconsolidated count queries or sequential awaits in backend handlers.
 
-### Build and inspect emitted output
+## 4. Matched measurement and verification steps
 
-```sh
-npm run build
-```
+### Before/after comparison log (Mode B)
 
-Serve a production build locally for browser profiling:
-
-- `npm run preview`
-
-Record for every matched comparison:
+Record identically for baseline and candidate production builds:
 
 - Baseline commit vs. candidate changes
-- Target route/interaction and synthetic fixture
-- Viewport, throttling/CPU profile, cache state (cold vs. warm), and run count
-- Median and spread for each metric (emitted bytes, compressed transfer bytes, commit/INP/LCP/CLS timings)
-
-### Format changed files only (Mode B)
-
-```sh
-npx --no-install prettier --write <changed-files>
-npx --no-install prettier --check <changed-files>
-```
+- Target route, interaction, or API endpoint plus synthetic fixture
+- Viewport, network/CPU throttling, cache state (cold vs. warm), and run count
+- Median and spread for each metric (emitted bytes, compressed transfer bytes, DB roundtrips, render/INP/LCP/CLS or endpoint latency)
 
 ### Verification suite (Mode B)
 
-```sh
-npm run lint
-npm run format:check
-npm run test
-npm run typecheck
-npm run build
-```
+1. Format modified files using the repository's configured formatter.
+2. Run the repository's configured production build and serve built outputs locally using configured preview/start commands to measure cleanly.
+3. Run all configured static analysis, format-check, test, type-check, and build verification commands via the project's runner.

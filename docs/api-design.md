@@ -1,160 +1,120 @@
 # API design
 
-Keep transport, external contracts, state coordination, and UI presentation with their respective owners. Apply these conventions to new and substantially changed operations. Document app-specific endpoints, envelopes, and realtime protocols in `README.md`.
+Keep transport, external contracts, state coordination, HTTP middleware, and UI presentation with their respective owners. Frontend HTTP and TanStack Query conventions apply to every SPA on this stack; `apps/api/` and `packages/contracts/` sections apply when a BFF and shared contracts workspace are configured. Apply these conventions to new and substantially changed operations, and document repository-specific routes, ports, env vars, and error codes in [AGENTS.md](../AGENTS.md) and [README.md](../README.md).
 
 ## Ownership and file layout
 
-| Location                        | Responsibility                                                                                 |
-| ------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Feature `api/`                  | Plain functions that build endpoint requests, validate and normalize responses, and map errors |
-| Feature `hooks/`                | Query keys and lifecycle, mutations, and cache updates                                         |
-| Feature `schemas/` and `types/` | Runtime schemas and TypeScript contracts                                                       |
-| App-local `shared/lib/`         | Feature-independent HTTP configuration when multiple features share the same setup             |
-| App and route layer             | Provider setup, page composition, and thin HTTP route adapters                                 |
-| Components                      | Render pending, empty, failure, and success states and call typed handlers or hooks            |
+See [Architecture](architecture.md#stack-layering) for top-level workspace boundaries. Transport responsibilities split across the active layers as follows:
 
-Target layout for a growing feature:
+- **Shared contracts (`packages/contracts/src/*.schema.ts`):** Shared Zod v4 request, response, error, and domain schemas plus pure cross-tier helpers.
+- **Shared browser HTTP (`apps/web/src/shared/lib/`):** Shared `fetch` wrapper (anti-CSRF header, timeout, `AbortSignal`, `Retry-After`, and failure normalization).
+- **Feature API & hooks (`apps/web/src/features/<feature>/{api,hooks}/`):** Feature request builders, TanStack Query key factories, and `useQuery`/`useMutation` hooks.
+- **BFF routes, middleware, and gateways (`apps/api/src/{routes,middleware,lib}/`):** Thin Hono route handlers, cross-cutting HTTP middleware (request IDs, security headers, CSRF, auth guards), data gateway adapters, cookies/refresh, rate limiting, RFC 9457 error formatting, and media processing.
+
+Illustrative layout across workspaces:
 
 ```text
-src/
-├── features/users/
-│   ├── api/
-│   │   ├── get-users.ts
-│   │   ├── create-user.ts
-│   │   └── user-keys.ts
-│   ├── hooks/
-│   │   ├── useUsers.ts
-│   │   └── useCreateUser.ts
-│   ├── schemas/user.schema.ts
-│   ├── types/user.types.ts
+packages/contracts/src/
+├── error.schema.ts
+├── <domain>.schema.ts
+└── index.ts
+
+apps/web/src/
+├── features/<feature>/
+│   ├── api/<resource>-api.ts
+│   ├── hooks/<useFeatureHook>.ts
 │   └── index.ts
-└── shared/lib/http-client.ts
+└── shared/lib/
+    ├── api-error.ts
+    └── http-client.ts
+
+apps/api/src/
+├── app.ts
+├── config/env.ts
+├── middleware/    # request IDs, security headers, CSRF, auth guards
+├── routes/        # thin domain route handlers + health probes
+└── lib/           # Problem Details formatting, cookies/refresh, rate limiting, media processing, data gateway
 ```
 
-Use descriptive camelCase operation names such as `getUsers`, `updateUser`, and `deleteUser` in kebab-case files. Use `useSomething.ts` for Vite hooks. Export only externally supported operations, hooks, and types through the feature entry point. Use direct relative imports internally to avoid barrel chains and cycles. See [Architecture](architecture.md#imports-and-cross-feature-communication), [Feature structure](feature-structure.md#boundaries-and-public-apis), and [Coding standards](coding-standards.md#naming).
+Use descriptive camelCase operation names in kebab-case files under `api/` (for example, `fetchRecords` or `createSubmission`). Use `useSomething.ts` for frontend hooks. Export only externally supported operations, hooks, and types through the feature `index.ts` or workspace entry point. See [Architecture](architecture.md#imports-and-cross-feature-communication), [Feature structure](feature-structure.md#boundaries-and-public-apis), and [Coding standards](coding-standards.md#naming).
 
 ## HTTP clients and API functions
 
-- Use browser `fetch` for HTTP requests unless the project adopts another client. Keep a single integration's configuration in its adapter. Extract a shared client helper only when multiple features share the same origin and policy. Avoid changing global defaults or adding automatic retries to every request.
-- Use a fixed or validated public API base URL. Respect the app's configured deployment base path and keep private integration URLs or credentials strictly in server-only configuration. Treat `VITE_*` and `NEXT_PUBLIC_*` values as public. See [Architecture](architecture.md#routing-and-deployment) and [Security](security.md#secrets-and-deployment).
-- Set `Accept` and `Content-Type` according to the endpoint and body. Attach bearer credentials only to the intended API origin. Enable cross-origin cookies only for a cookie-based API that explicitly supports them. Use a separate request with `credentials: 'omit'` and `referrerPolicy: 'no-referrer'` (and no app bearer token) for signed storage transfers.
-- Type the request and domain result. Build the endpoint path, encode path segments, and serialize supported pagination, sorting, and filters in the adapter. Handle the actual success contract, including an empty body for a `204`. Check `response.ok` with `fetch` and translate transport rejections at the adapter boundary.
-- Accept and forward an `AbortSignal` for cancellable reads. Pass it through each request in a chain. Treat a superseded or aborted result as cancellation and suppress stale UI updates. Aborting a browser request does not undo a committed write or cancel a queued job. Use operation-specific timeouts where there is a latency budget and distinguish deadlines from cancellation.
+- **Shared browser HTTP client (`apps/web/src/shared/lib/http-client.ts`):** Route feature requests through the shared browser `fetch` helper targeting a validated public API base URL env var (for example, `VITE_API_BASE_URL` defaulting to same-origin `/api/v1`). Send `Accept: application/json`, the configured anti-CSRF header (such as `X-Requested-With: fetch`), `credentials: 'same-origin'`, and `redirect: 'error'`. Leave `Content-Type` unset when passing `FormData` so the browser generates the multipart boundary automatically.
+- **Timeouts and cancellation:** Combine an operation-specific timeout (`AbortController` + `timeoutMs`, longer for binary uploads) with any caller-supplied `AbortSignal` so external cancellations (`cancelled`) stay distinct from deadlines (`timeout`). Pass `signal` through every query read (`queryFn: ({ signal }) => ...`). Aborting a browser request does not undo an already committed server write.
+- **Proxy and external transfers:** Use Vite's dev proxy for configured same-origin API, health, and storage prefixes (such as `/api`, `/healthz`, `/readyz`, `/storage` — see [AGENTS.md](../AGENTS.md) and [README.md](../README.md)) during local development, and use `credentials: 'omit'` with `referrerPolicy: 'no-referrer'` (and no app bearer token or cookies) if downloading from third-party signed storage URLs.
+- **Hono BFF routes (`apps/api/src/routes/`):** Inject server dependencies (`config`, `gateway`, rate limiters, image processor) via `createApp(deps)` so routes remain pure, testable, and independent of global singletons. Parse `JSON` and `FormData` explicitly, validate query and body parameters with shared Zod schemas (`safeParse`), forward request-scoped errors cleanly, and map gateway domain statuses (`not_found`, `conflict`, unavailability, precondition/value drift, idempotency conflict, validation rules) to explicit HTTP status codes.
 
 ## Runtime validation and errors
 
-Read external JSON as `unknown`. Validate required fields before mapping or using them, especially when a response controls a workflow or file transfer. Use a runtime schema library (such as Zod v4) for structured server boundaries and complex forms, and focused type guards for small contracts. With Zod v4, prefer `safeParse` at user and API boundaries to handle validation failures explicitly, use top-level format validators (`z.email()`, `z.uuid()`, `z.url()`), and keep default unknown-key stripping rather than `.passthrough()` on untrusted payloads. Validate at the trusted server entry point even if client-side checks guide the UI. See [Zod parsing](https://zod.dev/basics).
+Read external JSON as `unknown` on both client and server boundaries. Validate untrusted inputs and responses using shared Zod v4 schemas (`z.strictObject` on write requests to reject unknown properties, `safeParse` at HTTP boundaries, and top-level format validators `z.email()`, `z.uuid()`, `z.url()`). See [Zod parsing](https://zod.dev/basics).
+
+Return structured **RFC 9457 Problem Details** (`Content-Type: application/problem+json; charset=utf-8`) from the BFF error helper:
 
 ```ts
-import { z } from 'zod';
-
-const finalizedItemSchema = z.object({
-  itemId: z.uuid(),
-  filename: z.string().min(1),
-  size: z.number().int().positive(),
-});
-
-type FinalizedItem = z.infer<typeof finalizedItemSchema>;
-
-export function parseFinalizedItem(payload: unknown): FinalizedItem {
-  return finalizedItemSchema.parse(payload);
-}
+type ProblemDetail = {
+  type: string;
+  title: string;
+  status: number;
+  code: string;
+  detail: string;
+  requestId?: string;
+  fieldErrors?: Record<string, string[]>;
+};
 ```
 
-Translate a thrown schema error to a response validation failure at the adapter boundary. Keep raw validation issues out of user-facing messages.
-
-For new operations, normalize the failure where transport details are known:
+Normalize client failures into a discriminated union in `apps/web/src/shared/lib/api-error.ts`:
 
 ```ts
 type ApiFailure =
-  | { kind: 'authentication' | 'authorization' | 'http'; status: number; retryAfterMs?: number }
-  | { kind: 'validation'; source: 'request' | 'response'; status?: number }
-  | { kind: 'network' | 'timeout' | 'cancelled' | 'unexpected' };
+  | {
+      kind: 'http';
+      status: number;
+      code: string;
+      message: string;
+      requestId?: string;
+      fieldErrors?: Record<string, string[]>;
+      retryAfterMs?: number;
+      problem?: ProblemDetail;
+    }
+  | { kind: 'network'; message: string }
+  | { kind: 'timeout'; message: string }
+  | { kind: 'cancelled'; message: string }
+  | { kind: 'validation'; message: string; issues: unknown };
 ```
 
-| Failure                                  | Handling                                                                                                                                       |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cancellation                             | Stop work or ignore its result. Skip error toasts and retries.                                                                                 |
-| Network or timeout                       | Keep usable data or inputs. A safe read can use bounded backoff. A timed-out write may already have committed.                                 |
-| `400` or `422` validation                | Show safe field or operation feedback when the endpoint identifies a validation failure. Retry after correcting the input.                     |
-| `401` authentication                     | Handle missing or expired credentials in the owning session flow. Stop protected polling or fetching and prompt for a new session when needed. |
-| `403` authorization                      | Show access denied or the endpoint's documented equivalent. Avoid retrying with unchanged permissions.                                         |
-| `404` missing resource                   | Show the resource's missing state. Treat it as empty only when the endpoint explicitly defines that meaning.                                   |
-| `409` conflict                           | Refresh or reconcile the current revision before retrying where the operation uses version checks.                                             |
-| `429` or transient `5xx`                 | Honor `Retry-After` when present. Use bounded backoff only when the operation is safe to repeat. Keep other `5xx` failures visible.            |
-| Malformed response or unexpected failure | Show a safe generic message. Record sanitized diagnostic context and avoid automatic retries for a contract error.                             |
-
-Parse `Retry-After` as seconds or an HTTP date. Put retry policy at one layer to avoid multiplying attempts. Log safe operation names, status, or approved request identifiers. Keep raw error objects, headers, response bodies, bearer tokens, signed URLs, and private content out of user messages and logs. See [HTTP Retry-After semantics](https://www.rfc-editor.org/rfc/rfc9110.html#name-retry-after).
+| Failure                                  | Handling                                                                                                                            |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Cancellation                             | Stop work or ignore its result. Skip error toasts and retries.                                                                      |
+| Network or timeout                       | Keep usable data or inputs. Safe reads may retry with bounded backoff; check idempotent retry support before repeating writes.      |
+| `400` or `422` validation / domain rule  | Surface safe `detail` and `fieldErrors` on the offending control. Retry only after correcting input.                                |
+| `401` authentication                     | Cancel/remove protected session-scoped queries, reset session query data, and prompt for sign-in.                                   |
+| `403` authorization / CSRF failure       | Show access denied or forbidden state without retrying under unchanged credentials or headers.                                      |
+| `404` missing resource                   | Show the resource's missing state (or opaque `404` for invalid/unmatched capability tokens).                                        |
+| `409` conflict / drift / idempotency     | Invalidate stale resource queries on version conflict or precondition/availability drift, or surface idempotency conflicts cleanly. |
+| `413` / `415` media upload error         | Surface size or format limit guidance without mutating stored records.                                                              |
+| `429` or transient `5xx`                 | Honor `Retry-After` (numeric seconds or HTTP date) in `QueryClient` backoff for safe reads; avoid unbounded automatic retries.      |
+| Malformed response or unexpected failure | Show a safe generic message. Log sanitized `requestId`/status diagnostics without raw secrets, cookies, or stack traces.            |
 
 ## Queries and request lifetime
 
-Prefer **TanStack Query v5** as the default for cached client-side queries when reading HTTP endpoints, keeping its query cache authoritative without mirroring responses into Zustand, Redux, or Context. In Redux-centric apps, **RTK Query** is a valid alternative. See [State management](state-management.md#server-state) for cache ownership.
+Use **TanStack Query v5** as the default for cached client-side queries, keeping its cache authoritative without mirroring responses into Zustand or Context. See [State management](state-management.md#server-state) for cache ownership.
 
-- Use serializable keys such as `['users', 'list', { page, sort, search }]`, including every normalized input and a nonsecret scope for private data.
-- Choose `staleTime` for freshness and `gcTime` for inactive retention. See [Query defaults](https://tanstack.com/query/v5/docs/framework/react/guides/important-defaults) and [query retries](https://tanstack.com/query/v5/docs/framework/react/guides/query-retries).
-- Gate conditional reads with `enabled` or `skipToken`. Use `useInfiniteQuery` for cursor-based append. See [infinite queries](https://tanstack.com/query/v5/docs/framework/react/guides/infinite-queries).
+- **Normalized query keys:** Group keys by domain and normalized filter parameters (e.g., `['records', 'infinite', { limit, status, range, sort, q }]`). Never embed credentials, cookies, or secret tokens in query keys.
+- **Composite keyset pagination:** Prefer composite cursor pagination (such as `<createdAtIso>|<uuid>`) with `useInfiniteQuery` and matching composite database indexes over `OFFSET` pagination on growing tables. Pause `refetchInterval` background polling when the user has expanded beyond the first page (`pages.length > 1`) or when a polled entity reaches a terminal status.
+- **Selective retries:** Configure `QueryClient` to retry only `network`, `timeout`, `429`, and `5xx` failures up to bounded attempts while honoring `Retry-After` headers, and set `retry: false` on mutations and auth checks.
 
-```ts
-import { useQuery } from '@tanstack/react-query';
+## Mutations, concurrency, and binary uploads
 
-type User = { id: number; name: string };
-type UserFilters = { page: number; sort: 'name' | 'newest'; search: string };
-const userListKey = ['users', 'list'] as const;
-
-function isUser(value: unknown): value is User {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'id' in value &&
-    typeof value.id === 'number' &&
-    'name' in value &&
-    typeof value.name === 'string'
-  );
-}
-
-export async function getUsers(
-  baseUrl: string,
-  filters: UserFilters,
-  signal: AbortSignal,
-): Promise<User[]> {
-  const params = new URLSearchParams({
-    page: String(filters.page),
-    sort: filters.sort,
-    search: filters.search,
-  });
-  const response = await fetch(`${baseUrl}/users?${params.toString()}`, {
-    headers: { Accept: 'application/json' },
-    signal,
-  });
-  if (!response.ok) {
-    throw new Error(`User request failed (${response.status}).`);
-  }
-  const data: unknown = await response.json();
-  if (!Array.isArray(data) || !data.every(isUser)) {
-    throw new Error('The user list response is invalid.');
-  }
-  return data;
-}
-
-export function useUsers(baseUrl: string, filters: UserFilters) {
-  return useQuery({
-    queryKey: [...userListKey, filters],
-    queryFn: ({ signal }) => getUsers(baseUrl, filters, signal),
-    retry: false,
-  });
-}
-```
-
-## Mutations and concurrent writes
-
-- Keep create, update, and delete requests in plain operations. Wrap client HTTP writes in `useMutation` when using TanStack Query, or call the Server Action or HTTP contract in Next.js apps.
-- On success, use `setQueryData` for an exact record when the response is authoritative, and invalidate only affected list or detail keys when the server recalculates results. See [mutation invalidation](https://tanstack.com/query/v5/docs/framework/react/guides/invalidations-from-mutations).
-- Disable duplicate submissions while a write is pending and preserve input on failure. Use server-side idempotency or revision checks where concurrent writes matter. See [optimistic updates](https://tanstack.com/query/v5/docs/framework/react/guides/optimistic-updates).
+- **Idempotency on creation writes:** Attach a per-attempt `Idempotency-Key` header on sensitive creation requests and store `(idempotency_key, payload_hash)` atomically in PostgreSQL (`409` conflict when a key is reused with a different canonical payload; safe replay when identical). Regenerate the client key whenever the user changes the submitted payload.
+- **Optimistic concurrency control (`expectedVersion`):** Send the record's integer `version` in `PUT`/`PATCH` mutations and enforce `WHERE id = $id AND version = $expected_version` in the database trigger/update path, returning `409 Conflict` on stale writes and invalidating the query cache on the client.
+- **Precondition and drift guards:** Pass expected totals, versions, or preconditions on transactional writes when user confirmation depends on prior displayed values so server-recomputed invariants or availability changes return an explicit `409` conflict rather than committing an unexpected state.
+- **Server-mediated binary uploads:** Validate file size (`413`) and decoded media headers (`415` / `400`) in the BFF before normalizing and uploading to object storage, and clean up replaced or unreferenced blobs cleanly. See [Database and storage](database-and-storage.md#storage-buckets-and-media-lifecycle).
 
 ## Authentication and security
 
-Follow the owning application's session mechanism (documented in `README.md`). For protected operations, verify credentials, scope, and expiry on the server. Frontend access checks guide the UI; authorization belongs at each server entry point or the service it calls. See [Security](security.md#authentication-and-authorization) and [session state](state-management.md#persistence-and-session-boundaries).
+Follow the BFF cookie and RLS architecture documented in [Security](security.md#authentication-and-authorization) and [Database and storage](database-and-storage.md#row-level-security-rls-and-client-separation). Verify credentials, CSRF headers, `Origin`, and server-side allowlist/role membership on the server for every protected endpoint, and forward the verified JWT so PostgreSQL RLS enforces the same boundaries at the data layer.
 
 ## Testing
 
-Colocate operation tests. Stub the remote boundary and assert endpoint inputs, normalized outputs, transport and HTTP failures, malformed data, and cancellation. Use a fresh `QueryClient` (with `retry: false` for non-retry scenarios) for TanStack Query tests. See [Testing strategy](testing-strategy.md).
+Colocate operation, route, and contract tests across the owning modules (such as browser HTTP client tests under `apps/web/src/shared/lib/`, BFF route/middleware tests under `apps/api/src/`, and schema/helper tests under `packages/contracts/src/`). Stub `globalThis.fetch` for browser HTTP tests and pass an in-memory backend gateway test double into `createApp(deps)` for Hono BFF tests. Assert request shapes, required security/idempotency/capability headers, RFC 9457 error normalization, `Retry-After` parsing, cancellation, concurrency conflicts (`409`), and Zod validation failures. Use a fresh `QueryClient` (`retry: false` for non-retry scenarios) in TanStack Query component and hook tests. See [Testing strategy](testing-strategy.md).

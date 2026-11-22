@@ -2,11 +2,11 @@
 
 ## TypeScript
 
-- Use TypeScript for application code. Keep `strict` enabled in the [TypeScript configuration](../tsconfig.json). Specialized Node integration scripts or build configs may use `.mjs` or `.js` where justified by runtime or tooling requirements.
+- Use TypeScript for application, server, and contract code. Keep `strict` enabled across per-workspace TypeScript configs (`apps/*/tsconfig.json`, `packages/*/tsconfig.json`), keeping React/browser UI libs in `apps/web/tsconfig.json`, Node types in `apps/api/tsconfig.json`, and minimal ES + standard Web API libs (such as `"DOM"` when pure helpers call standard globals like `URL` without `@types/node`) in `packages/contracts/tsconfig.json`, while relying on `.oxlintrc.json` to block UI and server runtime imports. Specialized Node orchestration scripts or Vite config files may use `.mjs` or `.js` where justified by runtime or tooling requirements.
 - Let TypeScript infer straightforward local values and implementation return types. Name public prop, input, and result types where callers need a contract. Use interfaces for object contracts that extend other props and type aliases for unions or derived types. Reuse the owning module's types.
 - Reserve explicit `any` for a documented integration constraint. Use `unknown` for values that have yet to be checked and narrow them before use. Handle null and missing values with a guard or a supported default. An unavoidable type or non-null assertion needs a nearby explanation of the invariant that makes it safe.
 - Prefer `satisfies` to validate object literals without widening literal types, use `as const` and `readonly` (including `ReadonlySet` and `ReadonlyMap`) for immutable contracts, and enforce exhaustive `switch` narrowing (`never`) on discriminated unions.
-- Validate external data before using it as a domain type. Use a runtime schema (such as Zod v4 where installed, preferring `safeParse` and top-level format validators like `z.email()`, `z.uuid()`, and `z.url()`) or a focused type guard at the boundary that owns the input. Server Actions, Route Handlers, and complex forms should validate inputs with a schema library when adopted. See [API design](api-design.md) and [State management](state-management.md#form-state) for validation contracts.
+- Validate external data before using it as a domain type. Use Zod v4 runtime schemas (preferring `z.strictObject` for untrusted write payloads, `safeParse` at user and API boundaries, and top-level format validators such as `z.email()`, `z.uuid()`, and `z.url()`) in shared contract schemas (`packages/contracts/src/*.schema.ts`), Hono route handlers (`apps/api/src/routes/`), and runtime environment config (`apps/api/src/config/env.ts`). See [API design](api-design.md) and [State management](state-management.md#form-state) for validation contracts.
 
 Validate a quantity before passing it to feature code:
 
@@ -21,37 +21,35 @@ export function parseQuantity(value: unknown): number | undefined {
 
 ## Naming
 
-Use these defaults for new code and preserve established conventions where a module consistently follows a stack-specific style.
+Use these defaults for new code and preserve established conventions where a module follows a consistent local style.
 
-| Item                        | Convention                                                                                     |
-| --------------------------- | ---------------------------------------------------------------------------------------------- |
-| Component names             | PascalCase, such as `OrderSummary`                                                             |
-| Component files             | PascalCase `.tsx` in Vite apps & shared UI; kebab-case `.tsx` in Next.js features              |
-| Custom hook names           | camelCase with a `use` prefix, such as `useOrderFilters`                                       |
-| Custom hook files           | Match hook name (`useOrderFilters.ts`) in Vite; kebab-case (`use-order-filters.ts`) in Next.js |
-| Client store files          | Match store hook name (`useFiltersStore.ts`) in Vite; kebab-case in Next.js                    |
-| Runtime schema files        | kebab-case `*.schema.ts` (or feature-root `schemas.ts` for compact features)                   |
-| Functions and variables     | camelCase, such as `calculateOrderTotal` or `formatReceiptDate`                                |
-| API modules                 | camelCase function exports, such as `getOrders`, in kebab-case files                           |
-| Types and interfaces        | PascalCase, such as `OrderSummaryProps`                                                        |
-| Feature and utility folders | kebab-case, such as `order-history/`                                                           |
-| Non-component utility files | kebab-case `.ts`, such as `order-totals.ts`                                                    |
-| Constants                   | `UPPER_SNAKE_CASE` for fixed keys and limits, camelCase for ordinary values                    |
-| Guides in `docs/`           | kebab-case `.md`, such as `coding-standards.md`                                                |
+| Item                         | Convention                                                                                |
+| ---------------------------- | ----------------------------------------------------------------------------------------- |
+| Component names & files      | PascalCase identifier and `.tsx` file, such as `SummaryCard` / `SummaryCard.tsx`          |
+| Custom hook names & files    | camelCase `use` prefix matching filename, such as `useRecordFilters.ts`                   |
+| Client store files           | Match store hook name, such as `useWorkspaceStore.ts`                                     |
+| Shared contract schema files | kebab-case `*.schema.ts` in `packages/contracts/src/`                                     |
+| API / BFF modules & routes   | camelCase exports in kebab-case `.ts` files under `apps/api/src/{routes,middleware,lib}/` |
+| Feature & utility folders    | kebab-case, such as `record-history/`                                                     |
+| Non-component utility files  | kebab-case `.ts`, such as `pricing-totals.ts`                                             |
+| Functions and variables      | camelCase, such as `calculateTotal` or `formatTimestamp`                                  |
+| Types and interfaces         | PascalCase, such as `SummaryCardProps`                                                    |
+| Constants                    | `UPPER_SNAKE_CASE` for fixed keys and limits, camelCase for ordinary values               |
+| SQL migration files          | `<YYYYMMDDHHMMSS>_<snake_case>.sql` in `supabase/migrations/`                             |
+| Guides in `docs/`            | kebab-case `.md`, such as `coding-standards.md`                                           |
 
-- Vite apps use PascalCase component folders and files.
-- See [Feature structure](feature-structure.md) for directory layout details.
-- Kebab-case filenames are the default for new API and utility modules.
+- See [Feature structure](feature-structure.md) and [Database and storage](database-and-storage.md) for directory layouts across workspaces.
+- Kebab-case filenames are the default for new API, contract, middleware, and utility modules.
 
 ## Imports and code clarity
 
-- In new modules, group built-in and third-party imports first, followed by app aliases, and relative imports. Preserve the order of side-effect imports when it affects initialization or styling.
-- Use `import type` for type-only imports or inline `type` when importing a type alongside values from the same module. Use `@/` for `src/`-rooted imports inside apps where it clarifies ownership. Use relative imports within a feature.
-- Prefer explicit named exports for reusable code. Use default exports where the framework or an existing integration expects them. Across feature boundaries, import through declared public entry points. Keep feature dependencies one-way and acyclic. See [Architecture](architecture.md#imports-and-cross-feature-communication).
+- In new modules, group built-in (`node:*` in backend/scripts) and third-party imports first, followed by workspace package imports (such as `@<scope>/contracts`), app-rooted aliases (`@/`), and relative imports. Preserve the order of side-effect imports when it affects initialization or styling.
+- Use `import type` for type-only imports or inline `type` when importing a type alongside values from the same module. Use `@/` only inside `apps/web/src/` as configured in `apps/web/tsconfig.json`. Use relative imports within a feature or backend slice.
+- Prefer explicit named exports for reusable code. Use default exports only where the framework or lazy-loading boundary expects them. Across feature and workspace boundaries, import through declared public entry points (`index.ts` or workspace package exports). Keep dependencies one-way and acyclic. See [Architecture](architecture.md#imports-and-cross-feature-communication).
 
 ```ts
 import { useState } from 'react';
-import { OrderHistory } from '@/features/order-history';
+import { RecordHistory } from '@/features/record-history';
 ```
 
 ## React
@@ -66,7 +64,7 @@ import { OrderHistory } from '@/features/order-history';
 
 ## Styling
 
-- Use Tailwind CSS v4 with `@tailwindcss/vite` and semantic `--ui-*` / `ui-*` tokens.
+- Use Tailwind CSS v4 with `@tailwindcss/vite` and semantic CSS theme tokens/utilities defined in the app's global stylesheet (see [AGENTS.md](../AGENTS.md) for exact token names).
 - Preserve narrow-screen usability, keyboard focus, and reduced-motion behavior. See [Component guidelines](component-guidelines.md) for stylesheet integration and accessibility.
 
 ## Code quality and tooling
@@ -74,11 +72,11 @@ import { OrderHistory } from '@/features/order-history';
 - Name functions after the work they do and keep them focused on one operation. Reuse reducers, selectors, validators, and helpers that already express the same behavior. Extract a helper when its name makes a distinct operation easier to understand or when there is a concrete reuse case.
 - Choose collections for intent and key safety: use `Array` for ordered sequences, plain objects for fixed serializable records, `Set` for membership and uniqueness, and `Map` for dynamic, non-string, or untrusted keys (avoiding prototype key collisions). Use `ReadonlySet` and `ReadonlyMap` for read-only contracts. See [Performance](performance.md#data-structures-and-algorithmic-complexity) for `O(1)` vs `O(n)` tradeoffs and indexing hot paths.
 - Handle failures explicitly. Narrow caught values before reading their fields, and recover with a documented fallback or pass the failure to the owning error handler. Remove dead code and unused imports or dependencies in the scope of the change.
-- Follow [Prettier](../.prettierrc.json) for two-space indentation, single quotes in JavaScript and TypeScript, semicolons, trailing commas, and LF line endings. Format changed files only. The root lint script uses [Oxlint](../.oxlintrc.json), which checks the Rules of Hooks, dependency cycles, accessibility warnings, and boundary-crossing imports. Select checks using the [testing strategy](testing-strategy.md#choosing-checks).
+- Follow [Prettier](../.prettierrc.json) for two-space indentation, single quotes in JavaScript and TypeScript, semicolons, trailing commas, and LF line endings. Format changed files only. The root lint script uses [Oxlint](../.oxlintrc.json), which checks the Rules of Hooks, dependency cycles, configured accessibility lint rules (such as `jsx-a11y/alt-text`), and tier/feature boundary imports. Select checks using the [testing strategy](testing-strategy.md#choosing-checks).
 
 ## Dependencies and review
 
-- Use npm and a single root `package-lock.json`. Justify a new dependency by explaining what it provides beyond existing code or packages. Follow the [install instructions](../README.md#install) for supported Node versions and [Security](security.md#dependency-overrides) when changing a security override.
+- Use npm with a single root `package-lock.json`. Justify a new dependency by explaining what it provides beyond existing code or packages. Follow [README.md](../README.md) for supported Node versions and [Security](security.md#dependency-overrides) when changing a security override.
 - Use short lowercase commit subjects and add a scope when helpful, as in `fix(ui): restore button focus after close`. Pull requests describe the change and its user impact, record checks actually run, link an issue when applicable, and include screenshots for visible UI changes.
 
 ## Migration and exceptions

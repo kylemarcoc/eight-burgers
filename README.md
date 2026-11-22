@@ -13,7 +13,7 @@ Full-stack ordering storefront, owner admin console, REST BFF, and local Supabas
 ## Technology stack
 
 - **Frontend (`apps/web`)** — React 19, TypeScript, Vite 8, Tailwind CSS v4, React Router, TanStack Query v5, Zustand, Immer, and Leaflet.
-- **Backend (`apps/api`)** — Hono, `@hono/node-server`, `@supabase/supabase-js`, and Zod v4.
+- **Backend (`apps/api`)** — Hono, `@hono/node-server`, `@supabase/supabase-js`, Sharp, and Zod v4.
 - **Database (`supabase/`)** — Local Supabase CLI + PostgreSQL 17 with migrations, Row-Level Security, and atomic SQL RPCs.
 - **Testing & tooling** — Vitest, React Testing Library, Oxlint, and Prettier.
 
@@ -85,8 +85,8 @@ supabase/
   config.toml           Local Supabase CLI config (PostgreSQL 17)
   migrations/           Versioned SQL schema, RLS policies, and place_order() RPCs
   seeds/                Split catalog.sql (idempotent) and dev_admin.sql (local-only)
-docs/                   Engineering guides
-.agents/skills/         Repo-agnostic agent skills
+docs/                   Domain-agnostic engineering guides for this stack
+.agents/skills/         Stack- and repo-agnostic workflow skills (+ conditional stack checklists)
 ```
 
 ## Checks and builds
@@ -116,6 +116,7 @@ docs/                   Engineering guides
 - [Feature structure](./docs/feature-structure.md) — Feature ownership, public APIs, and translations
 - [State management](./docs/state-management.md) — Local, client, server, form, and URL state
 - [API design](./docs/api-design.md) — API clients, queries, mutations, and server routes
+- [Database and storage](./docs/database-and-storage.md) — PostgreSQL schema, migrations, RLS, RPCs, storage, and seeds
 - [Component guidelines](./docs/component-guidelines.md) — Reusable UI, hooks, and accessibility
 - [Performance](./docs/performance.md) — Profiling, complexity, rendering, and loading limits
 - [Testing strategy](./docs/testing-strategy.md) — Test coverage, local checks, CI, and release checks
