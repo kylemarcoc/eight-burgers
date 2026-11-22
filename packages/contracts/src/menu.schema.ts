@@ -85,6 +85,34 @@ export const menuItemsListResponseSchema = z.object({
   data: z.array(menuItemSchema),
 });
 
+export const MENU_IMAGE_MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+export const MENU_IMAGE_ALLOWED_INPUT_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/avif',
+] as const;
+
+export const uploadedMenuImageSchema = z.object({
+  imageUrl: safeImageUrlSchema,
+  path: z.string().min(1).max(200),
+  sizeBytes: z.number().int().positive(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  contentType: z.literal('image/webp'),
+});
+export type UploadedMenuImage = z.infer<typeof uploadedMenuImageSchema>;
+
+export const uploadedMenuImageResponseSchema = z.object({
+  data: uploadedMenuImageSchema,
+});
+export type UploadedMenuImageResponse = z.infer<typeof uploadedMenuImageResponseSchema>;
+
+export const deleteMenuImageRequestSchema = z.strictObject({
+  imageUrl: safeImageUrlSchema,
+});
+export type DeleteMenuImageRequest = z.infer<typeof deleteMenuImageRequestSchema>;
+
 export const MENU_ADDONS: readonly MenuAddon[] = [
   { id: 'sliced-cheese', name: 'Sliced Cheese', pricePhp: 20 },
   { id: 'bacon', name: 'Crispy Bacon', pricePhp: 20 },

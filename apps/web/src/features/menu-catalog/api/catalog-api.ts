@@ -4,12 +4,14 @@ import {
   deliveryZoneResponseSchema,
   menuItemResponseSchema,
   menuItemsListResponseSchema,
+  uploadedMenuImageResponseSchema,
   type CatalogPayload,
   type DeliveryPricingConfig,
   type DeliveryZone,
   type DeliveryZoneInput,
   type MenuItem,
   type MenuItemInput,
+  type UploadedMenuImage,
 } from '@eight-burgers/contracts';
 import { apiRequest } from '@/shared/lib/http-client';
 
@@ -78,6 +80,25 @@ export async function resetAdminMenuCatalog(): Promise<MenuItem[]> {
     schema: menuItemsListResponseSchema,
   });
   return res.data;
+}
+
+export async function uploadAdminMenuImage(file: File): Promise<UploadedMenuImage> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await apiRequest('/admin/menu-images', {
+    method: 'POST',
+    body: formData,
+    timeoutMs: 30_000,
+    schema: uploadedMenuImageResponseSchema,
+  });
+  return res.data;
+}
+
+export async function deleteUnusedAdminMenuImage(imageUrl: string): Promise<void> {
+  await apiRequest('/admin/menu-images', {
+    method: 'DELETE',
+    body: { imageUrl },
+  });
 }
 
 export async function patchAdminFreeDeliveryThreshold(params: {

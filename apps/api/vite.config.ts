@@ -3,7 +3,13 @@ import { defineConfig } from 'vitest/config';
 
 const nodeBuiltins = new Set([...builtinModules, ...builtinModules.map((mod) => `node:${mod}`)]);
 
-const externalDependencies = new Set(['@hono/node-server', '@supabase/supabase-js', 'hono', 'zod']);
+const externalDependencies = new Set([
+  '@hono/node-server',
+  '@supabase/supabase-js',
+  'hono',
+  'sharp',
+  'zod',
+]);
 
 export default defineConfig({
   build: {

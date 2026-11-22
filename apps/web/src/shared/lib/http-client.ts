@@ -75,8 +75,10 @@ export async function apiRequest<T = void>(
     ...options.headers,
   });
 
-  let serializedBody: string | undefined;
-  if (options.body !== undefined) {
+  let serializedBody: BodyInit | undefined;
+  if (options.body instanceof FormData) {
+    serializedBody = options.body;
+  } else if (options.body !== undefined) {
     headers.set('Content-Type', 'application/json');
     serializedBody = JSON.stringify(options.body);
   }

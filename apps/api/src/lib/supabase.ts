@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   DEFAULT_DELIVERY_ZONES,
   DEFAULT_FREE_DELIVERY_MIN_SUBTOTAL_PHP,
@@ -26,6 +27,11 @@ import {
 } from '@eight-burgers/contracts';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { ApiConfig } from '../config/env';
+import {
+  MENU_IMAGES_BUCKET,
+  buildMenuImagePublicUrl,
+  extractManagedMenuImagePath,
+} from './menu-images';
 
 export type MutationResult<T> =
   { status: 'ok'; data: T } | { status: 'not_found' } | { status: 'conflict'; latest: T };
@@ -111,6 +117,11 @@ export type ShopBackendGateway = {
   ) => Promise<MutationResult<MenuItem>>;
   deleteMenuItem: (accessToken: string, id: string) => Promise<'deleted' | 'not_found'>;
   resetMenuCatalog: (accessToken: string) => Promise<MenuItem[]>;
+  uploadMenuImage: (
+    accessToken: string,
+    file: { buffer: Uint8Array; contentType: 'image/webp' },
+  ) => Promise<{ path: string; imageUrl: string }>;
+  deleteUnusedMenuImage: (accessToken: string, imageUrl: string) => Promise<'deleted' | 'ignored'>;
   updateFreeDeliveryThreshold: (
     accessToken: string,
     minSubtotalPhp: number | null,
@@ -435,6 +446,53 @@ export function createSupabaseGateway(config: ApiConfig): ShopBackendGateway {
     };
   }
 
+  async function cleanupUnusedMenuImages(
+    client: SupabaseClient,
+    candidateUrls: readonly string[],
+  ): Promise<number> {
+    const urlToPath = new Map<string, string>();
+    for (const rawUrl of candidateUrls) {
+      const trimmed = rawUrl.trim();
+      const objectPath = extractManagedMenuImagePath(trimmed, config.supabaseUrl);
+      if (objectPath) {
+        urlToPath.set(trimmed, objectPath);
+      }
+    }
+    if (urlToPath.size === 0) return 0;
+
+    const candidateManagedUrls = [...urlToPath.keys()];
+    const { data: stillUsedRows, error: refError } = await client
+      .from('menu_items')
+      .select('image_url')
+      .in('image_url', candidateManagedUrls)
+      .returns<{ image_url: string }[]>();
+    if (refError) {
+      if (config.nodeEnv !== 'test') {
+        console.warn('[api] skipped menu image cleanup due to reference check error');
+      }
+      return 0;
+    }
+
+    const stillUsedPaths = new Set<string>();
+    for (const row of stillUsedRows ?? []) {
+      const path = extractManagedMenuImagePath(row.image_url, config.supabaseUrl);
+      if (path) stillUsedPaths.add(path);
+    }
+
+    const pathsToRemove = [...new Set(urlToPath.values())].filter(
+      (path) => !stillUsedPaths.has(path),
+    );
+    if (pathsToRemove.length === 0) return 0;
+
+    const { error: removeError } = await client.storage
+      .from(MENU_IMAGES_BUCKET)
+      .remove(pathsToRemove);
+    if (removeError && config.nodeEnv !== 'test') {
+      console.warn('[api] menu image storage cleanup failed:', removeError.message);
+    }
+    return removeError ? 0 : pathsToRemove.length;
+  }
+
   return {
     async checkDatabaseReady() {
       const { error } = await serviceClient.from('store_settings').select('id').limit(1);
@@ -670,6 +728,12 @@ export function createSupabaseGateway(config: ApiConfig): ShopBackendGateway {
 
     async updateMenuItem(accessToken, id, input, expectedVersion) {
       const client = createUserRlsClient(accessToken);
+      const { data: beforeRow } = await client
+        .from('menu_items')
+        .select('image_url')
+        .eq('id', id)
+        .maybeSingle<{ image_url: string }>();
+
       let updateQuery = client
         .from('menu_items')
         .update({
@@ -693,7 +757,12 @@ export function createSupabaseGateway(config: ApiConfig): ShopBackendGateway {
         .select(MENU_ITEM_COLUMNS)
         .maybeSingle<DbMenuItemRow>();
       if (error) throw error;
-      if (data) return { status: 'ok', data: mapMenuItem(data) };
+      if (data) {
+        if (beforeRow?.image_url && beforeRow.image_url !== data.image_url) {
+          await cleanupUnusedMenuImages(client, [beforeRow.image_url]).catch(() => undefined);
+        }
+        return { status: 'ok', data: mapMenuItem(data) };
+      }
 
       const { data: current, error: fetchError } = await client
         .from('menu_items')
@@ -735,14 +804,25 @@ export function createSupabaseGateway(config: ApiConfig): ShopBackendGateway {
         .from('menu_items')
         .delete()
         .eq('id', id)
-        .select('id')
-        .returns<{ id: string }[]>();
+        .select('id, image_url')
+        .returns<{ id: string; image_url: string }[]>();
       if (error) throw error;
-      return data && data.length > 0 ? 'deleted' : 'not_found';
+      if (!data || data.length === 0) return 'not_found';
+      const deletedUrls = data.map((row) => row.image_url).filter(Boolean);
+      if (deletedUrls.length > 0) {
+        await cleanupUnusedMenuImages(client, deletedUrls).catch(() => undefined);
+      }
+      return 'deleted';
     },
 
     async resetMenuCatalog(accessToken) {
       const client = createUserRlsClient(accessToken);
+      const { data: previousRows } = await client
+        .from('menu_items')
+        .select('image_url')
+        .returns<{ image_url: string }[]>();
+      const previousUrls = (previousRows ?? []).map((row) => row.image_url).filter(Boolean);
+
       const { error: deleteError } = await client.from('menu_items').delete().neq('id', '');
       if (deleteError) throw deleteError;
 
@@ -767,7 +847,33 @@ export function createSupabaseGateway(config: ApiConfig): ShopBackendGateway {
         .order('sort_order', { ascending: true })
         .returns<DbMenuItemRow[]>();
       if (error) throw error;
+      if (previousUrls.length > 0) {
+        await cleanupUnusedMenuImages(client, previousUrls).catch(() => undefined);
+      }
       return (data ?? []).map(mapMenuItem);
+    },
+
+    async uploadMenuImage(accessToken, file) {
+      const client = createUserRlsClient(accessToken);
+      const objectPath = `items/${randomUUID()}.webp`;
+      const { error } = await client.storage
+        .from(MENU_IMAGES_BUCKET)
+        .upload(objectPath, file.buffer, {
+          contentType: file.contentType,
+          cacheControl: '31536000',
+          upsert: false,
+        });
+      if (error) throw error;
+      return {
+        path: objectPath,
+        imageUrl: buildMenuImagePublicUrl(objectPath, config.supabaseUrl),
+      };
+    },
+
+    async deleteUnusedMenuImage(accessToken, imageUrl) {
+      const client = createUserRlsClient(accessToken);
+      const removedCount = await cleanupUnusedMenuImages(client, [imageUrl]);
+      return removedCount > 0 ? 'deleted' : 'ignored';
     },
 
     async updateFreeDeliveryThreshold(accessToken, minSubtotalPhp, expectedVersion) {

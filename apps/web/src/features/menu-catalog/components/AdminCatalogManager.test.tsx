@@ -224,4 +224,40 @@ describe('AdminCatalogManager', () => {
       expect((screen.getByLabelText(/price \(₱\)/i) as HTMLInputElement).value).toBe('175');
     });
   });
+
+  it('uploads a menu photo as WebP, validates file types, and cleans up abandoned uploads on cancel', async () => {
+    const { state } = installMockShopApi({ authenticated: true });
+    render(
+      <TestQueryWrapper>
+        <AdminCatalogManager />
+      </TestQueryWrapper>,
+    );
+
+    await screen.findByRole('heading', { level: 3, name: 'Burger Deluxe' });
+    const fileInput = screen.getByLabelText(/upload menu photo/i) as HTMLInputElement;
+
+    // Rejects unsupported MIME type client-side without hitting API
+    const badFile = new File(['<svg></svg>'], 'bad.svg', { type: 'image/svg+xml' });
+    fireEvent.change(fileInput, { target: { files: [badFile] } });
+    expect(screen.getByText(/please select a jpg, png, webp, or avif image file/i)).toBeTruthy();
+    expect(state.uploadedImages.size).toBe(0);
+
+    // Uploads valid photo, populates imageUrl, and tracks stored object
+    const validFile = new File([new Uint8Array([1, 2, 3])], 'burger.png', { type: 'image/png' });
+    fireEvent.change(fileInput, { target: { files: [validFile] } });
+
+    await waitFor(() => {
+      expect((screen.getByLabelText(/image url/i) as HTMLInputElement).value).toContain(
+        '/storage/v1/object/public/menu-images/items/',
+      );
+    });
+    expect(state.uploadedImages.size).toBe(1);
+    expect(screen.getByText(/uploaded webp/i)).toBeTruthy();
+
+    // Switching to edit another item cleans up the unsaved upload automatically
+    fireEvent.click(screen.getByRole('button', { name: /edit burger deluxe/i }));
+    await waitFor(() => {
+      expect(state.uploadedImages.size).toBe(0);
+    });
+  });
 });

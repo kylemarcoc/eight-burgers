@@ -1,4 +1,17 @@
-import { useCallback, useId, useMemo, useRef, useState, type FormEvent } from 'react';
+import {
+  MENU_IMAGE_ALLOWED_INPUT_MIME_TYPES,
+  MENU_IMAGE_MAX_UPLOAD_BYTES,
+  type UploadedMenuImage,
+} from '@eight-burgers/contracts';
+import {
+  useCallback,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+} from 'react';
 import { FoodImage } from '@/shared/components/FoodImage';
 import { getApiErrorMessage, isApiError } from '@/shared/lib/api-error';
 import { IMAGE_PRESETS, MENU_CATEGORIES } from '@/shared/shop/eight-burgers-seed';
@@ -61,10 +74,24 @@ function itemToFormState(item: MenuItem): FormState {
   };
 }
 
+const ALLOWED_IMAGE_MIME_SET = new Set<string>(MENU_IMAGE_ALLOWED_INPUT_MIME_TYPES);
+
+function formatKilobytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
 export function AdminCatalogManager() {
   const catalogQuery = useCatalogQuery();
-  const { createMenuItem, updateMenuItem, setItemAvailability, deleteMenuItem, resetCatalog } =
-    useMenuMutations();
+  const {
+    createMenuItem,
+    updateMenuItem,
+    setItemAvailability,
+    deleteMenuItem,
+    resetCatalog,
+    uploadMenuImage,
+    deleteUnusedMenuImage,
+  } = useMenuMutations();
 
   const menu = useMemo(() => catalogQuery.data?.menu ?? [], [catalogQuery.data?.menu]);
 
@@ -79,6 +106,21 @@ export function AdminCatalogManager() {
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [pendingItemIds, setPendingItemIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [pendingUploadedUrl, setPendingUploadedUrl] = useState<string | null>(null);
+  const [uploadedImageMeta, setUploadedImageMeta] = useState<Pick<
+    UploadedMenuImage,
+    'sizeBytes' | 'width' | 'height'
+  > | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const cleanupPendingUpload = useCallback(
+    (urlToCleanup: string | null) => {
+      if (!urlToCleanup) return;
+      deleteUnusedMenuImage.mutate(urlToCleanup);
+    },
+    [deleteUnusedMenuImage],
+  );
 
   const showStatus = useCallback((message: string, tone: 'success' | 'error' = 'success') => {
     setStatusBanner({ tone, message });
@@ -132,6 +174,10 @@ export function AdminCatalogManager() {
   }, [menu, inventorySearch, inventoryCategory]);
 
   function startEditing(item: MenuItem) {
+    cleanupPendingUpload(pendingUploadedUrl);
+    setPendingUploadedUrl(null);
+    setUploadedImageMeta(null);
+    setUploadError(null);
     setEditingId(item.id);
     setEditingVersion(item.version);
     setEditConflict(false);
@@ -143,11 +189,58 @@ export function AdminCatalogManager() {
   }
 
   function cancelEditing() {
+    cleanupPendingUpload(pendingUploadedUrl);
+    setPendingUploadedUrl(null);
+    setUploadedImageMeta(null);
+    setUploadError(null);
     setEditingId(null);
     setEditingVersion(undefined);
     setEditConflict(false);
     setForm(EMPTY_FORM);
     setFormErrors({});
+  }
+
+  async function handleImageFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    if (file.type && !ALLOWED_IMAGE_MIME_SET.has(file.type)) {
+      setUploadError('Please select a JPG, PNG, WebP, or AVIF image file.');
+      return;
+    }
+
+    if (file.size === 0) {
+      setUploadError('Selected image file is empty.');
+      return;
+    }
+
+    if (file.size > MENU_IMAGE_MAX_UPLOAD_BYTES) {
+      setUploadError('Image must be 5 MB or smaller.');
+      return;
+    }
+
+    setUploadError(null);
+    const previousUnsavedUrl = pendingUploadedUrl;
+    try {
+      const uploaded = await uploadMenuImage.mutateAsync(file);
+      if (previousUnsavedUrl && previousUnsavedUrl !== uploaded.imageUrl) {
+        cleanupPendingUpload(previousUnsavedUrl);
+      }
+      setPendingUploadedUrl(uploaded.imageUrl);
+      setUploadedImageMeta({
+        sizeBytes: uploaded.sizeBytes,
+        width: uploaded.width,
+        height: uploaded.height,
+      });
+      setForm((prev) => ({ ...prev, imageUrl: uploaded.imageUrl }));
+      setFormErrors((prev) => ({ ...prev, imageUrl: undefined }));
+      showStatus(
+        `Optimized photo to WebP (${formatKilobytes(uploaded.sizeBytes)}, ${uploaded.width}×${uploaded.height}). Save the listing to apply it.`,
+      );
+    } catch (error) {
+      setUploadError(getApiErrorMessage(error, 'Unable to upload photo right now.'));
+    }
   }
 
   async function reloadLatestEditingItem() {
@@ -231,6 +324,12 @@ export function AdminCatalogManager() {
         await createMenuItem.mutateAsync(payload);
         showStatus(`Added "${trimmedName}" (${formatPhp(payload.pricePhp)}) to the menu.`);
       }
+      if (pendingUploadedUrl && pendingUploadedUrl !== payload.imageUrl) {
+        cleanupPendingUpload(pendingUploadedUrl);
+      }
+      setPendingUploadedUrl(null);
+      setUploadedImageMeta(null);
+      setUploadError(null);
       setFormErrors({});
       setForm(EMPTY_FORM);
     } catch (error) {
@@ -241,7 +340,8 @@ export function AdminCatalogManager() {
     }
   }
 
-  const isSavingItem = createMenuItem.isPending || updateMenuItem.isPending;
+  const isSavingItem =
+    createMenuItem.isPending || updateMenuItem.isPending || uploadMenuImage.isPending;
 
   return (
     <div className="space-y-8 pb-24">
@@ -565,12 +665,47 @@ export function AdminCatalogManager() {
             </div>
 
             <div className="space-y-2">
-              <label
-                htmlFor="admin-item-image"
-                className="block text-xs font-semibold text-ui-text"
-              >
-                Image URL (Foodpanda / Facebook / Direct Image)
-              </label>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label
+                  htmlFor="admin-item-image"
+                  className="block text-xs font-semibold text-ui-text"
+                >
+                  Menu Photo (Upload or Image URL)
+                </label>
+                <input
+                  ref={fileInputRef}
+                  id="admin-item-image-file"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/avif"
+                  aria-label="Upload menu photo"
+                  disabled={uploadMenuImage.isPending}
+                  onChange={(event) => void handleImageFileChange(event)}
+                  className="sr-only"
+                />
+                <button
+                  type="button"
+                  disabled={uploadMenuImage.isPending}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="rounded-lg border border-ui-border bg-ui-surface-muted px-2.5 py-1 text-xs font-semibold text-ui-text hover:bg-ui-canvas disabled:opacity-60"
+                >
+                  {uploadMenuImage.isPending ? 'Uploading & optimizing…' : 'Upload photo'}
+                </button>
+              </div>
+              <p className="text-[11px] text-ui-text-muted">
+                JPG, PNG, WebP, or AVIF up to 5 MB — automatically optimized to WebP and stored in
+                Supabase Storage.
+              </p>
+              {uploadError ? (
+                <p role="alert" className="text-xs font-semibold text-ui-error">
+                  {uploadError}
+                </p>
+              ) : null}
+              {uploadedImageMeta && pendingUploadedUrl === form.imageUrl ? (
+                <p role="status" className="text-xs font-medium text-ui-accent tabular-nums">
+                  Uploaded WebP ({formatKilobytes(uploadedImageMeta.sizeBytes)} ·{' '}
+                  {uploadedImageMeta.width}×{uploadedImageMeta.height}) — save listing to publish.
+                </p>
+              ) : null}
               <input
                 ref={imageInputRef}
                 id="admin-item-image"
@@ -603,6 +738,11 @@ export function AdminCatalogManager() {
                     key={preset.label}
                     type="button"
                     onClick={() => {
+                      if (pendingUploadedUrl && pendingUploadedUrl !== preset.url) {
+                        cleanupPendingUpload(pendingUploadedUrl);
+                        setPendingUploadedUrl(null);
+                        setUploadedImageMeta(null);
+                      }
                       setForm((prev) => ({ ...prev, imageUrl: preset.url }));
                       setFormErrors((prev) => ({ ...prev, imageUrl: undefined }));
                     }}

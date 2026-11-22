@@ -59,7 +59,9 @@ export function installMockShopApi(options: MockApiOptions = {}) {
     menu: MenuItem[];
     deliveryPricing: DeliveryPricingConfig;
     orders: OrderRecord[];
+    uploadedImages: Set<string>;
     nextQueueSeq: number;
+    nextImageSeq: number;
   } = {
     authenticated: options.authenticated ?? false,
     menu: (options.initialMenu ?? DEFAULT_MENU_ITEMS).map((item) => ({
@@ -84,7 +86,9 @@ export function installMockShopApi(options: MockApiOptions = {}) {
       ...order,
       version: order.version ?? 1,
     })),
+    uploadedImages: new Set<string>(),
     nextQueueSeq: 101,
+    nextImageSeq: 1,
   };
 
   const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
@@ -328,8 +332,44 @@ export function installMockShopApi(options: MockApiOptions = {}) {
         return jsonResponse({ data: order });
       }
 
+      if (method === 'POST' && path === '/admin/menu-images') {
+        const formData = init?.body;
+        if (!(formData instanceof FormData) || !(formData.get('file') instanceof File)) {
+          return problemJson(400, 'IMAGE_FILE_REQUIRED', 'Attach an image file.');
+        }
+        const seq = state.nextImageSeq;
+        state.nextImageSeq += 1;
+        const uuid = `00000000-0000-4000-8000-${String(seq).padStart(12, '0')}`;
+        const objectPath = `items/${uuid}.webp`;
+        const imageUrl = `/storage/v1/object/public/menu-images/${objectPath}`;
+        state.uploadedImages.add(imageUrl);
+        return jsonResponse(
+          {
+            data: {
+              imageUrl,
+              path: objectPath,
+              sizeBytes: 42_500,
+              width: 1200,
+              height: 800,
+              contentType: 'image/webp',
+            },
+          },
+          201,
+        );
+      }
+
+      if (method === 'DELETE' && path === '/admin/menu-images') {
+        const payload = body as { imageUrl?: string } | undefined;
+        const targetUrl = payload?.imageUrl;
+        if (targetUrl && !state.menu.some((item) => item.imageUrl === targetUrl)) {
+          state.uploadedImages.delete(targetUrl);
+        }
+        return new Response(null, { status: 204 });
+      }
+
       if (method === 'POST' && path === '/admin/menu-items/reset') {
         state.menu = DEFAULT_MENU_ITEMS.map((item) => ({ ...item, version: 1 }));
+        state.uploadedImages.clear();
         return jsonResponse({ data: state.menu });
       }
 

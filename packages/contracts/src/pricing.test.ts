@@ -10,6 +10,7 @@ import {
   deliveryPricingPatchSchema,
   deliveryZoneEnabledPatchSchema,
   deliveryZoneInputSchema,
+  deleteMenuImageRequestSchema,
   estimateRoadDistanceKm,
   isSafeImageUrl,
   menuAvailabilityPatchSchema,
@@ -19,6 +20,7 @@ import {
   slugifyMenuId,
   slugifyZoneId,
   updateOrderStatusRequestSchema,
+  uploadedMenuImageResponseSchema,
 } from './index';
 
 describe('contracts schemas and pricing math', () => {
@@ -273,5 +275,25 @@ describe('contracts schemas and pricing math', () => {
         counts: { all: 0, active: 0, received: 0, grilling: 0, ready: 0, completed: 0 },
       }).success,
     ).toBe(true);
+
+    expect(
+      uploadedMenuImageResponseSchema.safeParse({
+        data: {
+          imageUrl:
+            '/storage/v1/object/public/menu-images/items/11111111-2222-4333-8444-555555555555.webp',
+          path: 'items/11111111-2222-4333-8444-555555555555.webp',
+          sizeBytes: 42_100,
+          width: 1200,
+          height: 800,
+          contentType: 'image/webp',
+        },
+      }).success,
+    ).toBe(true);
+
+    expect(
+      deleteMenuImageRequestSchema.safeParse({
+        imageUrl: 'javascript:alert(1)',
+      }).success,
+    ).toBe(false);
   });
 });

@@ -1,10 +1,131 @@
-import { menuAvailabilityPatchSchema, menuItemInputSchema } from '@eight-burgers/contracts';
+import {
+  MENU_IMAGE_MAX_UPLOAD_BYTES,
+  deleteMenuImageRequestSchema,
+  menuAvailabilityPatchSchema,
+  menuItemInputSchema,
+} from '@eight-burgers/contracts';
 import { Hono } from 'hono';
+import { MenuImageOptimizationError, optimizeMenuImageToWebp } from '../lib/image-optimizer';
 import { problemResponse, zodFieldErrors } from '../lib/problem';
 import type { ApiDeps, ApiEnv } from '../types';
 
-export function createAdminMenuRoutes(deps: Pick<ApiDeps, 'gateway'>): Hono<ApiEnv> {
+export function createAdminMenuRoutes(
+  deps: Pick<ApiDeps, 'gateway' | 'optimizeMenuImage'>,
+): Hono<ApiEnv> {
   const app = new Hono<ApiEnv>();
+  const optimizeImage = deps.optimizeMenuImage ?? optimizeMenuImageToWebp;
+
+  app.post('/menu-images', async (c) => {
+    const accessToken = c.get('adminAccessToken') ?? '';
+    let formBody: Record<string, string | File | (string | File)[]>;
+    try {
+      formBody = await c.req.parseBody();
+    } catch {
+      return problemResponse(c, {
+        status: 400,
+        code: 'INVALID_MULTIPART',
+        title: 'Bad Request',
+        detail: 'Request body must be valid multipart/form-data.',
+      });
+    }
+
+    const rawFile = formBody.file;
+    const uploadedFile = Array.isArray(rawFile) ? rawFile[0] : rawFile;
+    if (!(uploadedFile instanceof File)) {
+      return problemResponse(c, {
+        status: 400,
+        code: 'IMAGE_FILE_REQUIRED',
+        title: 'Bad Request',
+        detail: 'Attach an image file under the "file" field.',
+        fieldErrors: { file: ['Select a JPG, PNG, WebP, or AVIF image to upload.'] },
+      });
+    }
+
+    if (uploadedFile.size === 0) {
+      return problemResponse(c, {
+        status: 400,
+        code: 'EMPTY_FILE',
+        title: 'Bad Request',
+        detail: 'Select an image file before uploading.',
+        fieldErrors: { file: ['Uploaded image file is empty.'] },
+      });
+    }
+
+    if (uploadedFile.size > MENU_IMAGE_MAX_UPLOAD_BYTES) {
+      return problemResponse(c, {
+        status: 413,
+        code: 'FILE_TOO_LARGE',
+        title: 'Payload Too Large',
+        detail: 'Image file exceeds the 5 MB upload limit.',
+        fieldErrors: { file: ['Image must be 5 MB or smaller.'] },
+      });
+    }
+
+    const inputBuffer = new Uint8Array(await uploadedFile.arrayBuffer());
+    let optimized;
+    try {
+      optimized = await optimizeImage(inputBuffer);
+    } catch (error) {
+      if (error instanceof MenuImageOptimizationError) {
+        return problemResponse(c, {
+          status: error.status,
+          code: error.code,
+          title: error.status === 413 ? 'Payload Too Large' : 'Bad Request',
+          detail: error.message,
+          fieldErrors: { file: [error.message] },
+        });
+      }
+      throw error;
+    }
+
+    const stored = await deps.gateway.uploadMenuImage(accessToken, {
+      buffer: optimized.buffer,
+      contentType: optimized.contentType,
+    });
+
+    return c.json(
+      {
+        data: {
+          imageUrl: stored.imageUrl,
+          path: stored.path,
+          sizeBytes: optimized.sizeBytes,
+          width: optimized.width,
+          height: optimized.height,
+          contentType: optimized.contentType,
+        },
+      },
+      201,
+    );
+  });
+
+  app.delete('/menu-images', async (c) => {
+    const accessToken = c.get('adminAccessToken') ?? '';
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch {
+      return problemResponse(c, {
+        status: 400,
+        code: 'INVALID_JSON',
+        title: 'Bad Request',
+        detail: 'Request body must be valid JSON.',
+      });
+    }
+
+    const parsed = deleteMenuImageRequestSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return problemResponse(c, {
+        status: 400,
+        code: 'VALIDATION_ERROR',
+        title: 'Validation Failed',
+        detail: 'Invalid menu image URL.',
+        fieldErrors: zodFieldErrors(parsed.error),
+      });
+    }
+
+    await deps.gateway.deleteUnusedMenuImage(accessToken, parsed.data.imageUrl);
+    return c.body(null, 204);
+  });
 
   app.post('/menu-items', async (c) => {
     const accessToken = c.get('adminAccessToken') ?? '';

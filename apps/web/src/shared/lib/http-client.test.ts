@@ -111,4 +111,24 @@ describe('http-client', () => {
     await vi.advanceTimersByTimeAsync(600);
     await expectation;
   });
+
+  it('sends FormData bodies without overriding Content-Type while preserving CSRF headers', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: { ok: true } }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const formData = new FormData();
+    formData.append('file', new File(['abc'], 'photo.png', { type: 'image/png' }));
+
+    await apiRequest('/admin/menu-images', { method: 'POST', body: formData });
+    const [, init] = fetchSpy.mock.calls[0] ?? [];
+    expect(init?.body).toBe(formData);
+    const headers = init?.headers;
+    expect(headers).toBeInstanceOf(Headers);
+    expect(headers instanceof Headers ? headers.get('content-type') : null).toBeNull();
+    expect(headers instanceof Headers ? headers.get('x-requested-with') : null).toBe('fetch');
+  });
 });

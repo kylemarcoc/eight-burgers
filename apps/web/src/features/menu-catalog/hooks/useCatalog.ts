@@ -7,6 +7,7 @@ import {
   createAdminMenuItem,
   deleteAdminDeliveryZone,
   deleteAdminMenuItem,
+  deleteUnusedAdminMenuImage,
   fetchCatalog,
   patchAdminDeliveryZoneEnabled,
   patchAdminFreeDeliveryThreshold,
@@ -15,6 +16,7 @@ import {
   resetAdminMenuCatalog,
   updateAdminDeliveryZone,
   updateAdminMenuItem,
+  uploadAdminMenuImage,
 } from '../api/catalog-api';
 
 function handleAdminMutationError(queryClient: ReturnType<typeof useQueryClient>, error: unknown) {
@@ -76,12 +78,24 @@ export function useMenuMutations() {
     onError,
   });
 
+  const uploadMenuImage = useMutation({
+    mutationFn: (file: File) => uploadAdminMenuImage(file),
+    onError,
+  });
+
+  const deleteUnusedMenuImage = useMutation({
+    mutationFn: (imageUrl: string) => deleteUnusedAdminMenuImage(imageUrl),
+    onError,
+  });
+
   return {
     createMenuItem,
     updateMenuItem,
     setItemAvailability,
     deleteMenuItem,
     resetCatalog,
+    uploadMenuImage,
+    deleteUnusedMenuImage,
   };
 }
 

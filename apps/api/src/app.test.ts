@@ -38,6 +38,7 @@ function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
       string,
       { order: OrderRecord; idempotencyKey: string; payloadHash: string; receiptTokenHash: string }
     >;
+    uploadedImages: Set<string>;
     seq: number;
   };
 } {
@@ -48,6 +49,7 @@ function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
       string,
       { order: OrderRecord; idempotencyKey: string; payloadHash: string; receiptTokenHash: string }
     >;
+    uploadedImages: Set<string>;
     seq: number;
   } = {
     menu: DEFAULT_MENU_ITEMS.map((item) => ({
@@ -69,6 +71,7 @@ function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
       string,
       { order: OrderRecord; idempotencyKey: string; payloadHash: string; receiptTokenHash: string }
     >(),
+    uploadedImages: new Set<string>(),
     seq: 101,
   };
 
@@ -243,11 +246,32 @@ function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
       return { status: 'ok', data: updated };
     },
     deleteMenuItem: async (_token, id) => {
+      const target = state.menu.find((item) => item.id === id);
       const prevLen = state.menu.length;
       state.menu = state.menu.filter((item) => item.id !== id);
+      if (target && !state.menu.some((item) => item.imageUrl === target.imageUrl)) {
+        state.uploadedImages.delete(target.imageUrl);
+      }
       return state.menu.length < prevLen ? 'deleted' : 'not_found';
     },
-    resetMenuCatalog: async () => state.menu,
+    resetMenuCatalog: async () => {
+      state.uploadedImages.clear();
+      return state.menu;
+    },
+    uploadMenuImage: async () => {
+      const seq = state.seq;
+      state.seq += 1;
+      const path = `items/00000000-0000-4000-8000-${String(seq).padStart(12, '0')}.webp`;
+      const imageUrl = `/storage/v1/object/public/menu-images/${path}`;
+      state.uploadedImages.add(imageUrl);
+      return { path, imageUrl };
+    },
+    deleteUnusedMenuImage: async (_token, imageUrl) => {
+      if (state.menu.some((item) => item.imageUrl === imageUrl)) {
+        return 'ignored';
+      }
+      return state.uploadedImages.delete(imageUrl) ? 'deleted' : 'ignored';
+    },
     updateFreeDeliveryThreshold: async (_token, minSubtotalPhp, expectedVersion) => {
       if (expectedVersion !== undefined && state.deliveryPricing.version !== expectedVersion) {
         return { status: 'conflict', latest: state.deliveryPricing };
@@ -856,5 +880,67 @@ describe('Eight Burgers REST BFF', () => {
       data: DeliveryPricingConfig;
     };
     expect(disableBody.data.freeDeliveryMinSubtotalPhp).toBeNull();
+  });
+
+  it('uploads, optimizes to WebP, and cleans up unused menu images via admin endpoints', async () => {
+    const { gateway, state } = createFakeGateway();
+    const app = createApp({
+      config: TEST_CONFIG,
+      gateway,
+      optimizeMenuImage: async (buf) => ({
+        buffer: buf,
+        width: 1200,
+        height: 800,
+        sizeBytes: 32_100,
+        contentType: 'image/webp',
+      }),
+    });
+
+    const formData = new FormData();
+    formData.append(
+      'file',
+      new File([new Uint8Array([1, 2, 3, 4])], 'burger.png', { type: 'image/png' }),
+    );
+
+    // Unauthenticated upload rejected with 401
+    const unauthUpload = await app.request('/api/v1/admin/menu-images', {
+      method: 'POST',
+      headers: {
+        Origin: 'http://localhost:5173',
+        'X-Requested-With': 'fetch',
+      },
+      body: formData,
+    });
+    expect(unauthUpload.status).toBe(401);
+
+    // Authenticated upload succeeds and returns optimized WebP metadata
+    const uploadRes = await app.request('/api/v1/admin/menu-images', {
+      method: 'POST',
+      headers: {
+        Origin: 'http://localhost:5173',
+        'X-Requested-With': 'fetch',
+        Cookie: 'eb_access_token=valid-access-token',
+      },
+      body: formData,
+    });
+    expect(uploadRes.status).toBe(201);
+    const uploadBody = (await uploadRes.json()) as {
+      data: { imageUrl: string; path: string; contentType: string; width: number; height: number };
+    };
+    expect(uploadBody.data.contentType).toBe('image/webp');
+    expect(uploadBody.data.imageUrl).toContain('/storage/v1/object/public/menu-images/items/');
+    expect(state.uploadedImages.has(uploadBody.data.imageUrl)).toBe(true);
+
+    // Deleting an unused uploaded image removes it cleanly
+    const deleteRes = await app.request('/api/v1/admin/menu-images', {
+      method: 'DELETE',
+      headers: {
+        ...CSRF_HEADERS,
+        Cookie: 'eb_access_token=valid-access-token',
+      },
+      body: JSON.stringify({ imageUrl: uploadBody.data.imageUrl }),
+    });
+    expect(deleteRes.status).toBe(204);
+    expect(state.uploadedImages.has(uploadBody.data.imageUrl)).toBe(false);
   });
 });
