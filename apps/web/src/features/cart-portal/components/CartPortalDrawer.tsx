@@ -1,0 +1,1365 @@
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from 'react';
+import { createPortal } from 'react-dom';
+import { useCatalogQuery } from '@/features/menu-catalog';
+import { useOrderReceiptQuery, usePlaceOrderMutation } from '@/features/orders';
+import { ErrorBoundary } from '@/shared/components/ErrorBoundary';
+import { FoodImage } from '@/shared/components/FoodImage';
+import { getApiErrorMessage, isApiError } from '@/shared/lib/api-error';
+import { STORE_METADATA } from '@/shared/shop/eight-burgers-seed';
+import {
+  buildGoogleMapsPinUrl,
+  calculateDeliveryQuote,
+  formatOrderShareText,
+  formatPhp,
+  isValidCoordinates,
+} from '@/shared/shop/shop-storage';
+import type {
+  DeliveryPricingConfig,
+  FulfillmentMode,
+  GeoCoordinates,
+  OrderStatus,
+  PaymentMethod,
+} from '@/shared/shop/types';
+import {
+  useCartActions,
+  useCartLines,
+  useCartOpen,
+  useLastPlacedOrder,
+} from '@/shared/store/useCartStore';
+import { useResolvedCartSummary } from '../hooks/useResolvedCartSummary';
+
+const DeliveryMapPicker = lazy(() => import('./DeliveryMapPicker'));
+
+const EMPTY_DELIVERY_PRICING: DeliveryPricingConfig = {
+  zones: [],
+  freeDeliveryMinSubtotalPhp: null,
+};
+
+const RECEIPT_STATUS_LABELS: Record<OrderStatus, string> = {
+  received: 'Received',
+  grilling: 'On the Grill',
+  ready: 'Ready for Pickup / Dispatch',
+  completed: 'Completed',
+};
+
+function createIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `eb-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+}
+
+function MapPickerErrorFallback({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div
+      role="alert"
+      className="flex min-h-[330px] flex-col items-center justify-center gap-3 rounded-xl border border-ui-error/40 bg-ui-surface p-4 text-center text-xs text-ui-error"
+    >
+      <p className="font-semibold">Unable to load the interactive delivery map right now.</p>
+      <p className="text-ui-text-muted">
+        Retry loading the map, reload the page after an update, or switch to Kiosk Pickup to place
+        your order.
+      </p>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <button
+          type="button"
+          onClick={onRetry}
+          className="rounded-lg border border-ui-border bg-ui-surface-muted px-3 py-1.5 font-semibold text-ui-text hover:bg-ui-canvas"
+        >
+          Retry map
+        </button>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="rounded-lg bg-ui-accent px-3 py-1.5 font-semibold text-ui-on-accent hover:bg-ui-accent-hover"
+        >
+          Reload page
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function buildSmsOrderHref(contact: string, body: string): string {
+  const digits = contact.replace(/[^0-9+]/g, '');
+  return `sms:${digits}?body=${encodeURIComponent(body)}`;
+}
+
+type CheckoutFieldErrors = {
+  customerName?: string;
+  contactNumber?: string;
+  deliveryPin?: string;
+  addressOrNotes?: string;
+};
+
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(', ');
+
+function isElementVisible(element: HTMLElement): boolean {
+  if (element.hasAttribute('hidden') || element.closest('[hidden], [inert]')) {
+    return false;
+  }
+  if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
+    const style = window.getComputedStyle(element);
+    if (style.display === 'none' || style.visibility === 'hidden') {
+      return false;
+    }
+  }
+  return true;
+}
+
+function getFocusableElements(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    (element) =>
+      !element.hasAttribute('disabled') && element.tabIndex !== -1 && isElementVisible(element),
+  );
+}
+
+export function CartPortalDrawer() {
+  const catalogQuery = useCatalogQuery();
+  const cartLines = useCartLines();
+  const cartSummary = useResolvedCartSummary();
+  const isCartOpen = useCartOpen();
+  const lastPlacedOrderState = useLastPlacedOrder();
+  const {
+    setCartOpen,
+    setLineQuantity,
+    removeCartLine,
+    clearCart,
+    setLastPlacedOrder,
+    dismissLastOrder,
+  } = useCartActions();
+
+  const placeOrderMutation = usePlaceOrderMutation();
+  const liveReceiptQuery = useOrderReceiptQuery(
+    lastPlacedOrderState?.order.id ?? null,
+    lastPlacedOrderState?.receiptToken ?? null,
+    isCartOpen,
+  );
+  const lastPlacedOrder = liveReceiptQuery.data ?? lastPlacedOrderState?.order ?? null;
+  const deliveryPricing = catalogQuery.data?.deliveryPricing ?? EMPTY_DELIVERY_PRICING;
+
+  const [customerName, setCustomerName] = useState('');
+  const [contactNumber, setContactNumber] = useState('');
+  const [fulfillment, setFulfillment] = useState<FulfillmentMode>('kiosk-pickup');
+  const [deliveryPin, setDeliveryPin] = useState<GeoCoordinates | null>(null);
+  const [addressOrNotes, setAddressOrNotes] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
+  const [fieldErrors, setFieldErrors] = useState<CheckoutFieldErrors>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [removedNotice, setRemovedNotice] = useState<string | null>(null);
+  const [lastPrunedKey, setLastPrunedKey] = useState('');
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
+
+  const titleId = useId();
+  const nameErrorId = useId();
+  const contactErrorId = useId();
+  const pinErrorId = useId();
+  const addressErrorId = useId();
+
+  const portalRootRef = useRef<HTMLDivElement | null>(null);
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const contactInputRef = useRef<HTMLInputElement | null>(null);
+  const pinSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const notesInputRef = useRef<HTMLInputElement | null>(null);
+  const receiptHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  const attemptSignature = useMemo(
+    () =>
+      JSON.stringify({
+        cart: cartLines,
+        fulfillment,
+        deliveryPin,
+        customerName: customerName.trim(),
+        contactNumber: contactNumber.trim(),
+        addressOrNotes: addressOrNotes.trim(),
+        paymentMethod,
+      }),
+    [
+      cartLines,
+      fulfillment,
+      deliveryPin,
+      customerName,
+      contactNumber,
+      addressOrNotes,
+      paymentMethod,
+    ],
+  );
+  const idempotencyRef = useRef<{ signature: string; key: string }>({
+    signature: '',
+    key: createIdempotencyKey(),
+  });
+
+  function getOrRotateIdempotencyKey(): string {
+    if (idempotencyRef.current.signature !== attemptSignature) {
+      idempotencyRef.current = {
+        signature: attemptSignature,
+        key: createIdempotencyKey(),
+      };
+    }
+    return idempotencyRef.current.key;
+  }
+
+  const handleClose = useCallback(() => {
+    setConfirmClear(false);
+    setCopyStatus('idle');
+    setSubmitError(null);
+    setRemovedNotice(null);
+    setCartOpen(false);
+  }, [setCartOpen]);
+
+  const handlePinChange = useCallback((nextPin: GeoCoordinates) => {
+    setDeliveryPin(nextPin);
+    setSubmitError(null);
+    setFieldErrors((prev) => (prev.deliveryPin ? { ...prev, deliveryPin: undefined } : prev));
+  }, []);
+
+  const enabledZones = useMemo(
+    () =>
+      [...deliveryPricing.zones]
+        .filter((zone) => zone.enabled)
+        .sort((a, b) => a.maxDistanceKm - b.maxDistanceKm),
+    [deliveryPricing.zones],
+  );
+
+  const deliveryQuote = useMemo(
+    () =>
+      calculateDeliveryQuote({
+        fulfillment,
+        subtotalPhp: cartSummary.subtotalPhp,
+        deliveryPricing,
+        pin: fulfillment === 'delivery' ? deliveryPin : null,
+      }),
+    [fulfillment, cartSummary.subtotalPhp, deliveryPricing, deliveryPin],
+  );
+
+  useEffect(() => {
+    if (!isCartOpen) return;
+
+    previousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const portalNode = portalRootRef.current;
+    const isolatedSiblings: Array<{
+      element: HTMLElement;
+      hadInert: boolean;
+      prevAriaHidden: string | null;
+    }> = [];
+
+    for (const child of Array.from(document.body.children)) {
+      if (child instanceof HTMLElement && child !== portalNode) {
+        isolatedSiblings.push({
+          element: child,
+          hadInert: child.hasAttribute('inert'),
+          prevAriaHidden: child.getAttribute('aria-hidden'),
+        });
+        child.setAttribute('inert', '');
+        child.setAttribute('aria-hidden', 'true');
+      }
+    }
+
+    closeButtonRef.current?.focus();
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        handleClose();
+        return;
+      }
+
+      if (event.key === 'Tab' && dialogRef.current) {
+        const focusable = getFocusableElements(dialogRef.current);
+        if (focusable.length === 0) {
+          event.preventDefault();
+          dialogRef.current.focus();
+          return;
+        }
+
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+
+        if (event.shiftKey) {
+          if (active === first || !dialogRef.current.contains(active)) {
+            event.preventDefault();
+            last?.focus();
+          }
+        } else if (active === last || !dialogRef.current.contains(active)) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = previousBodyOverflow;
+
+      for (const entry of isolatedSiblings) {
+        if (!entry.hadInert) {
+          entry.element.removeAttribute('inert');
+        }
+        if (entry.prevAriaHidden === null) {
+          entry.element.removeAttribute('aria-hidden');
+        } else {
+          entry.element.setAttribute('aria-hidden', entry.prevAriaHidden);
+        }
+      }
+
+      const previousFocus = previousFocusRef.current;
+      previousFocusRef.current = null;
+      if (previousFocus && previousFocus.isConnected) {
+        previousFocus.focus();
+      }
+    };
+  }, [isCartOpen, handleClose]);
+
+  const removedLinesKey = catalogQuery.isSuccess ? cartSummary.removedLineIds.join(',') : '';
+  if (removedLinesKey && removedLinesKey !== lastPrunedKey) {
+    const count = cartSummary.removedLineIds.length;
+    setLastPrunedKey(removedLinesKey);
+    setRemovedNotice(
+      `Removed ${count} ${count === 1 ? 'item' : 'items'} from your bag that ${
+        count === 1 ? 'is' : 'are'
+      } no longer on the menu.`,
+    );
+  }
+
+  useEffect(() => {
+    if (!catalogQuery.isSuccess || cartSummary.removedLineIds.length === 0) return;
+    for (const lineId of cartSummary.removedLineIds) {
+      removeCartLine(lineId);
+    }
+  }, [catalogQuery.isSuccess, cartSummary.removedLineIds, removeCartLine]);
+
+  useEffect(() => {
+    if (isCartOpen && lastPlacedOrder && cartSummary.lines.length === 0 && cartLines.length === 0) {
+      receiptHeadingRef.current?.focus();
+    }
+  }, [isCartOpen, lastPlacedOrder, cartSummary.lines.length, cartLines.length]);
+
+  if (!isCartOpen) return null;
+
+  const hasEnabledZones = enabledZones.length > 0;
+  const hasUnavailableItems = cartSummary.unavailableLineIds.length > 0;
+  const hasTooManyLines = cartSummary.lines.length > 50;
+
+  const lowestZoneFeePhp = enabledZones.reduce<number | null>(
+    (min, zone) => (min === null || zone.feePhp < min ? zone.feePhp : min),
+    null,
+  );
+  const hasMultipleZoneFees = enabledZones.some((zone) => zone.feePhp !== lowestZoneFeePhp);
+
+  const deliveryOptionBadge = !hasEnabledZones
+    ? 'Paused'
+    : fulfillment === 'delivery' && deliveryPin
+      ? deliveryQuote.outOfRange
+        ? 'Out of range'
+        : deliveryQuote.isFreeDelivery || deliveryQuote.feePhp === 0
+          ? 'Free'
+          : `+${formatPhp(deliveryQuote.feePhp)}`
+      : deliveryQuote.freeDeliveryMinSubtotalPhp !== null &&
+          cartSummary.subtotalPhp >= deliveryQuote.freeDeliveryMinSubtotalPhp
+        ? 'Free'
+        : lowestZoneFeePhp === 0
+          ? 'Free'
+          : hasMultipleZoneFees && lowestZoneFeePhp !== null
+            ? `From ${formatPhp(lowestZoneFeePhp)}`
+            : lowestZoneFeePhp !== null
+              ? `+${formatPhp(lowestZoneFeePhp)}`
+              : 'Paused';
+
+  const isPinPending = fulfillment === 'delivery' && hasEnabledZones && !deliveryPin;
+  const deliveryFeePhp =
+    fulfillment === 'delivery' && deliveryPin && deliveryQuote.available ? deliveryQuote.feePhp : 0;
+  const grandTotalPhp = cartSummary.subtotalPhp + deliveryFeePhp;
+  const isDeliveryBlocked =
+    fulfillment === 'delivery' && (!hasEnabledZones || deliveryQuote.outOfRange);
+  const isCheckoutDisabled =
+    isDeliveryBlocked || hasUnavailableItems || hasTooManyLines || placeOrderMutation.isPending;
+
+  const freeDeliveryProgressPct =
+    deliveryQuote.freeDeliveryMinSubtotalPhp && deliveryQuote.freeDeliveryMinSubtotalPhp > 0
+      ? Math.min(
+          100,
+          Math.round((cartSummary.subtotalPhp / deliveryQuote.freeDeliveryMinSubtotalPhp) * 100),
+        )
+      : 0;
+
+  async function handleCheckoutSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (isCheckoutDisabled) return;
+
+    const nextErrors: CheckoutFieldErrors = {};
+    if (!customerName.trim()) {
+      nextErrors.customerName = 'Enter your name so we can call your order.';
+    }
+    if (fulfillment === 'delivery' && !contactNumber.trim()) {
+      nextErrors.contactNumber = 'Enter a mobile number so the rider can reach you.';
+    }
+    if (fulfillment === 'delivery' && !deliveryPin) {
+      nextErrors.deliveryPin =
+        'Pin your delivery location on the map to lock your exact delivery zone and fee.';
+    }
+    if (fulfillment === 'delivery' && !addressOrNotes.trim()) {
+      nextErrors.addressOrNotes =
+        'Enter your building, unit, or street instructions for the rider.';
+    }
+
+    if (
+      nextErrors.customerName ||
+      nextErrors.contactNumber ||
+      nextErrors.deliveryPin ||
+      nextErrors.addressOrNotes
+    ) {
+      setFieldErrors(nextErrors);
+      if (nextErrors.customerName) {
+        nameInputRef.current?.focus();
+      } else if (nextErrors.contactNumber) {
+        contactInputRef.current?.focus();
+      } else if (nextErrors.deliveryPin) {
+        pinSearchInputRef.current?.focus();
+      } else if (nextErrors.addressOrNotes) {
+        notesInputRef.current?.focus();
+      }
+      return;
+    }
+
+    setFieldErrors({});
+    setSubmitError(null);
+    setConfirmClear(false);
+    setCopyStatus('idle');
+
+    const idempotencyKey = getOrRotateIdempotencyKey();
+
+    try {
+      const response = await placeOrderMutation.mutateAsync({
+        idempotencyKey,
+        payload: {
+          customerName: customerName.trim(),
+          contactNumber: contactNumber.trim(),
+          fulfillment,
+          ...(fulfillment === 'delivery' && deliveryQuote.zone
+            ? { deliveryZoneId: deliveryQuote.zone.id }
+            : {}),
+          ...(fulfillment === 'delivery' && deliveryPin ? { deliveryPin } : {}),
+          addressOrNotes: addressOrNotes.trim(),
+          paymentMethod,
+          items: cartSummary.lines.map((line) => ({
+            itemId: line.item.id,
+            quantity: line.quantity,
+            addonIds: line.addons.map((addon) => addon.id),
+          })),
+          expectedTotalPhp: grandTotalPhp,
+        },
+      });
+
+      clearCart();
+      setLastPlacedOrder({
+        order: response.data,
+        receiptToken: response.receiptToken,
+      });
+      idempotencyRef.current = { signature: '', key: createIdempotencyKey() };
+      setCustomerName('');
+      setContactNumber('');
+      setAddressOrNotes('');
+      setDeliveryPin(null);
+    } catch (error) {
+      if (isApiError(error) && error.code === 'PRICE_CHANGED') {
+        idempotencyRef.current = { signature: '', key: createIdempotencyKey() };
+        setSubmitError(
+          'Menu or delivery prices just updated. Review your updated total below and submit again.',
+        );
+      } else {
+        setSubmitError(
+          getApiErrorMessage(error, 'Could not submit your order right now. Please try again.'),
+        );
+      }
+    }
+  }
+
+  return createPortal(
+    <div ref={portalRootRef} className="fixed inset-0 z-50 flex justify-end">
+      <div
+        aria-hidden="true"
+        onClick={handleClose}
+        className="fixed inset-0 bg-stone-950/60 backdrop-blur-xs"
+      />
+
+      <aside
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="relative z-10 flex h-full w-full max-w-md flex-col border-l border-ui-border bg-ui-surface text-ui-text shadow-2xl"
+      >
+        <header className="flex items-center justify-between gap-4 border-b border-ui-border px-5 py-4">
+          <div>
+            <h2 id={titleId} className="text-lg font-bold tracking-tight">
+              Your Order Cart
+            </h2>
+            <p className="text-xs text-ui-text-muted">{STORE_METADATA.branch}</p>
+          </div>
+          <button
+            ref={closeButtonRef}
+            type="button"
+            onClick={handleClose}
+            aria-label="Close cart drawer"
+            className="rounded-lg border border-ui-border bg-ui-surface-muted px-3 py-1.5 text-xs font-semibold text-ui-text hover:bg-ui-canvas"
+          >
+            Close
+          </button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {lastPlacedOrder && cartSummary.lines.length === 0 && cartLines.length === 0 ? (
+            <div
+              role="status"
+              aria-live="polite"
+              className="space-y-4 rounded-2xl border border-ui-border bg-ui-surface-muted p-5"
+            >
+              <div className="flex items-center justify-between border-b border-dashed border-ui-border pb-3">
+                <div>
+                  <p className="text-xs font-semibold text-ui-accent uppercase">Order Confirmed</p>
+                  <h3
+                    ref={receiptHeadingRef}
+                    tabIndex={-1}
+                    className="mt-0.5 text-2xl font-bold text-ui-text tabular-nums focus:outline-none"
+                  >
+                    {lastPlacedOrder.queueNumber}
+                  </h3>
+                </div>
+                <span className="rounded-lg bg-ui-surface px-2.5 py-1 text-xs font-semibold text-ui-text">
+                  {lastPlacedOrder.fulfillment === 'kiosk-pickup'
+                    ? 'Chino Roces Pickup'
+                    : 'Delivery'}
+                </span>
+              </div>
+
+              <div className="space-y-1 text-xs text-ui-text-muted">
+                <p>
+                  <span className="font-semibold text-ui-text">Guest:</span>{' '}
+                  {lastPlacedOrder.customerName}
+                </p>
+                <div className="flex items-center justify-between gap-2">
+                  <p>
+                    <span className="font-semibold text-ui-text">Status:</span>{' '}
+                    <span>{RECEIPT_STATUS_LABELS[lastPlacedOrder.status]}</span>
+                  </p>
+                  {lastPlacedOrder.status !== 'completed' ? (
+                    <button
+                      type="button"
+                      disabled={liveReceiptQuery.isFetching}
+                      onClick={() => void liveReceiptQuery.refetch()}
+                      className="rounded-md border border-ui-border bg-ui-surface px-2 py-0.5 text-[11px] font-semibold text-ui-text hover:bg-ui-canvas disabled:opacity-50"
+                    >
+                      {liveReceiptQuery.isFetching ? 'Checking…' : 'Refresh status'}
+                    </button>
+                  ) : null}
+                </div>
+                {liveReceiptQuery.isError ? (
+                  <p role="alert" className="text-[11px] font-medium text-ui-error">
+                    Unable to refresh live status right now. Showing your last confirmed status.
+                  </p>
+                ) : null}
+                <p>
+                  <span className="font-semibold text-ui-text">Payment:</span>{' '}
+                  {lastPlacedOrder.paymentMethod.toUpperCase()}
+                </p>
+                {lastPlacedOrder.fulfillment === 'delivery' && lastPlacedOrder.deliveryZoneName ? (
+                  <p>
+                    <span className="font-semibold text-ui-text">Zone:</span>{' '}
+                    {lastPlacedOrder.deliveryZoneName}
+                    {typeof lastPlacedOrder.deliveryDistanceKm === 'number'
+                      ? ` (~${lastPlacedOrder.deliveryDistanceKm.toFixed(1)} km)`
+                      : ''}
+                    {lastPlacedOrder.deliveryEtaMinutes
+                      ? ` · ${lastPlacedOrder.deliveryEtaMinutes}`
+                      : ''}
+                  </p>
+                ) : null}
+                {lastPlacedOrder.addressOrNotes ? (
+                  <p>
+                    <span className="font-semibold text-ui-text">Details:</span>{' '}
+                    {lastPlacedOrder.addressOrNotes}
+                  </p>
+                ) : null}
+                {lastPlacedOrder.fulfillment === 'delivery' &&
+                isValidCoordinates(lastPlacedOrder.deliveryPin) ? (
+                  <p>
+                    <span className="font-semibold text-ui-text">Rider Pin:</span>{' '}
+                    <a
+                      href={buildGoogleMapsPinUrl(lastPlacedOrder.deliveryPin)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium text-ui-accent underline underline-offset-2"
+                    >
+                      Open in Google Maps
+                    </a>
+                  </p>
+                ) : null}
+              </div>
+
+              <ul className="space-y-2 border-y border-dashed border-ui-border py-3 text-sm">
+                {lastPlacedOrder.lines.map((line) => (
+                  <li key={line.lineId} className="flex items-start justify-between gap-2">
+                    <span>
+                      <span className="font-semibold tabular-nums">{line.quantity}×</span>{' '}
+                      {line.name}
+                      {line.addonNames.length > 0 ? (
+                        <span className="block text-xs text-ui-text-muted">
+                          + {line.addonNames.join(', ')}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="font-semibold tabular-nums">
+                      {formatPhp(line.lineTotalPhp)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+
+              <div className="space-y-1 text-sm tabular-nums">
+                <div className="flex justify-between text-ui-text-muted">
+                  <span>Subtotal</span>
+                  <span>{formatPhp(lastPlacedOrder.subtotalPhp)}</span>
+                </div>
+                {lastPlacedOrder.fulfillment === 'delivery' ? (
+                  <div className="flex justify-between text-ui-text-muted">
+                    <span>
+                      {lastPlacedOrder.deliveryZoneName
+                        ? `Delivery (${lastPlacedOrder.deliveryZoneName})`
+                        : 'Delivery'}
+                    </span>
+                    <span>
+                      {lastPlacedOrder.deliveryFeePhp > 0
+                        ? formatPhp(lastPlacedOrder.deliveryFeePhp)
+                        : lastPlacedOrder.deliveryFeeWaived
+                          ? 'Free (min. met)'
+                          : 'Free'}
+                    </span>
+                  </div>
+                ) : null}
+                <div className="flex justify-between pt-1 text-base font-bold text-ui-text">
+                  <span>Total Due</span>
+                  <span className="text-ui-accent">{formatPhp(lastPlacedOrder.totalPhp)}</span>
+                </div>
+              </div>
+
+              {lastPlacedOrder.paymentMethod !== 'cash' ? (
+                <p className="rounded-xl border border-ui-border bg-ui-surface px-3 py-2 text-xs text-ui-text-muted">
+                  Confirm {lastPlacedOrder.paymentMethod.toUpperCase()} payment details with the
+                  Chino Roces counter ({STORE_METADATA.contact}) when sending your order.
+                </p>
+              ) : null}
+
+              <div className="space-y-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const summaryText = formatOrderShareText(lastPlacedOrder);
+                    if (
+                      !navigator.clipboard ||
+                      typeof navigator.clipboard.writeText !== 'function'
+                    ) {
+                      setCopyStatus('failed');
+                      return;
+                    }
+                    void navigator.clipboard
+                      .writeText(summaryText)
+                      .then(() => setCopyStatus('copied'))
+                      .catch(() => setCopyStatus('failed'));
+                  }}
+                  className="w-full rounded-xl border border-ui-border bg-ui-surface px-4 py-2 text-sm font-semibold text-ui-text hover:bg-ui-canvas"
+                >
+                  {copyStatus === 'copied'
+                    ? 'Order Summary Copied'
+                    : copyStatus === 'failed'
+                      ? 'Copy Unavailable — Use SMS or Messenger Below'
+                      : 'Copy Order Summary'}
+                </button>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <a
+                    href={buildSmsOrderHref(
+                      STORE_METADATA.contact,
+                      formatOrderShareText(lastPlacedOrder),
+                    )}
+                    className="inline-flex items-center justify-center rounded-xl border border-ui-border bg-ui-surface px-3 py-2 text-xs font-semibold text-ui-text hover:bg-ui-canvas"
+                  >
+                    Send via SMS
+                  </a>
+                  <a
+                    href={STORE_METADATA.facebookUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center rounded-xl border border-ui-border bg-ui-surface px-3 py-2 text-xs font-semibold text-ui-text hover:bg-ui-canvas"
+                  >
+                    Open Facebook Page
+                  </a>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setCopyStatus('idle');
+                  dismissLastOrder();
+                  handleClose();
+                }}
+                className="w-full rounded-xl bg-ui-accent px-4 py-2.5 text-sm font-semibold text-ui-on-accent hover:bg-ui-accent-hover"
+              >
+                Done · Back to Menu
+              </button>
+            </div>
+          ) : cartLines.length > 0 && catalogQuery.isPending ? (
+            <div
+              role="status"
+              className="flex h-full flex-col items-center justify-center gap-2 py-12 text-center"
+            >
+              <p className="text-base font-semibold text-ui-text">Loading your bag…</p>
+              <p className="max-w-xs text-sm text-ui-text-muted">
+                Checking latest menu prices and stock availability.
+              </p>
+            </div>
+          ) : cartLines.length > 0 && catalogQuery.isError ? (
+            <div
+              role="alert"
+              className="flex h-full flex-col items-center justify-center gap-3 py-12 text-center"
+            >
+              <p className="text-base font-semibold text-ui-text">
+                Unable to load menu details for your saved bag.
+              </p>
+              <p className="max-w-xs text-sm text-ui-text-muted">
+                {getApiErrorMessage(
+                  catalogQuery.error,
+                  'Check your connection and retry to review your cart.',
+                )}
+              </p>
+              <button
+                type="button"
+                onClick={() => void catalogQuery.refetch()}
+                className="mt-2 rounded-xl bg-ui-accent px-4 py-2 text-sm font-semibold text-ui-on-accent hover:bg-ui-accent-hover"
+              >
+                Retry loading menu
+              </button>
+            </div>
+          ) : cartSummary.lines.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3 py-12 text-center">
+              {removedNotice ? (
+                <div
+                  role="status"
+                  className="mb-2 w-full rounded-xl border border-ui-border bg-ui-surface-muted px-3 py-2 text-xs text-ui-text"
+                >
+                  {removedNotice}
+                </div>
+              ) : null}
+              <p className="text-base font-semibold text-ui-text">Your cart is empty.</p>
+              <p className="max-w-xs text-sm text-ui-text-muted">
+                Add a 100g pure beef burger, crinkle fries, or nachos from the Chino Roces menu to
+                start an order.
+              </p>
+              <button
+                type="button"
+                onClick={handleClose}
+                className="mt-2 rounded-xl bg-ui-accent px-4 py-2 text-sm font-semibold text-ui-on-accent hover:bg-ui-accent-hover"
+              >
+                Browse Menu
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {removedNotice ? (
+                <div
+                  role="status"
+                  className="flex items-center justify-between gap-2 rounded-xl border border-ui-border bg-ui-surface-muted px-3 py-2 text-xs text-ui-text"
+                >
+                  <span>{removedNotice}</span>
+                  <button
+                    type="button"
+                    onClick={() => setRemovedNotice(null)}
+                    className="shrink-0 font-medium text-ui-text-muted underline hover:text-ui-text"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              ) : null}
+
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-ui-text-muted uppercase">
+                  {cartSummary.totalItems} {cartSummary.totalItems === 1 ? 'item' : 'items'} in bag
+                </span>
+                {confirmClear ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearCart();
+                        setConfirmClear(false);
+                        setSubmitError(null);
+                      }}
+                      className="rounded-md bg-ui-error px-2.5 py-1 text-xs font-semibold text-ui-on-error hover:opacity-90"
+                    >
+                      Confirm clear
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmClear(false)}
+                      className="rounded-md border border-ui-border bg-ui-surface px-2.5 py-1 text-xs font-medium text-ui-text hover:bg-ui-surface-muted"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmClear(true)}
+                    className="text-xs font-medium text-ui-error underline hover:opacity-80"
+                  >
+                    Clear cart
+                  </button>
+                )}
+              </div>
+
+              {hasUnavailableItems ? (
+                <p
+                  role="alert"
+                  className="rounded-xl border border-ui-error/40 bg-ui-surface-muted px-3 py-2 text-xs font-semibold text-ui-error"
+                >
+                  Some items in your bag are now sold out. Remove unavailable items before placing
+                  your order.
+                </p>
+              ) : null}
+
+              {hasTooManyLines ? (
+                <p
+                  role="alert"
+                  className="rounded-xl border border-ui-error/40 bg-ui-surface-muted px-3 py-2 text-xs font-semibold text-ui-error"
+                >
+                  Orders are limited to 50 distinct items. Remove extra items before placing your
+                  order.
+                </p>
+              ) : null}
+
+              <ul className="space-y-3">
+                {cartSummary.lines.map((line) => (
+                  <li
+                    key={line.lineId}
+                    className={`flex gap-3 rounded-2xl border p-3 ${
+                      line.item.available
+                        ? 'border-ui-border bg-ui-surface-muted'
+                        : 'border-ui-error/50 bg-ui-error/5'
+                    }`}
+                  >
+                    <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-ui-border bg-ui-surface">
+                      <FoodImage
+                        src={line.item.imageUrl}
+                        alt={line.item.name}
+                        category={line.item.category}
+                        badgeText={line.item.name}
+                        className="h-full w-full"
+                      />
+                    </div>
+
+                    <div className="flex min-w-0 flex-1 flex-col justify-between gap-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <h3 className="truncate text-sm font-semibold text-ui-text">
+                            {line.item.name}
+                          </h3>
+                          {!line.item.available ? (
+                            <p className="text-xs font-semibold text-ui-error">Sold out</p>
+                          ) : line.addons.length > 0 ? (
+                            <p className="text-xs text-ui-text-muted">
+                              +{line.addons.map((addon) => addon.name).join(', ')}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-ui-text-muted">{line.item.pattySpec}</p>
+                          )}
+                        </div>
+                        <span className="shrink-0 text-sm font-bold text-ui-text tabular-nums">
+                          {formatPhp(line.lineTotalPhp)}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <div className="inline-flex items-center rounded-lg border border-ui-border bg-ui-surface">
+                            <button
+                              type="button"
+                              aria-label={`Decrease quantity of ${line.item.name}`}
+                              onClick={() => {
+                                setSubmitError(null);
+                                setLineQuantity(line.lineId, line.quantity - 1);
+                              }}
+                              className="px-2.5 py-1 text-sm font-bold text-ui-text hover:bg-ui-surface-muted"
+                            >
+                              -
+                            </button>
+                            <span className="min-w-7 text-center text-xs font-semibold tabular-nums">
+                              {line.quantity}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={!line.item.available || line.quantity >= 50}
+                              aria-label={`Increase quantity of ${line.item.name}`}
+                              onClick={() => {
+                                setSubmitError(null);
+                                setLineQuantity(line.lineId, line.quantity + 1);
+                              }}
+                              className="px-2.5 py-1 text-sm font-bold text-ui-text hover:bg-ui-surface-muted disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              +
+                            </button>
+                          </div>
+                          {line.quantity >= 50 ? (
+                            <span className="text-[11px] text-ui-text-muted">Max 50</span>
+                          ) : null}
+                        </div>
+
+                        <button
+                          type="button"
+                          aria-label={`Remove ${line.item.name} from cart`}
+                          onClick={() => {
+                            setSubmitError(null);
+                            removeCartLine(line.lineId);
+                          }}
+                          className="text-xs font-medium text-ui-error underline hover:opacity-80"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+
+              <form
+                noValidate
+                onSubmit={(event) => void handleCheckoutSubmit(event)}
+                className="space-y-3 border-t border-ui-border pt-4"
+              >
+                <h3 className="text-sm font-bold text-ui-text">Order Details</h3>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label
+                      htmlFor="checkout-name"
+                      className="block text-xs font-semibold text-ui-text"
+                    >
+                      Your Name
+                    </label>
+                    <input
+                      ref={nameInputRef}
+                      id="checkout-name"
+                      name="customerName"
+                      type="text"
+                      maxLength={120}
+                      value={customerName}
+                      aria-invalid={Boolean(fieldErrors.customerName)}
+                      aria-describedby={fieldErrors.customerName ? nameErrorId : undefined}
+                      onChange={(event) => {
+                        setCustomerName(event.target.value);
+                        if (fieldErrors.customerName && event.target.value.trim()) {
+                          setFieldErrors((prev) => ({ ...prev, customerName: undefined }));
+                        }
+                      }}
+                      placeholder="e.g. Marco"
+                      className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text ${
+                        fieldErrors.customerName ? 'border-ui-error' : 'border-ui-border'
+                      }`}
+                    />
+                    {fieldErrors.customerName ? (
+                      <p
+                        id={nameErrorId}
+                        role="alert"
+                        className="mt-1 text-xs font-semibold text-ui-error"
+                      >
+                        {fieldErrors.customerName}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="checkout-contact"
+                      className="block text-xs font-semibold text-ui-text"
+                    >
+                      {fulfillment === 'delivery' ? 'Mobile Number' : 'Mobile (optional)'}
+                    </label>
+                    <input
+                      ref={contactInputRef}
+                      id="checkout-contact"
+                      name="contactNumber"
+                      type="tel"
+                      maxLength={40}
+                      value={contactNumber}
+                      aria-invalid={Boolean(fieldErrors.contactNumber)}
+                      aria-describedby={fieldErrors.contactNumber ? contactErrorId : undefined}
+                      onChange={(event) => {
+                        setContactNumber(event.target.value);
+                        if (fieldErrors.contactNumber && event.target.value.trim()) {
+                          setFieldErrors((prev) => ({ ...prev, contactNumber: undefined }));
+                        }
+                      }}
+                      placeholder="0917 000 0000"
+                      className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text ${
+                        fieldErrors.contactNumber ? 'border-ui-error' : 'border-ui-border'
+                      }`}
+                    />
+                    {fieldErrors.contactNumber ? (
+                      <p
+                        id={contactErrorId}
+                        role="alert"
+                        className="mt-1 text-xs font-semibold text-ui-error"
+                      >
+                        {fieldErrors.contactNumber}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+
+                <fieldset className="space-y-1.5">
+                  <legend className="text-xs font-semibold text-ui-text">Fulfillment</legend>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label
+                      className={`flex cursor-pointer items-center justify-between rounded-xl border px-3 py-2 text-xs ${
+                        fulfillment === 'kiosk-pickup'
+                          ? 'border-ui-accent bg-ui-surface-muted font-semibold text-ui-text'
+                          : 'border-ui-border bg-ui-surface text-ui-text-muted'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <input
+                          type="radio"
+                          name="fulfillment"
+                          checked={fulfillment === 'kiosk-pickup'}
+                          onChange={() => {
+                            setFulfillment('kiosk-pickup');
+                            setSubmitError(null);
+                            setFieldErrors((prev) => ({
+                              ...prev,
+                              contactNumber: undefined,
+                              deliveryPin: undefined,
+                              addressOrNotes: undefined,
+                            }));
+                          }}
+                          className="accent-ui-accent"
+                        />
+                        Kiosk Pickup
+                      </span>
+                      <span>Free</span>
+                    </label>
+
+                    <label
+                      className={`flex items-center justify-between rounded-xl border px-3 py-2 text-xs ${
+                        !hasEnabledZones
+                          ? 'cursor-not-allowed border-ui-border bg-ui-surface text-ui-text-muted opacity-60'
+                          : fulfillment === 'delivery'
+                            ? 'cursor-pointer border-ui-accent bg-ui-surface-muted font-semibold text-ui-text'
+                            : 'cursor-pointer border-ui-border bg-ui-surface text-ui-text-muted'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <input
+                          type="radio"
+                          name="fulfillment"
+                          disabled={!hasEnabledZones}
+                          checked={fulfillment === 'delivery'}
+                          onChange={() => {
+                            setFulfillment('delivery');
+                            setSubmitError(null);
+                          }}
+                          className="accent-ui-accent"
+                        />
+                        Delivery
+                      </span>
+                      <span className="tabular-nums">{deliveryOptionBadge}</span>
+                    </label>
+                  </div>
+                </fieldset>
+
+                {fulfillment === 'delivery' ? (
+                  !hasEnabledZones ? (
+                    <p
+                      role="alert"
+                      className="rounded-xl border border-ui-error/40 bg-ui-surface-muted px-3 py-2 text-xs font-medium text-ui-error"
+                    >
+                      Delivery is temporarily paused across all zones. Switch to Kiosk Pickup to
+                      place your order.
+                    </p>
+                  ) : (
+                    <div className="space-y-3 rounded-xl border border-ui-border bg-ui-surface-muted p-3">
+                      <ErrorBoundary
+                        fallback={(reset) => <MapPickerErrorFallback onRetry={reset} />}
+                      >
+                        <Suspense
+                          fallback={
+                            <div
+                              role="status"
+                              className="flex min-h-[330px] items-center justify-center rounded-xl border border-ui-border bg-ui-canvas text-xs text-ui-text-muted"
+                            >
+                              Loading delivery map…
+                            </div>
+                          }
+                        >
+                          <DeliveryMapPicker
+                            pin={deliveryPin}
+                            maxDeliveryDistanceKm={deliveryQuote.maxDeliveryDistanceKm}
+                            onPinChange={handlePinChange}
+                            searchInputRef={pinSearchInputRef}
+                            pinErrorId={pinErrorId}
+                            hasPinError={Boolean(fieldErrors.deliveryPin)}
+                          />
+                        </Suspense>
+                      </ErrorBoundary>
+
+                      {fieldErrors.deliveryPin ? (
+                        <p
+                          id={pinErrorId}
+                          role="alert"
+                          className="text-xs font-semibold text-ui-error"
+                        >
+                          {fieldErrors.deliveryPin}
+                        </p>
+                      ) : null}
+
+                      <div role="status" aria-live="polite" aria-atomic="true">
+                        {deliveryPin && !deliveryQuote.outOfRange && deliveryQuote.zone ? (
+                          <div className="rounded-lg border border-ui-border bg-ui-surface px-3 py-2 text-xs">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-semibold text-ui-text">
+                                {deliveryQuote.zone.name}
+                              </span>
+                              <span className="font-bold text-ui-accent tabular-nums">
+                                {deliveryQuote.isFreeDelivery || deliveryQuote.feePhp === 0
+                                  ? 'Free'
+                                  : formatPhp(deliveryQuote.feePhp)}
+                              </span>
+                            </div>
+                            <p className="mt-0.5 text-ui-text-muted tabular-nums">
+                              ~{deliveryQuote.distanceKm?.toFixed(1)} km from Chino Roces · Est.{' '}
+                              {deliveryQuote.zone.etaMinutes}
+                            </p>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      {deliveryPin && deliveryQuote.outOfRange ? (
+                        <div
+                          role="alert"
+                          className="rounded-lg border border-ui-error/40 bg-ui-surface px-3 py-2 text-xs text-ui-error"
+                        >
+                          <p className="font-semibold">Outside delivery area</p>
+                          <p className="mt-0.5 tabular-nums">
+                            Pinned spot is ~{deliveryQuote.distanceKm?.toFixed(1)} km away (max
+                            coverage: {deliveryQuote.maxDeliveryDistanceKm} km from Chino Roces).
+                            Move the pin closer or switch to Kiosk Pickup.
+                          </p>
+                        </div>
+                      ) : !deliveryPin ? (
+                        <div className="rounded-lg border border-dashed border-ui-border bg-ui-surface px-3 py-2 text-xs text-ui-text-muted">
+                          No pin dropped yet — tap the map, search a landmark, or use a quick pin
+                          above to calculate your exact fee.
+                        </div>
+                      ) : null}
+
+                      {deliveryQuote.freeDeliveryMinSubtotalPhp !== null &&
+                      !deliveryQuote.outOfRange ? (
+                        <div className="space-y-1.5 border-t border-ui-border pt-2">
+                          <div className="flex items-center justify-between text-xs">
+                            {deliveryQuote.isFreeDelivery ||
+                            (isPinPending &&
+                              cartSummary.subtotalPhp >=
+                                deliveryQuote.freeDeliveryMinSubtotalPhp) ? (
+                              <span className="font-semibold text-ui-accent">
+                                Free delivery unlocked (
+                                {formatPhp(deliveryQuote.freeDeliveryMinSubtotalPhp)}+ order)
+                              </span>
+                            ) : deliveryQuote.amountToFreeDeliveryPhp !== null ? (
+                              <span className="text-ui-text-muted tabular-nums">
+                                Add{' '}
+                                <span className="font-semibold text-ui-text">
+                                  {formatPhp(deliveryQuote.amountToFreeDeliveryPhp)}
+                                </span>{' '}
+                                more for free delivery (min.{' '}
+                                {formatPhp(deliveryQuote.freeDeliveryMinSubtotalPhp)})
+                              </span>
+                            ) : null}
+                          </div>
+                          <div
+                            aria-hidden="true"
+                            className="h-1.5 w-full overflow-hidden rounded-full bg-ui-surface"
+                          >
+                            <div
+                              className="h-full rounded-full bg-ui-accent transition-all motion-reduce:transition-none"
+                              style={{ width: `${freeDeliveryProgressPct}%` }}
+                            />
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  )
+                ) : null}
+
+                <div>
+                  <label
+                    htmlFor="checkout-notes"
+                    className="block text-xs font-semibold text-ui-text"
+                  >
+                    {fulfillment === 'delivery' ? 'Delivery Address' : 'Pickup Notes (optional)'}
+                  </label>
+                  <input
+                    ref={notesInputRef}
+                    id="checkout-notes"
+                    name="addressOrNotes"
+                    type="text"
+                    maxLength={500}
+                    value={addressOrNotes}
+                    aria-invalid={Boolean(fieldErrors.addressOrNotes)}
+                    aria-describedby={fieldErrors.addressOrNotes ? addressErrorId : undefined}
+                    onChange={(event) => {
+                      setAddressOrNotes(event.target.value);
+                      if (fieldErrors.addressOrNotes && event.target.value.trim()) {
+                        setFieldErrors((prev) => ({ ...prev, addressOrNotes: undefined }));
+                      }
+                    }}
+                    placeholder={
+                      fulfillment === 'delivery'
+                        ? 'Building, unit, street, barangay / city'
+                        : 'e.g. Less mayo, extra napkins'
+                    }
+                    className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text ${
+                      fieldErrors.addressOrNotes ? 'border-ui-error' : 'border-ui-border'
+                    }`}
+                  />
+                  {fieldErrors.addressOrNotes ? (
+                    <p
+                      id={addressErrorId}
+                      role="alert"
+                      className="mt-1 text-xs font-semibold text-ui-error"
+                    >
+                      {fieldErrors.addressOrNotes}
+                    </p>
+                  ) : null}
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="checkout-payment"
+                    className="block text-xs font-semibold text-ui-text"
+                  >
+                    Payment Method
+                  </label>
+                  <select
+                    id="checkout-payment"
+                    name="paymentMethod"
+                    value={paymentMethod}
+                    onChange={(event) => setPaymentMethod(event.target.value as PaymentMethod)}
+                    className="mt-1 w-full rounded-xl border border-ui-border bg-ui-canvas px-3 py-2 text-sm text-ui-text"
+                  >
+                    <option value="cash">Cash at Kiosk / COD</option>
+                    <option value="gcash">GCash</option>
+                    <option value="maya">Maya</option>
+                  </select>
+                </div>
+
+                {submitError ? (
+                  <div
+                    role="alert"
+                    className="space-y-2 rounded-xl border border-ui-error/40 bg-ui-surface-muted px-3 py-2.5 text-xs text-ui-error"
+                  >
+                    <p className="font-semibold">{submitError}</p>
+                    {fulfillment === 'delivery' ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFulfillment('kiosk-pickup');
+                          setSubmitError(null);
+                        }}
+                        className="rounded-lg border border-ui-border bg-ui-surface px-2.5 py-1 text-xs font-semibold text-ui-text hover:bg-ui-canvas"
+                      >
+                        Switch to Chino Roces Pickup
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <div className="space-y-1 rounded-xl border border-ui-border bg-ui-surface-muted p-3 text-sm tabular-nums">
+                  <div className="flex justify-between text-ui-text-muted">
+                    <span>Subtotal</span>
+                    <span>{formatPhp(cartSummary.subtotalPhp)}</span>
+                  </div>
+                  <div className="flex justify-between gap-2 text-ui-text-muted">
+                    <span className="truncate">
+                      {fulfillment === 'delivery' && deliveryPin && deliveryQuote.zone
+                        ? `Delivery (${deliveryQuote.zone.name})`
+                        : 'Delivery fee'}
+                    </span>
+                    <span className="shrink-0">
+                      {isPinPending ? (
+                        'Pin location'
+                      ) : deliveryQuote.outOfRange ? (
+                        'Out of range'
+                      ) : deliveryQuote.isFreeDelivery ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="line-through opacity-70">
+                            {formatPhp(deliveryQuote.baseFeePhp)}
+                          </span>
+                          <span className="font-semibold text-ui-accent">Free</span>
+                        </span>
+                      ) : deliveryFeePhp > 0 ? (
+                        formatPhp(deliveryFeePhp)
+                      ) : (
+                        'Free'
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex justify-between border-t border-ui-border pt-1.5 text-base font-bold text-ui-text">
+                    <span>Total</span>
+                    <span className="text-ui-accent">{formatPhp(grandTotalPhp)}</span>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isCheckoutDisabled}
+                  className="w-full rounded-xl bg-ui-accent px-4 py-3 text-sm font-bold text-ui-on-accent tabular-nums hover:bg-ui-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {placeOrderMutation.isPending
+                    ? 'Submitting Order…'
+                    : `Buy Order · ${formatPhp(grandTotalPhp)}`}
+                </button>
+              </form>
+            </div>
+          )}
+        </div>
+      </aside>
+    </div>,
+    document.body,
+  );
+}

@@ -1,5 +1,13 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "ignorePatterns": [
+    "dist",
+    "**/dist",
+    "coverage",
+    "**/coverage",
+    "supabase/.temp",
+    "supabase/.branches"
+  ],
   "plugins": ["react", "oxc", "import", "typescript"],
   "rules": {
     "react/rules-of-hooks": "error",
@@ -32,7 +40,7 @@
   },
   "overrides": [
     {
-      "files": ["src/{features,lib,server}/**/*"],
+      "files": ["apps/web/src/{features,lib,server}/**/*"],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -52,7 +60,7 @@
       }
     },
     {
-      "files": ["src/shared/**/*"],
+      "files": ["apps/web/src/shared/**/*"],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -68,10 +76,42 @@
       }
     },
     {
-      "files": ["src/**/*.{jsx,tsx}"],
+      "files": ["apps/web/src/**/*.{jsx,tsx}"],
       "plugins": ["react", "oxc", "import", "typescript", "jsx-a11y"],
       "rules": {
         "jsx-a11y/alt-text": "warn"
+      }
+    },
+    {
+      "files": ["packages/contracts/src/**/*"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@eight-burgers/(?:web|api)",
+                "message": "Shared contracts must not depend on web or api workspaces."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/**/*"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@eight-burgers/web",
+                "message": "API workspace must not import from web workspace."
+              }
+            ]
+          }
+        ]
       }
     }
   ]
