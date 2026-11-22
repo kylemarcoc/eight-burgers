@@ -1,100 +1,82 @@
 ---
 name: create-feature
 description: >-
-  Create a new user-facing feature or capability in this project. Use when asked to build, extend, or wire a new feature, route, workflow, API integration, or form while conforming to AGENTS.md, engineering guides, and Oxlint boundaries; not for architecture-only refactoring or documentation-only sync.
+  Design, build, and wire a net-new user-facing feature, route, or capability
+  across the repository's active layers while conforming to AGENTS.md,
+  engineering guides, and linter boundaries. Use when implementing new product
+  capabilities from scratch; not for refining existing features (use
+  enhance-feature), fixing defects (use fix-bugs), dedicated schema/RLS
+  authoring (use manage-database), architecture-only refactoring (use
+  refactor-architecture), or documentation-only sync (use sync-docs).
 ---
 
 # Create Feature
 
-Implement a **complete, reviewable feature slice** while preserving existing routes, public APIs, deployment base paths, and unrelated behavior.
+Implement a **complete, reviewable feature slice** across the repository's active layers (client/frontend, and when present, shared contracts/IDL, backend API, and database) while preserving existing routes, public APIs, deployment base paths, and unrelated behavior.
 
 ## 1. Establish scope and inspect configuration
 
-1. Read `AGENTS.md` and inspect `package.json`, framework config, `.oxlintrc.json`, and nearby code before proposing changes.
-2. Clarify underspecified requirements, data contracts, or persistence expectations before editing.
-3. Preserve deployment base paths, localization setup, theme behavior, and any documented inactive routes or sections unless explicitly asked to change them.
+1. Read `AGENTS.md` (when present) and inspect project manifests, framework/build configs, type-check configs, linter boundary rules, and nearby modules to detect topology (single-app vs. multi-package/monorepo), active stack, and installed packages.
+2. Check which optional layers exist (shared contract packages or generated schemas, backend API/BFF routes, database migrations/seeds, routing, theming, or localization).
+3. Clarify underspecified requirements, data contracts, authorization rules, or persistence expectations before editing.
+4. Preserve deployment base paths, theme parity, copy/localization conventions, and documented inactive routes unless explicitly asked to change them.
 
 ## 2. Load stack checklists and relevant guides
 
-Load only the checklists needed for the target stack:
-
-- Vite + React apps: [Vite feature checklist](./references/vite-feature-checklist.md)
-- Shared UI, Oxlint & checks: [Shared UI and validation](./references/shared-ui-and-validation.md)
-
-Consult `docs/` selectively by topic:
-
-- Ownership, dependency direction, and routing: `docs/architecture.md`
-- Feature modularity and translations: `docs/feature-structure.md`
-- Naming, TypeScript, imports, and Prettier/Oxlint: `docs/coding-standards.md`
-- Local, URL, Zustand, TanStack Query, reducer, context, or form state: `docs/state-management.md`
-- HTTP adapters, Server Actions, validation, and errors: `docs/api-design.md`
-- React composition, styling, and accessibility: `docs/component-guidelines.md`
-- Trust boundaries, storage, URL/input checks, and logs: `docs/security.md`
-- Rendering cost, lazy loading, and assets: `docs/performance.md`
-- Test placement and check selection: `docs/testing-strategy.md`
+- **Frontend stack checklist:** When the repository uses Vite + React, also load [Vite feature checklist](./references/vite-feature-checklist.md). For other frameworks, follow the repository's framework configuration and guides.
+- **Boundaries & validation checks:** Load [Shared UI and validation](./references/shared-ui-and-validation.md).
+- **Database & storage:** When adding or altering tables, access policies, database functions, or object storage buckets, coordinate via `manage-database`.
+- **Engineering guides:** Discover `docs/` and read only the guides present and relevant to the touched layers.
 
 ## 3. Design the feature slice before editing
 
 Before creating or editing source files, define:
 
-- **Ownership**: Whether small route-specific UI stays beside its route or belongs in `src/features/<feature-name>/` with a public `index.ts`. Promote code to `src/shared/` only for concrete reuse.
-- **State and data boundaries**: Authoritative owner for each piece of state, transport adapter, runtime validation (`unknown` type guards or runtime schema library such as Zod), cancellation (`AbortSignal`), and loading/empty/error/success contracts.
-- **Locale, theme, and accessibility plan**: Synchronized updates across every configured locale resource in localized apps (keeping English-only apps English-only), keyboard/focus behavior, labels, live announcements, and theme parity.
-- **Target files and verification**: Exact files to add or modify, colocated tests, and checks to run.
-- **Dependencies**: Reuse installed packages first. Get explicit user approval before installing new dependencies.
+- **Layer ownership:** Which UI, behavior hooks/controllers, and transport adapters belong in the owning feature (or beside a single-use route) vs. genuinely domain-independent shared layers; and, when backend tiers exist, which schemas/pure helpers belong in shared contracts, which endpoints/gateways belong in the backend API, and whether migrations are needed.
+- **State and data contracts:** Authoritative owner for each piece of state, transport adapter, runtime validation of untrusted external payloads before domain use, request cancellation, concurrency/idempotency rules (when supported), and loading/empty/error/success states.
+- **Theme and accessibility plan:** Native semantics, keyboard/focus handling, labels, error linking, live announcements, theme parity, and synchronized locale updates (when localized).
+- **Target files & verification:** Exact files to add or modify, colocated tests across touched layers, and verification checks.
+- **Dependencies:** Reuse installed packages first; get explicit user approval before installing new dependencies.
 
 ## 4. Implement inside out across boundaries
 
-Build from contracts and operations outward to composition:
+Build from contracts and server boundaries (when present) outward to UI composition:
 
-1. **Contracts, schemas, and operations**:
-   - Define public types and runtime schemas at the boundary that owns external input.
-   - Put HTTP/storage/job operations in feature `api/`.
-   - Normalize external JSON from `unknown`, forward `AbortSignal`, handle failures explicitly, and omit secrets, tokens, signed URLs, and private payloads from logs and UI errors.
-2. **State and hooks**:
-   - Start with `useState`, `useReducer`, and scoped Context; introduce Zustand (in `features/<feature>/store/` or `shared/store/`) only when distant components or features share client state.
-   - Keep cached server state in TanStack Query (or RTK Query if Redux is retained), use React Hook Form + Zod for complex forms when appropriate, compute derived values during render, and avoid mirroring remote query results into client stores or effects.
-3. **Feature UI and accessibility**:
-   - Reuse semantic `--ui-*` tokens / `ui-*` utilities.
-   - Use native semantic controls, visible field labels, `aria-invalid` / `aria-describedby` for validation errors, accessible live regions for async status/alerts, narrow-screen layouts, and reduced-motion support.
-4. **Public entry point and app wiring**:
-   - Export only supported public components, hooks, types, and operations from `src/features/<feature-name>/index.ts`.
-   - Inside the feature, use relative sibling imports; outside consumers import only from `@/features/<feature-name>` (never deep imports).
-   - Wire routes, providers, and cross-feature callbacks in `src/app/` or `src/routes/`. Never import `app/` or `routes/` from inside `features/`, `lib/`, `server/`, or `shared/`.
-5. **Translations**:
-   - In localized apps, update every configured locale file together for all user-visible text, accessible labels, validation errors, and status announcements. Keep English-only apps English-only.
+1. **Shared contracts & database (when present):** Define strict runtime validation schemas and pure cross-tier rules in the repository's shared contracts or API schema layer, exporting through declared entry points. Author append-only migrations with database access controls via `manage-database` when persistence changes.
+2. **Backend API / server tier (when present):** Add thin route/endpoint handlers matching repository patterns, validate inputs explicitly, enforce auth/CSRF/rate limits at the server boundary, delegate persistence to data gateways, and return standardized JSON or structured error envelopes.
+3. **Client transport & state:** Keep HTTP/RPC adapters and query keys (if using a query cache) in the feature's data layer, propagating cancellation signals and handling session expiry and concurrency conflicts cleanly. Keep server cache distinct from local/shared client stores.
+4. **Feature UI, accessibility & wiring:** Reuse the repository's styling tokens, accessible interactive patterns, narrow-to-wide layouts, and reduced-motion rules. Export only supported public symbols from the feature's entry point, use direct internal imports within the feature, allow cross-feature public imports only where repository architecture permits, and wire composition/routes in the app/route layer per configured linter rules.
 
 ## 5. Colocate tests
 
-1. Colocate unit, adapter, hook, component, and integration tests with the code they exercise.
-2. Cover happy paths, edge/boundary rules, validation errors, loading/empty/failure states, cancellation, and accessible roles/labels/keyboard behavior.
-3. Substitute external I/O at one boundary per test and clean up state after each test.
+1. Colocate unit, contract, route, adapter, hook/controller, component, and integration tests with the modules they exercise across touched layers.
+2. Cover happy paths, boundary rules, validation failures, HTTP/network recovery, cancellation, and accessible roles/labels/keyboard behavior.
+3. Substitute external I/O at one boundary per test (such as stubbing the transport boundary or passing an in-memory gateway test double) and restore test state after each test.
 
 ## 6. Validate within repository guardrails
 
-1. Inspect the diff to confirm only intended files changed and no Oxlint boundaries or unrelated edits were introduced.
-2. Format changed files only:
-   `npx --no-install prettier --write <changed-files>`
-3. Run read-only verification checks automatically for the affected scope (use `npm.cmd` and `npx.cmd` on Windows if PowerShell blocks `.ps1` launchers). See [Shared UI and validation](./references/shared-ui-and-validation.md).
-4. **Approval gates**: Do not install or upgrade dependencies, modify CI or deployment workflows unless requested, or commit, push, or deploy without explicit user approval.
+1. Inspect the diff to confirm only intended files changed and all configured tier/feature boundaries hold.
+2. Format changed files using the repository's configured formatter and run applicable verification scripts per [Shared UI and validation](./references/shared-ui-and-validation.md).
+3. **Approval gates:** Do not install or upgrade dependencies, modify CI or deployment workflows unless requested, push remote migrations, or commit/push/deploy without explicit user approval.
 
 ## 7. Deliver result and handoff
 
 Report concisely in this order:
 
-1. Feature goal and boundary design.
+1. Feature goal and layer boundary design.
 2. Files created and modified with a brief role for each.
-3. Locale, accessibility, theme, and security/boundary checks applied.
-4. Exact commands executed and observed results (plus any unrun browser/manual checks).
+3. Accessibility, theme, and security/boundary checks applied.
+4. Exact commands executed and observed results (plus any unrun browser or live-DB checks).
 5. Remaining risks or recommended follow-up.
 
 ## Skill boundaries
 
-- Use **this skill** (`create-feature`) to design, implement, wire, and test a new feature or capability.
-- Use `enhance-feature` to refine, harden, or incrementally enhance an existing feature or component within its current boundaries.
+- Use **this skill** (`create-feature`) to design, implement, wire, and test a net-new feature or capability slice.
+- Use `enhance-feature` to refine, harden, or polish an existing feature or component within its current boundaries.
 - Use `fix-bugs` to diagnose, reproduce, and fix defects, regressions, crashes, or failing tests.
+- Use `manage-database` to design or audit database schemas, migrations, access-control/RLS policies, database functions, storage buckets, and seeds.
 - Use `refactor-architecture` to reorganize existing code for architectural conformance without adding new product capabilities.
-- Use `audit-performance` for evidence-based bundle, rendering, complexity, and Core Web Vitals audits or optimizations.
+- Use `audit-performance` for evidence-based bundle, rendering, query, and Core Web Vitals optimization.
 - Use `audit-accessibility` for WCAG 2.2, keyboard/focus, ARIA, contrast, and reduced-motion audits or remediation.
-- Use `audit-security` to audit or harden application trust boundaries, auth/storage policies, headers, or CI workflows.
+- Use `audit-security` for trust-boundary, auth/storage, header, or CI security audits and hardening.
 - Use `sync-docs` when documentation needs synchronization after structural or public contract changes.

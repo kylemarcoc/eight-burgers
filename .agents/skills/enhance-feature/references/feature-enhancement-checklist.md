@@ -1,61 +1,36 @@
 # Feature Enhancement Checklist & Validation
 
-Use this reference when enhancing, hardening, or cleaning up an existing feature or React component.
+Use this procedural checklist alongside `AGENTS.md` and relevant repository guides under `docs/` when refining, hardening, or cleaning up an existing feature, component, or (when present) paired backend endpoint.
 
-## 1. Common enhancement focus areas
+## 1. Core enhancement focus areas
 
-- **State & effect hygiene**:
-  - Eliminate duplicated sources of truth (replace state-syncing `useEffect` blocks with render-time derivation, pure selectors, key-based resets (`key={id}`), or prop-derived fallback state such as `failedSrc === src` for resilient media fallbacks).
-  - Keep `useReducer` transitions pure, deterministic, and unit-testable with discriminated union actions.
-  - Keep ephemeral UI flags out of persisted client stores (or `partialize` durable slices only), sanitize hydrated payloads from `unknown`, and handle storage quota or unavailable-storage errors cleanly.
-  - Guard against race conditions: cancel superseded requests via `AbortSignal`, ignore stale async responses after reset/unmount/revision change, and revoke created object URLs on cleanup.
-- **Validation & error recovery**:
-  - Parse untrusted external payloads from `unknown` at the adapter or action boundary before mapping to domain types.
-  - Surface clear, user-safe errors without leaking stack traces, raw schema dumps, credentials, signed URLs, or private payloads.
-  - Preserve user edits on submission failures and block duplicate submits while pending.
-- **UX edge states & accessibility**:
+- **State & lifecycle hygiene (client/frontend):**
+  - Eliminate duplicated sources of truth: prefer render-time derivation, focused selectors, or key-based resets over synchronizing props or remote cache back into local state.
+  - Keep state transitions pure, deterministic, and unit-testable with explicit discriminated actions.
+  - Keep ephemeral UI flags out of persistent storage (persist durable non-sensitive state only), validate hydrated payloads before use, handle storage quota/unavailable errors cleanly, and purge deprecated sensitive keys during storage schema migrations.
+  - Guard against async races: cancel superseded requests, ignore stale async results after reset/unmount/revision changes, and release created object URLs on cleanup.
+- **Validation, concurrency & error recovery:**
+  - Validate untrusted external payloads at API, storage, and client adapter boundaries using strict runtime schemas or focused guards.
+  - Preserve idempotency keys on creation retries and optimistic concurrency checks (such as version predicates rejecting stale writes without discarding unsaved user edits) when supported by the backend.
+  - Clear private query caches and session state cleanly upon authentication expiry (`401`).
+  - Surface clear, user-safe error messages without exposing stack traces, raw schema dumps, credentials, cookies, or private payloads; preserve edits on failed submissions and block duplicate submits while pending.
+- **UX edge states & accessibility:**
   - Verify loading, empty, error, disabled, and confirmation states at narrow and wide viewports.
-  - Ensure visible labels, `aria-invalid`/`aria-describedby` error wiring, keyboard accessibility, focus restoration on modals, and `role="status"` / `role="alert"` announcements (including graceful fallback feedback when browser APIs such as `navigator.clipboard.writeText` are unavailable or denied).
-- **Evidence-based performance**:
-  - Separate data-computation cost from DOM rendering cost before optimizing.
-  - Evaluate virtualization or lazy boundaries only when measurements justify them.
+  - Ensure visible labels, error association, keyboard accessibility, focus restoration on modals/drawers, theme parity across configured modes, and live status/alert announcements (including graceful fallback feedback if optional browser APIs such as clipboard access fail).
+- **Evidence-based performance:**
+  - Separate query/computation cost from UI rendering cost before optimizing.
+  - Debounce search inputs, pause background polling when viewing deeper paginated pages or terminal states, and defer heavy widgets or virtualize lists only when measurements justify it.
 
-## 2. Stack-specific guardrails
+## 2. Architecture & optional backend boundaries
 
-### Vite + React
+Inspect `AGENTS.md`, `docs/`, and the repository's configured linter rules to confirm every modified file preserves:
 
-- **Routing & URL state**: Keep `BrowserRouter` base path (`import.meta.env.BASE_URL`) and subpath-safe `public/` asset URLs intact when React Router is used. Validate and default `useSearchParams` at the route boundary and preserve unrelated params on update. Avoid nested `<main>` landmarks inside layout `<Outlet />` routes.
-- **Forms & adapters**: Keep simple forms lightweight and use typed `defaultValues` + `isSubmitting` protection when using React Hook Form. Keep HTTP/realtime transport logic inside `src/features/<feature>/api/` with clean subscription teardown.
-- **Localization & theme**: If `i18next` locale resources exist, update every configured locale file together for all visible text, accessible labels, and validation/status messages. Verify light and dark theme parity when `ThemeProvider` is used.
-- **Testing**: Colocate `*.test.ts(x)` files with explicit Vitest imports (`afterEach`, `describe`, `expect`, `it`, `vi`), `afterEach(cleanup)`, `async`/`findBy*` assertions for lazy-loaded routes/panels, fresh router/i18n/store providers per test, and injected transport doubles.
+- **Feature barrel discipline:** Outside a feature, import only from its public entry point; inside a feature, use direct internal imports and avoid importing the feature's own public barrel (cycle prevention).
+- **One-way layering:** Keep features and shared client modules independent of app composition/routes; keep shared client modules independent of business features unless an exception is documented in `AGENTS.md`; keep shared contracts independent of client UI and server runtimes; keep server modules free of UI libraries and client bundles free of server-only modules.
+- **Optional shared contracts & backend API (when present):** Synchronize shared validation schemas and pure cross-tier rules in the shared contracts boundary; keep backend route handlers thin, enforce auth/role/CSRF rules and downstream DB privileges on protected routes, and update route/gateway-double tests alongside endpoint edits.
+- **Colocated test hygiene:** Keep test state isolated per test (fresh providers/caches, clean DOM/storage/stores, disabled automatic retries when testing errors, and single-boundary I/O stubs).
 
-## 3. Oxlint & architectural boundaries (`.oxlintrc.json`)
+## 3. Verification steps
 
-Every modified file must satisfy:
-
-- **Feature barrel discipline (`no-restricted-imports`)**: Outside a feature, import only from `@/features/<name>`. Inside `src/features/<name>/`, use relative sibling imports (`./...`, `../...`) and never import your own `index.ts` (`import/no-cycle`).
-- **One-way layering (`no-restricted-imports`)**:
-  - `src/{features,lib,server}/**/*` must not import from `app/` or `routes/`.
-  - `src/shared/**/*` must not import from `app/`, `features/`, or `routes/`.
-- **Hooks & type safety**: Respect `react/rules-of-hooks`, `react/only-export-components`, `jsx-a11y/alt-text`, `typescript/no-explicit-any`, and `typescript/no-non-null-assertion`.
-
-## 4. Verification command matrix
-
-Run from the repository root. Use `npm.cmd` and `npx.cmd` on Windows PowerShell if `.ps1` launchers are blocked.
-
-### Format changed files only
-
-```sh
-npx --no-install prettier --write <changed-files>
-npx --no-install prettier --check <changed-files>
-```
-
-### Full check suite
-
-```sh
-npm run lint
-npm run format:check
-npm run test
-npm run typecheck
-npm run build
-```
+1. Format modified files using the repository's configured formatter.
+2. Run the repository's configured lint, format-check, test, type-check, and build commands via the project's configured runner.

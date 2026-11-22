@@ -81,7 +81,7 @@ Use when `<pkg>@<patched>` exists on npm, `first_patched_version` is non-null, a
 Use when `npm view <pkg> dist-tags versions --json` shows `latest` itself falls inside `vulnerable_version_range`.
 
 1. **Assess Reachability & Exploitability**:
-   - Search source code for direct imports (`git grep "<pkg>" src/`).
+   - Search source code for direct imports (`git grep "<pkg>" <source-dirs>`, substituting the repository's configured source directories).
    - Confirm whether `scope` is strictly `"development"` (bundlers, test runners, linters) or shipped in `"runtime"` (browser bundle, SSR server, API routes).
    - Check the CWE attack vector (for example, whether untrusted external users can supply inputs directly to the vulnerable API).
 2. **Present Options to the User (Do Not Auto-Dismiss)**:

@@ -8,23 +8,23 @@
 
 ### Placement and naming
 
-| Owner               | Where components belong                                                                |
-| ------------------- | -------------------------------------------------------------------------------------- |
-| Route or app        | Page composition, app providers, shell layout, navigation, and translated app copy.    |
-| Feature             | UI with feature terminology, state, or business rules under `src/features/<feature>/`. |
-| App-local shared UI | Domain-independent UI reused across multiple features (`src/shared/components/`).      |
+| Owner               | Where components belong                                                                        |
+| ------------------- | ---------------------------------------------------------------------------------------------- |
+| Route or app        | Page composition, app providers, shell layout, and navigation                                  |
+| Feature             | UI with feature terminology, state, or business rules under `apps/web/src/features/<feature>/` |
+| App-local shared UI | Domain-independent UI reused across multiple features (`apps/web/src/shared/components/`)      |
 
 ```text
-src/
+apps/web/src/
 ├── features/users/components/
 │   ├── UserTable.tsx
 │   ├── UserForm.tsx
 │   └── UserForm.test.tsx
 └── shared/components/
-    └── Button.tsx
+    └── ErrorBoundary.tsx
 ```
 
-Use PascalCase identifiers for components. Vite apps use `ComponentName.tsx` and `useSomething.ts` for custom hooks. See [Coding standards](coding-standards.md#naming).
+Use PascalCase identifiers and filenames (`ComponentName.tsx`) for components and `useSomething.ts` for custom hooks. See [Coding standards](coding-standards.md#naming).
 
 Use explicit public exports when another feature needs a supported component or type. Keep public re-exports at the owning boundary. See [Architecture](architecture.md#imports-and-cross-feature-communication) and [Feature structure](feature-structure.md#boundaries-and-public-apis).
 
@@ -88,27 +88,28 @@ export function SearchField({
 
 - Compose primitives through children and props rather than adding feature-specific props to shared controls.
 - Use named slots when callers need to fill distinct regions such as actions and content. Consider compound components only when separately composed parts must coordinate state or behavior. Keep explicit props for nearby consumers and consider scoped context when distant descendants share a concern.
-- Keep local state with its consumers. Compute derived values during render and use effects strictly for external synchronization. On React 19.2+, use `useEffectEvent` for non-reactive callbacks read inside Effects. Render `<Context value={...}>` directly rather than `<Context.Provider>`. See [State management](state-management.md#choosing-a-state-owner).
+- Keep local state with its consumers and follow React 19 composition and hook purity conventions (`ref` props, `<Context value={...}>`, `useEffectEvent`; see [Coding standards](coding-standards.md#react) and [State management](state-management.md#choosing-a-state-owner)).
 - Extract a custom hook when stateful behavior has a clear interface or needs to be reused. Keep feature hooks in their feature.
+- Wrap lazy-loaded routes or heavy interactive widgets (such as heavy third-party or interactive widgets) in a reusable `ErrorBoundary` paired with `Suspense` and an explicit retry or reload recovery path. Keep resilient media fallbacks derived from props (`failedSrc === src`) rather than synchronizing state inside an Effect.
 
 ## Styling, themes, and variants
 
-- Use Tailwind CSS v4's CSS-first setup and semantic `--ui-*` / `ui-*` tokens (`bg-ui-surface`, `text-ui-text`, `text-ui-text-muted`, `border-ui-border`, `bg-ui-accent`, `text-ui-error`).
-- Map typed variants to complete static class names or CSS Module classes—never construct dynamic Tailwind utility names via string interpolation (such as `` `bg-${color}-500` ``), which prevents Tailwind CSS v4 source detection from emitting the class. For icon libraries such as `lucide-react`, use direct named imports and mark decorative icons with `aria-hidden="true"`. See [Tailwind source detection](https://tailwindcss.com/docs/detecting-classes-in-source-files) and [theme variables](https://tailwindcss.com/docs/theme).
+- Use Tailwind CSS v4's CSS-first setup (`@theme inline`) and the project's semantic theme variables and utility tokens (configured in global styles; see [AGENTS.md](../AGENTS.md)).
+- Map typed variants to complete static class names or CSS Module classes—never construct dynamic Tailwind utility names via string interpolation (such as `` `bg-${color}-500` ``), which prevents Tailwind CSS v4 source detection from emitting the class. Mark decorative SVGs or icons with `aria-hidden="true"`. See [Tailwind source detection](https://tailwindcss.com/docs/detecting-classes-in-source-files) and [theme variables](https://tailwindcss.com/docs/theme).
 - When exposing `className`, document which element receives it. Place CSS Module defaults inside `@layer components` when consumer utilities should override defaults cleanly.
-- Start with a narrow layout, let labels wrap, and verify both light and dark themes via `data-ui-theme` on the document root.
+- Start with a narrow layout, let labels wrap, and verify both light and dark themes via the configured document-root theme attribute.
 
 ## Interaction and accessibility
 
 - Use native semantics for controls and landmarks (`<header>`, `<nav>`, `<main>`, `<footer>`, `<button type="button">`, `<a href>`). Render only one `<main>` landmark per page—when a layout shell (such as `<Outlet />` or layout `children`) owns `<main>`, child and fallback/not-found views render `<section>` or `<div>` instead of a nested `<main>`. Provide keyboard access and visible, unobscured focus. Give fields visible labels, name icon-only controls, hide decorative icons, and use ARIA only where native markup does not express the state. Associate validation messages with the field using `aria-describedby` and mark invalid fields with `aria-invalid`.
 - Preserve loading, empty, error, disabled, and invalid states. Use native `disabled` when available. Keep the action's accessible name during loading (`aria-busy="true"`) and announce asynchronous updates with a persistent status region (`role="status"`). Reserve `role="alert"` for urgent messages. See [WCAG 2.2](https://www.w3.org/TR/WCAG22/).
-- Give modal dialogs an accessible title (`aria-labelledby`), intentional initial focus, Tab and Shift+Tab containment, Escape dismissal, a visible close button, focus restoration to the trigger, and background isolation (`inert` or equivalent). See the [WAI-ARIA modal dialog pattern](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/).
-- Keep layouts and theme or language controls usable at narrow viewport widths, and preserve `prefers-reduced-motion` behavior.
-- In localized apps using `i18next`, keep translation keys static, avoid fragment concatenation, translate accessible names and validation errors alongside visible copy, and update all configured locale resources together.
+- Give modal dialogs and portaled drawers an accessible title (`aria-labelledby`), intentional initial focus, Tab and Shift+Tab containment, Escape dismissal, a visible close button, focus restoration to the trigger, and background isolation (`inert` or equivalent). See the [WAI-ARIA modal dialog pattern](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/).
+- Keep layouts and theme controls usable at narrow viewport widths, and preserve `prefers-reduced-motion` behavior.
+- Keep single-language apps inline; if localization is adopted, keep translation keys static, avoid fragment concatenation, and update every configured locale resource together.
 
 ## Testing and performance
 
-- Test user-visible behavior with Vitest and React Testing Library. Query by role and accessible name, reuse required providers, and assert the effect of user actions. See [Testing strategy](testing-strategy.md#frontend-validation).
+- Test user-visible behavior with Vitest and React Testing Library. Query by role and accessible name, reuse shared test providers (such as a fresh `QueryClient` provider wrapper and `MemoryRouter`), and assert the effect of user actions. See [Testing strategy](testing-strategy.md#frontend-validation).
 - Keep updates scoped to the components that need them. Measure before adding memoization or lazy loading. See [Performance](performance.md).
 
 ## Anti-patterns and incremental adoption

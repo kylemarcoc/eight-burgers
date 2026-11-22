@@ -1,5 +1,13 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "ignorePatterns": [
+    "dist",
+    "**/dist",
+    "coverage",
+    "**/coverage",
+    "supabase/.temp",
+    "supabase/.branches"
+  ],
   "plugins": ["react", "oxc", "import", "typescript"],
   "rules": {
     "react/rules-of-hooks": "error",
@@ -32,7 +40,59 @@
   },
   "overrides": [
     {
-      "files": ["src/{features,lib,server}/**/*"],
+      "files": ["apps/web/src/**/*"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^(?:@/|(?:\\.\\.?/)+(?:src/)?)features/[^/]+/[^/]",
+                "message": "Import from the feature folder to use its public index.ts. Use relative sibling imports inside a feature."
+              },
+              {
+                "regex": "^(?:@eight-burgers/api(?:/|$)|(?:\\.\\./){2,}(?:apps/)?api(?:/|$))",
+                "message": "Web workspace must not import from the API workspace."
+              },
+              {
+                "regex": "^(?:hono(?:/|$)|@hono/|sharp(?:/|$)|@supabase/supabase-js(?:/|$)|node:)",
+                "message": "Keep server-only packages and Node built-ins out of browser bundles."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/src/routes/**/*"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^(?:@/|(?:\\.\\.?/)+(?:src/)?)features/[^/]+/[^/]",
+                "message": "Import from the feature folder to use its public index.ts. Use relative sibling imports inside a feature."
+              },
+              {
+                "regex": "^(?:@/|(?:\\.\\.?/)+(?:src/)?)app(?:/|$)",
+                "message": "Keep app composition and providers in app/. Compose features and shared modules inside routes."
+              },
+              {
+                "regex": "^(?:@eight-burgers/api(?:/|$)|(?:\\.\\./){3,}(?:apps/)?api(?:/|$))",
+                "message": "Web workspace must not import from the API workspace."
+              },
+              {
+                "regex": "^(?:hono(?:/|$)|@hono/|sharp(?:/|$)|@supabase/supabase-js(?:/|$)|node:)",
+                "message": "Keep server-only packages and Node built-ins out of browser bundles."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/src/features/**/*"],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -45,6 +105,14 @@
               {
                 "regex": "^(?:@/|(?:\\.\\.?/)+(?:src/)?)(?:app|routes)(?:/|$)",
                 "message": "Keep app and route wiring in the composition layer. Pass dependencies into the feature through its public API."
+              },
+              {
+                "regex": "^(?:@eight-burgers/api(?:/|$)|(?:\\.\\./){3,}(?:apps/)?api(?:/|$))",
+                "message": "Web workspace must not import from the API workspace."
+              },
+              {
+                "regex": "^(?:hono(?:/|$)|@hono/|sharp(?:/|$)|@supabase/supabase-js(?:/|$)|node:)",
+                "message": "Keep server-only packages and Node built-ins out of browser bundles."
               }
             ]
           }
@@ -52,15 +120,27 @@
       }
     },
     {
-      "files": ["src/shared/**/*"],
+      "files": ["apps/web/src/shared/**/*"],
       "rules": {
         "no-restricted-imports": [
           "error",
           {
             "patterns": [
               {
+                "regex": "^(?:@/|(?:\\.\\.?/)+(?:src/)?)features/[^/]+/[^/]",
+                "message": "Import from the feature folder to use its public index.ts. Use relative sibling imports inside a feature."
+              },
+              {
                 "regex": "^(?:@/|(?:\\.\\.?/)+(?:src/)?)(?:app|features|routes)(?:/|$)",
                 "message": "Shared modules must be independent of app wiring, routes, and business features."
+              },
+              {
+                "regex": "^(?:@eight-burgers/api(?:/|$)|(?:\\.\\./){3,}(?:apps/)?api(?:/|$))",
+                "message": "Web workspace must not import from the API workspace."
+              },
+              {
+                "regex": "^(?:hono(?:/|$)|@hono/|sharp(?:/|$)|@supabase/supabase-js(?:/|$)|node:)",
+                "message": "Keep server-only packages and Node built-ins out of browser bundles."
               }
             ]
           }
@@ -68,10 +148,50 @@
       }
     },
     {
-      "files": ["src/**/*.{jsx,tsx}"],
+      "files": ["apps/web/src/**/*.{jsx,tsx}"],
       "plugins": ["react", "oxc", "import", "typescript", "jsx-a11y"],
       "rules": {
         "jsx-a11y/alt-text": "warn"
+      }
+    },
+    {
+      "files": ["packages/contracts/src/**/*"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^(?:@eight-burgers/(?:web|api)(?:/|$)|(?:\\.\\./){3,}apps(?:/|$))",
+                "message": "Shared contracts must not depend on web or api workspaces."
+              },
+              {
+                "regex": "^(?:react(?:/|$)|react-dom(?:/|$)|react-router-dom(?:/|$)|@tanstack/react-query(?:/|$)|zustand(?:/|$)|immer(?:/|$)|leaflet(?:/|$)|hono(?:/|$)|@hono/|sharp(?:/|$)|@supabase/supabase-js(?:/|$)|node:)",
+                "message": "Shared contracts must stay pure and independent of frontend UI or backend server runtimes."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/**/*"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^(?:@eight-burgers/web(?:/|$)|(?:\\.\\./){2,}(?:apps/)?web(?:/|$))",
+                "message": "API workspace must not import from web workspace."
+              },
+              {
+                "regex": "^(?:react(?:/|$)|react-dom(?:/|$)|react-router-dom(?:/|$)|@tanstack/react-query(?:/|$)|zustand(?:/|$)|immer(?:/|$)|leaflet(?:/|$))",
+                "message": "API workspace must not import frontend UI or client packages."
+              }
+            ]
+          }
+        ]
       }
     }
   ]

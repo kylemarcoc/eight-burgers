@@ -1,19 +1,19 @@
 # Performance
 
-Measure a user journey on a production build before optimizing it. Start with what the user waits for—such as initial route rendering, interactive list filtering, or a server-backed workflow step. Identify the cost in a trace, make the smallest change that addresses it, and repeat the same measurement. Separate browser rendering, network transfer, and backend processing so the change targets the work that causes the delay.
+Measure a user journey on a production build before optimizing it. Start with what the user waits for—such as initial route rendering, interactive list filtering, API/database roundtrips, or a server-backed image upload. Identify the cost in a trace or query profile, make the smallest change that addresses it, and repeat the same measurement. Separate browser rendering, network transfer, BFF middleware overhead, and PostgreSQL query execution so the change targets the work that causes the delay.
 
 ## Choosing an optimization
 
 | Observed problem                                  | Try first                                                                                                                              | Evidence to compare                                                                            |
 | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Slow initial render with much unused JavaScript   | Inspect the entry graph and defer a large secondary route or feature                                                                   | Initial JavaScript bytes, parse and execution time, LCP, and first use of the deferred feature |
+| Slow initial render with much unused JavaScript   | Inspect the entry graph and defer a large secondary route or heavy optional widget or SDK                                              | Initial JavaScript bytes, parse and execution time, LCP, and first use of the deferred feature |
 | Slow interaction with repeated React updates      | Scope the state or subscription and remove redundant synchronization. Memoize an expensive calculation or subtree if it remains costly | React commit durations and browser interaction timing before and after                         |
-| Slow scrolling or filtering in a large collection | Limit records fetched or rendered. Virtualize when the interaction needs continuous scrolling                                          | DOM size, scripting and layout time, scroll behavior, and keyboard focus                       |
+| Slow scrolling or filtering in a large collection | Paginate on the server with keyset cursors and debounce search inputs; virtualize only when continuous scrolling demands it            | DOM size, transferred rows, scripting and layout time, scroll behavior, and keyboard focus     |
 | Slow filtering, joining, or repeated lookups      | Replace nested array scans (`O(n·m)` / `O(n²)`) with a `Map` or `Set` index (`O(n + m)`)                                               | Scripting time on representative collection sizes before and after                             |
 | Expensive UI updates block typing or tab toggle   | Mark non-urgent updates with `useTransition` or `useDeferredValue`, or preserve hidden stateful panels with `<Activity mode="hidden">` | Input latency (INP), main-thread long tasks, and toggle responsiveness before and after        |
-| Repeated requests or long request chains          | Reuse cached results, run independent reads concurrently, and cancel superseded reads                                                  | Request count, transferred bytes, and time to usable data                                      |
+| Repeated requests or slow polled API endpoints    | Consolidate parallel `COUNT(*)` / auth roundtrips, run independent reads concurrently, and pause polling when paginated                | Request count, DB roundtrips per request, transferred bytes, and p95 latency                   |
 | Late or shifting primary content                  | Identify the LCP element or shift source. Reserve space and prioritize the critical resource                                           | LCP phases, layout shifts, and image or font requests at relevant widths                       |
-| Slow server job, preview, or file export          | Time upload, job wait and execution, and file transfer separately                                                                      | Stage durations on the same representative fixture and environment                             |
+| Slow server image processing or upload endpoint   | Validate size before decoding, inspect metadata and re-encode with Sharp (`limitInputPixels`), and serve immutable cached WebP assets  | CPU duration, peak memory, upload latency, and emitted object size                             |
 
 ## Rendering and assets
 
@@ -56,7 +56,7 @@ Keep render functions and hooks strictly pure (following the Rules of React) so 
 
 ### Images, fonts, and motion
 
-- Serve images close to their displayed size (`srcSet`/`sizes` or `<picture>`), evaluate AVIF or WebP, reference Vite `public/` assets via `import.meta.env.BASE_URL`, and reserve dimensions or aspect ratios to prevent layout shift.
+- Serve images close to their displayed size (`srcSet`/`sizes` or `<picture>`), prefer WebP or AVIF assets, reference Vite `public/` assets via `import.meta.env.BASE_URL`, and reserve explicit dimensions or aspect ratios to prevent layout shift.
 - Use `loading="lazy"` and `decoding="async"` for below-the-fold or non-critical images; keep the measured LCP image eager with default decoding and discoverable early. Add `<link rel="preload" as="image">` only when a trace shows delayed LCP discovery, scoped to routes that render the asset (matching `%BASE_URL%` in SPA shells, accounting for CSP nonce/hash requirements if scripted) so secondary routes do not waste bandwidth or emit unused-preload warnings. See [LCP resource loading](https://web.dev/articles/optimize-lcp).
 - Serve only used font weights and subsets (preferring WOFF2) with intentional `font-display` and fallback metrics.
 - Preserve layout dimensions, responsive behavior, and `@media (prefers-reduced-motion: reduce)` fallbacks.
@@ -65,7 +65,7 @@ Keep render functions and hooks strictly pure (following the Rules of React) so 
 
 ### Vite + React Router apps
 
-Keep the main entry path available early. Prefer a route boundary for an expensive secondary route, and defer an individual feature or optional SDK (via dynamic `import()`) when heavy or interaction-triggered. In React Router declarative mode (`BrowserRouter` + `Routes`), use module-scope `React.lazy` and `Suspense`. See [React Router modes](https://reactrouter.com/start/modes) and [React lazy](https://react.dev/reference/react/lazy).
+Keep the main entry path available early. Prefer a route boundary for secondary routes (such as admin or settings layouts and subpages), and defer heavy optional widgets or third-party SDKs via module-scope `React.lazy` and `Suspense`. See [React Router modes](https://reactrouter.com/start/modes) and [React lazy](https://react.dev/reference/react/lazy).
 
 ```tsx
 import { lazy, Suspense } from 'react';
@@ -81,11 +81,11 @@ export function DeferredSecondary({ loadingLabel }: { loadingLabel: string }) {
 }
 ```
 
-Reserve fallback space (`min-h-*`) to prevent layout shifts, and pair `Suspense` with a route error boundary (`role="alert"` + reload recovery). Vite exposes `vite:preloadError` for failed dynamic imports after deployments—guard any automatic reload with a single-retry `sessionStorage` flag (falling back to the error boundary if storage is unavailable) so broken assets never trigger reload loops. See [Vite load error handling](https://vite.dev/guide/build#load-error-handling).
+Reserve fallback space (`min-h-*`) to prevent layout shifts, and pair `Suspense` with a route or widget `ErrorBoundary` (`role="alert"` + retry/reload recovery). Vite exposes `vite:preloadError` for failed dynamic imports after deployments—guard any automatic reload in `apps/web/src/main.tsx` with a single-retry `sessionStorage` flag (falling back to the error boundary if storage is unavailable) so broken assets never trigger reload loops. See [Vite load error handling](https://vite.dev/guide/build#load-error-handling).
 
 ## Virtualization
 
-Start with a bounded page or list. Move filtering and pagination to the API when dataset size or transfer cost exceeds what the browser should hold. When rendering or scrolling a large collection is measured as expensive and users need continuous scrolling, evaluate `@tanstack/react-virtual` (only when installed and justified), give the scroll container a bounded height, use stable row keys, keep row renderers free of `O(n)` scans, and preserve keyboard focus and semantic roles across unmounted rows. See [TanStack Virtual API](https://tanstack.com/virtual/latest/docs/api/virtualizer).
+Start with bounded server-paginated lists. Move filtering, sorting, and keyset pagination to `apps/api/` and PostgreSQL when dataset size or transfer cost exceeds what the browser should hold. When rendering or scrolling a large collection is measured as expensive and users need continuous scrolling, evaluate `@tanstack/react-virtual` (only when installed and justified), give the scroll container a bounded height, use stable row keys, keep row renderers free of `O(n)` scans, and preserve keyboard focus and semantic roles across unmounted rows. See [TanStack Virtual API](https://tanstack.com/virtual/latest/docs/api/virtualizer).
 
 ## Data structures and algorithmic complexity
 
@@ -124,16 +124,18 @@ export function indexSelectedLabels(
 }
 ```
 
-## Network and processing
+## Network, backend BFF, and database processing
 
-- When using TanStack Query v5, reuse cache entries and keys for equivalent requests, choose `staleTime` and `gcTime` deliberately, run independent reads concurrently, and forward `AbortSignal`. See [State management](state-management.md#server-state) and [API design](api-design.md#queries-and-request-lifetime).
-- For server-backed binary processing and background jobs, transfer large files via signed URLs so files bypass serverless body limits, retain cancellation, and enforce size/concurrency caps documented in `README.md`.
+- **TanStack Query discipline:** Reuse cache entries and keys for equivalent requests, choose `staleTime` and `gcTime` deliberately, forward `AbortSignal`, debounce search inputs before firing filtered requests, and pause background `refetchInterval` polling when a record reaches a terminal state or when infinite pagination extends past page 1. See [State management](state-management.md#server-state) and [API design](api-design.md#queries-and-request-lifetime).
+- **Single-flight auth & concurrent reads:** Deduplicate concurrent refresh-token rotations in memory (single-flight refresh-token deduplication) and run independent database reads concurrently with `Promise.all`.
+- **Database roundtrip & index hygiene:** Back keyset cursor pagination with matching composite indexes, consolidate multi-bucket counts into a single SQL query/RPC rather than firing parallel `COUNT(*)` queries per poll, and reuse verified JWT claims or short-lived cache boundaries before repeating remote auth verification calls across hot endpoints. See [Database and storage](database-and-storage.md#indexing-and-query-performance).
+- **Server-side image processing (`apps/api/`):** Bound upload byte sizes before decoding, constrain Sharp decode/encode work (pixel cap, format allowlist, resize/re-encode to WebP), and serve immutable UUID-keyed blobs with long-lived `Cache-Control` headers. See [Database and storage](database-and-storage.md#storage-buckets-and-media-lifecycle).
 
 ## Bundle optimization
 
-Inspect production output and actual Network requests before changing bundling. Compare raw and compressed transfer bytes consistently. Prefer selective named imports (such as `import { Check } from 'lucide-react'` rather than namespace imports), avoid wide re-export barrels on hot entry paths, and inspect `package-lock.json` for duplicate heavy packages. See [Coding standards](coding-standards.md#dependencies-and-review).
+Inspect production output (`apps/web/dist/` and `apps/api/dist/`) and actual Network requests before changing bundling. Compare raw and compressed transfer bytes consistently. Prefer selective named imports, avoid wide re-export barrels on hot entry paths, and inspect root `package-lock.json` for duplicate heavy packages. See [Coding standards](coding-standards.md#dependencies-and-review).
 
-Vite 8 uses Rolldown for production bundling. Custom chunk settings use `build.rolldownOptions` (including `output.codeSplitting`), while older `build.rollupOptions` is deprecated. Keep automatic grouping until a trace shows a concrete benefit from manual chunking. See [Vite build options](https://vite.dev/config/build-options) and [Rolldown chunk options](https://rolldown.rs/reference/OutputOptions.codeSplitting).
+Vite 8 uses Rolldown for production bundling. Custom chunk or external settings (such as externalizing native Node addons like `sharp` in server builds) use `build.rolldownOptions` (including `output.codeSplitting`), while older `build.rollupOptions` is deprecated. Keep automatic chunking until a trace shows a concrete benefit from manual chunking. See [Vite build options](https://vite.dev/config/build-options) and [Rolldown chunk options](https://rolldown.rs/reference/OutputOptions.codeSplitting).
 
 ## Core Web Vitals
 
@@ -149,24 +151,24 @@ See [Web Vitals](https://web.dev/articles/vitals), [Total Blocking Time](https:/
 
 ## Measuring changes
 
-1. Choose the route, interaction, and metric using a representative non-sensitive fixture and record the baseline commit.
-2. Run the production build (`npm run build` and `preview` / `start`) under matched browser/device/network conditions. See [build and preview scripts](../README.md#checks-and-builds) and [release checks](testing-strategy.md#release-checks).
-3. Capture repeated cold-load and warm-navigation traces using Chrome DevTools Performance (including React Performance Tracks on React 19.2+), Network, and Lighthouse.
-4. Report the route, conditions, run count, median/spread, and matched before-and-after metrics. See [Testing strategy](testing-strategy.md#frontend-validation) and [CI](../.github/workflows/ci.yml).
+1. Choose the route, interaction, or API endpoint using a representative non-sensitive fixture and record the baseline commit.
+2. Run production builds (`npm run build`), start the BFF (`npm run start --workspace=<api-workspace>`, checking [AGENTS.md](../AGENTS.md) or workspace `package.json` for workspace names) and `npm run preview`, and test under matched browser/device/network conditions. See [README.md](../README.md) and [release checks](testing-strategy.md#release-checks).
+3. Capture repeated cold-load and warm-navigation traces using Chrome DevTools Performance (including React Performance Tracks on React 19.2+), Network, and Lighthouse, and measure server endpoint durations separately from client rendering.
+4. Report the route or endpoint, conditions, run count, median/spread, and matched before-and-after metrics. See [Testing strategy](testing-strategy.md#frontend-validation) and [CI](../.github/workflows/ci.yml).
 
 ## Common anti-patterns
 
 | Avoid                                                                              | Prefer                                                                                          |
 | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | Adding `memo`, `useMemo`, or `useCallback` throughout a tree                       | Find the triggering update and measure the expensive work.                                      |
-| Eagerly loading every route or splitting each small component                      | Keep critical paths together and defer substantial work when it helps.                          |
-| Rendering thousands of nodes or doing expensive synchronous work on each keystroke | Bound the result set and profile data preparation and rendering separately.                     |
+| Eagerly loading every route or heavy third-party SDK                               | Keep critical paths lean and defer secondary routes and heavy widgets via `React.lazy`.         |
+| Rendering thousands of nodes or doing expensive synchronous work on each keystroke | Bound pages via server keyset pagination, debounce searches, and profile data vs. render work.  |
 | Nested array scans (`find`/`includes` in loops) or `reduce` array copies (`O(n²)`) | Pre-index lookups with a `Map` or `Set` (`O(n + m)`) and build results in a single linear pass. |
-| Importing a large package for a small operation                                    | Reuse a supported focused import or a small existing implementation.                            |
+| Multiple parallel `COUNT(*)` / auth roundtrips on polled endpoints                 | Consolidate counts into a single SQL query/RPC and cache/batch reads deliberately.              |
 | Duplicate reads, blanket refetches, and chained independent requests               | Reuse keys, invalidate narrowly, and start independent work together.                           |
-| Full-size critical images with delayed discovery or shifting layout                | Size assets to their use, prioritize the measured LCP request, and reserve space.               |
+| Full-size critical images with delayed discovery or shifting layout                | Size and re-encode assets to WebP, prioritize the measured LCP request, and reserve dimensions. |
 | Reporting gains without matched measurements                                       | Capture the baseline and compare repeated runs under the same conditions.                       |
 
 ## Incremental adoption
 
-Adopt improvements in the owning feature, route, or shared module while preserving public contracts, mobile layouts, keyboard behavior, and reduced motion. Document app-specific profiling limits in `README.md`. See [Feature structure](feature-structure.md) and [Architecture](architecture.md#exceptions-and-incremental-adoption).
+Adopt improvements in the owning feature, route, shared client module, or backend gateway while preserving public contracts, mobile layouts, keyboard behavior, and reduced motion. Document app-specific profiling limits in `README.md`. See [Feature structure](feature-structure.md) and [Architecture](architecture.md#exceptions-and-incremental-adoption).

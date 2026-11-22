@@ -14,6 +14,10 @@ coverage
 *.local
 .npmrc
 
+# Supabase local CLI artifacts
+supabase/.branches
+supabase/.temp
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

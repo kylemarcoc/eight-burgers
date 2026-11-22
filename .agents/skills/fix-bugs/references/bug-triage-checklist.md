@@ -1,72 +1,49 @@
 # Bug Triage Checklist & Validation
 
-Use this reference when diagnosing, reproducing, fixing, and verifying defects.
+Use this procedural checklist alongside `AGENTS.md` and relevant repository guides under `docs/` when diagnosing, reproducing, fixing, and verifying defects across single-app or multi-package codebases (client/frontend, and when present, shared contracts, backend API, and database layers).
 
 ## 1. Root-cause diagnostic checklist by symptom class
 
-- **State, effects, and async races**:
-  - Check for stale closures capturing outdated props/state, missing `useEffect` dependency items, or state-syncing effects causing render loops or overwriting user edits.
-  - Check for missing cleanup on unmount or parameter change: `AbortController`/`AbortSignal` for in-flight fetches, `clearTimeout`/`clearInterval`, event listener removal, subscription teardown, and `URL.revokeObjectURL`.
-  - Check for out-of-order async responses overwriting newer state (use `AbortSignal` or monotonic request/revision guards).
-  - Check for impure renders (mutating props/state/arrays in place or reading/writing `ref.current` during render) and missing or unstable list `key` values (avoid array indices when items reorder, insert, or delete).
-  - Check persisted client stores for unvalidated `unknown` hydration payloads, schema-version drift, quota/storage-unavailable exceptions, or ephemeral flags accidentally persisted.
-- **Data boundaries, validation, and error handling**:
-  - Check external JSON, URL search params, storage entries, form payloads, and realtime/postMessage events for unguarded assumptions (`null`, `undefined`, `NaN`, empty arrays, unexpected shapes).
-  - Check error paths for silent failures (`catch {}`), stuck loading/submitting states (`try`/`finally`), lost user edits on failed submits, duplicate submissions, or leaked sensitive details.
-- **UI, layout, styling, and accessibility**:
-  - Check portals, modals, drawers, and sticky headers for `z-index`/stacking-context clipping, body scroll-lock leaks on unmount, missing Escape/backdrop dismissal, or broken focus restoration.
-  - Check responsive narrow-to-wide overflow, flex/grid `min-w-0` truncation issues, light/dark theme token contrast (`data-ui-theme`, `--ui-*`), and broken media fallback loops (reset fallback state when `src` changes).
-  - Check broken interactive semantics (clickable `<div>` instead of `<button>`, missing button `type="button"` inside `<form>` triggering accidental submits, missing accessible labels or live status updates).
-- **TypeScript, lint, and build errors**:
-  - Check circular imports (`import/no-cycle`), deep imports across feature boundaries (`no-restricted-imports`), mismatched `type`-only imports, strict null narrowing, and stale generated artifacts.
+- **State, lifecycle, and async races (client):**
+  - Check for stale closures capturing outdated props/state, missing effect dependencies, or state-syncing effects causing render loops or overwriting user edits.
+  - Check for missing cleanup on unmount or parameter change: in-flight request cancellation signals, timers/intervals, event listeners, subscriptions, and temporary object URL revocation.
+  - Check for out-of-order async responses overwriting newer state (cancellation signals or sequence/revision guards) and missing session-expiry (`401`) cache/state cleanup.
+  - Check for impure render-time mutations and unstable collection keys when items reorder, insert, or delete.
+  - Check persistent client stores for unvalidated hydrated payloads, schema-version drift, storage-quota/unavailable errors, deprecated sensitive keys left behind on migration, or ephemeral UI flags accidentally persisted.
+- **Data boundaries, validation, and error handling:**
+  - Check external payloads, URL parameters, storage entries, form inputs, and route arguments for unguarded assumptions (`null`, empty collections, unexpected shapes, out-of-range numbers).
+  - Check error paths for swallowed exceptions, stuck pending/loading flags, lost user edits on failed submits or version conflicts, duplicate writes missing idempotency protection, or leaked sensitive internals.
+- **UI, layout, styling, and accessibility:**
+  - Check portals, modals, drawers, and sticky overlays for stacking-context clipping, scroll-lock leaks on unmount, missing Escape/backdrop dismissal, or broken trigger focus restoration.
+  - Check narrow-to-wide overflow, flex/grid truncation, theme contrast across configured modes, and broken image fallback loops (derive fallback state cleanly from the current source).
+  - Check broken interactive semantics (clickable non-semantic tags, missing non-submit button types inside forms, missing accessible labels or live status updates).
+- **Static checks, types, and build failures:**
+  - Check circular dependencies, deep imports bypassing feature public entry points, tier/layer violations, strict null narrowing, and stale build artifacts.
 
-## 2. Stack-specific bug traps
+## 2. Common cross-layer bug traps
 
-### Vite + React
+### Client traps
 
-- **Base paths & assets**: Check hardcoded `/images/...` or root-relative paths that break under non-root `import.meta.env.BASE_URL`, missing `BrowserRouter` `basename={import.meta.env.BASE_URL}`, and stale `React.lazy` chunks after deploy (`vite:preloadError` single-retry guard without infinite reload loops).
-- **URL state & forms**: Check `useSearchParams` updates that accidentally drop unrelated query parameters or fail on invalid/missing param values.
-- **Test isolation (Vitest + jsdom)**: Check missing `afterEach(cleanup)`, leaked Zustand store state or `localStorage`/`sessionStorage` values between tests, uncancelled fake timers (`vi.useRealTimers()`), and async lazy routes/portals needing `await screen.findBy*`.
+- **Base paths, proxy & assets:** Check hardcoded root-relative URLs that break under non-root public base paths, missing router base paths, dev proxy rules, and stale lazy chunks after deployments (ensure preload recovery cannot loop infinitely).
+- **URL state & query cache:** Check search-parameter updates that drop unrelated params, and paginated polling queries that keep polling stale deeper pages or omit cursor resets on filter changes.
+- **Test isolation:** Check missing UI/DOM cleanup between tests, leaked client stores or storage keys, shared query caches (disable automatic error retries when testing error flows), uncancelled fake timers, and lazy/async boundaries requiring async queries.
+
+### Optional backend API, contracts & database traps (when present)
+
+- **Auth cookies, CSRF & refresh races:** Check missing CSRF checks on mutating routes, HTTPS-only cookie flags breaking local HTTP dev, missing single-flight refresh guards causing concurrent requests to race on rotated refresh tokens, or protected routes mishandling expired tokens.
+- **Optimistic locking & idempotency:** Check `409 Conflict` handling when expected versions mismatch concurrent writes, idempotency conflicts when a reused key arrives with a different payload, and stale precondition/invariant drift during transactional writes.
+- **Query escaping & DB/storage integrity:** Check unescaped filter syntax delimiters or pattern wildcards in dynamic search expressions, destructive full-table resets violating foreign keys, silent default fallbacks masking disabled references, unhandled unique-constraint collisions on generated identifiers/slugs, and storage cleanup mismatches across stored URL formats.
+- **Gateway test-double drift:** Verify in-memory backend test doubles match real database constraints, error codes, and authorization rules rather than masking real persistence bugs.
 
 ## 3. Anti-patterns to reject during bug fixes
 
-- **Symptom suppression**: Adding arbitrary `setTimeout` delays, empty `catch {}` blocks, or broad fallback returns that hide real bugs.
-- **Guardrail bypasses**: Introducing `any`, non-null assertions (`!`), `@ts-expect-error`/`@ts-ignore`, or Oxlint disable comments instead of fixing the underlying type or boundary violation.
-- **Test weakening**: Deleting, skipping (`it.skip`), or loosening assertions to make a failing test pass without proving the test expectation itself was wrong.
-- **Scope creep**: Mixing unrelated refactors, reformatting untouched files, or introducing new dependencies without approval.
+- **Symptom suppression:** Arbitrary sleep/delay workarounds, swallowed empty error catches, or broad fallback returns that mask root failures.
+- **Guardrail bypasses:** Unsafe type escapes, type-suppression comments, or linter-disable pragmas instead of fixing the underlying boundary bug.
+- **Test weakening:** Deleting, skipping, or loosening assertions to turn a failing test green without proving the test expectation was wrong.
+- **Scope creep:** Mixing unrelated refactors, reformatting untouched files, or introducing unapproved dependencies.
 
-## 4. Oxlint & architectural boundaries (`.oxlintrc.json`)
+## 4. Preservation & verification steps
 
-Every bug fix must preserve:
-
-- **Feature barrel discipline (`no-restricted-imports`)**: Outside a feature, import only from `@/features/<name>`. Inside `src/features/<name>/`, use relative sibling imports (`./...`, `../...`) and never import the feature's own `index.ts` (`import/no-cycle`).
-- **One-way layering (`no-restricted-imports`)**:
-  - `src/{features,lib,server}/**/*` must not import from `app/` or `routes/`.
-  - `src/shared/**/*` must not import from `app/`, `features/`, or `routes/`.
-
-## 5. Verification command matrix
-
-Run from the repository root. Use `npm.cmd` and `npx.cmd` on Windows PowerShell if `.ps1` launchers are blocked.
-
-### Targeted reproduction & regression test
-
-```sh
-npm run test -- <test-file-path>
-```
-
-### Format changed files only
-
-```sh
-npx --no-install prettier --write <changed-files>
-npx --no-install prettier --check <changed-files>
-```
-
-### Full check suite
-
-```sh
-npm run lint
-npm run format:check
-npm run test
-npm run typecheck
-npm run build
-```
+1. Inspect configured architecture and linter rules (`AGENTS.md`, linter configs) to preserve feature entry-point discipline and strict client/contracts/server separation.
+2. Format only changed files using the repository's configured formatter.
+3. Run the narrowest targeted failing test first via the project's test runner, then run the repository's full configured lint, format-check, test, type-check, and build suite (plus local DB reset/lint commands when database files changed and local DB tooling is running).

@@ -6,35 +6,32 @@
   "engines": {
     "node": ">=22.22.2"
   },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "typecheck": "tsc --noEmit",
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "npm run dev --workspace=@eight-burgers/web",
+    "dev:api": "npm run dev --workspace=@eight-burgers/api",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "oxlint .",
-    "test": "vitest run",
+    "test": "npm run test --workspaces --if-present",
     "format": "prettier --write .",
     "format:check": "prettier --check . --ignore-path .gitignore --ignore-path .prettierignore",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "immer": "^11.2.10",
-    "leaflet": "^1.9.4",
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1",
-    "react-router-dom": "^7.18.5",
-    "zustand": "^5.1.0"
+    "preview": "npm run preview --workspace=@eight-burgers/web",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:status": "supabase status",
+    "db:reset": "supabase db reset",
+    "db:lint": "supabase db lint"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.3.5",
-    "@testing-library/react": "^16.3.3",
-    "@types/leaflet": "^1.9.22",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.2.1",
-    "jsdom": "^30.1.3",
+    "@types/node": "^22.15.0",
     "oxlint": "^1.88.0",
     "prettier": "^3.6.2",
-    "tailwindcss": "^4.3.5",
+    "supabase": "^2.76.12",
     "typescript": "^7.0.2",
     "vite": "^8.3.6",
     "vitest": "^5.1.0"
