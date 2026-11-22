@@ -71,7 +71,7 @@ export function createAuthRoutes(deps: ApiDeps): Hono<ApiEnv> {
         status: 403,
         code: 'ADMIN_FORBIDDEN',
         title: 'Forbidden',
-        detail: 'This account does not have active Owner Admin permissions.',
+        detail: 'This account does not have active Staff Portal permissions.',
       });
     }
 
@@ -131,7 +131,7 @@ export function createAuthRoutes(deps: ApiDeps): Hono<ApiEnv> {
         status: 401,
         code: 'SESSION_EXPIRED',
         title: 'Unauthorized',
-        detail: 'Admin session expired. Please sign in again.',
+        detail: 'Staff Portal session expired. Please sign in again.',
       });
     }
 

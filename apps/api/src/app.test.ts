@@ -4,6 +4,7 @@ import {
   MENU_ADDONS,
   normalizeContactDigits,
   normalizeQueueNumber,
+  type AdminTeamMember,
   type AdminUser,
   type DeliveryPricingConfig,
   type MenuItem,
@@ -32,6 +33,39 @@ const ADMIN_USER: AdminUser = {
   role: 'owner',
 };
 
+const CASHIER_USER: AdminUser = {
+  id: '22222222-2222-4222-8222-222222222222',
+  email: 'cashier@eightburgers.local',
+  role: 'cashier',
+};
+
+const STAFF_USER: AdminUser = {
+  id: '33333333-3333-4333-8333-333333333333',
+  email: 'staff@eightburgers.local',
+  role: 'staff',
+};
+
+const TEST_USERS_BY_EMAIL = new Map<string, { user: AdminUser; token: string; refresh: string }>([
+  [
+    ADMIN_USER.email,
+    { user: ADMIN_USER, token: 'valid-access-token', refresh: 'valid-refresh-token' },
+  ],
+  [
+    CASHIER_USER.email,
+    { user: CASHIER_USER, token: 'cashier-access-token', refresh: 'cashier-refresh-token' },
+  ],
+  [
+    STAFF_USER.email,
+    { user: STAFF_USER, token: 'staff-access-token', refresh: 'staff-refresh-token' },
+  ],
+]);
+
+const TEST_USERS_BY_TOKEN = new Map<string, AdminUser>([
+  ['valid-access-token', ADMIN_USER],
+  ['cashier-access-token', CASHIER_USER],
+  ['staff-access-token', STAFF_USER],
+]);
+
 function toPublicOrderTracker(order: OrderRecord): PublicOrderTracker {
   return {
     queueNumber: order.queueNumber,
@@ -59,8 +93,10 @@ function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
       string,
       { order: OrderRecord; idempotencyKey: string; payloadHash: string; receiptTokenHash: string }
     >;
+    team: AdminTeamMember[];
     uploadedImages: Set<string>;
     seq: number;
+    userSeq: number;
   };
 } {
   const state: {
@@ -70,8 +106,10 @@ function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
       string,
       { order: OrderRecord; idempotencyKey: string; payloadHash: string; receiptTokenHash: string }
     >;
+    team: AdminTeamMember[];
     uploadedImages: Set<string>;
     seq: number;
+    userSeq: number;
   } = {
     menu: DEFAULT_MENU_ITEMS.map((item) => ({
       ...item,
@@ -92,8 +130,15 @@ function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
       string,
       { order: OrderRecord; idempotencyKey: string; payloadHash: string; receiptTokenHash: string }
     >(),
+    team: [ADMIN_USER, CASHIER_USER, STAFF_USER].map((user) => ({
+      ...user,
+      active: true,
+      createdAt: '2026-11-22T01:00:00.000Z',
+      updatedAt: '2026-11-22T01:00:00.000Z',
+    })),
     uploadedImages: new Set<string>(),
     seq: 101,
+    userSeq: 4,
   };
 
   const gateway: ShopBackendGateway = {
@@ -261,20 +306,21 @@ function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
       if (email === 'nonadmin@eightburgers.local' && password === 'valid-pass') {
         return { status: 'forbidden' };
       }
-      if (email === ADMIN_USER.email && password === 'EightBurgersDev123!') {
+      const matched = TEST_USERS_BY_EMAIL.get(email);
+      if (matched && password === 'EightBurgersDev123!') {
         return {
           status: 'ok',
-          user: ADMIN_USER,
+          user: matched.user,
           tokens: {
-            accessToken: 'valid-access-token',
-            refreshToken: 'valid-refresh-token',
+            accessToken: matched.token,
+            refreshToken: matched.refresh,
             expiresInSeconds: 3600,
           },
         };
       }
       return { status: 'invalid_credentials' };
     },
-    verifyAccessToken: async (token) => (token === 'valid-access-token' ? ADMIN_USER : null),
+    verifyAccessToken: async (token) => TEST_USERS_BY_TOKEN.get(token) ?? null,
     refreshAdminSession: async (refreshToken) =>
       refreshToken === 'valid-refresh-token'
         ? {
@@ -476,6 +522,51 @@ function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
         version: (entry.order.version ?? 1) + 1,
       };
       return { status: 'ok', data: entry.order };
+    },
+    listAdminUsers: async () => [...state.team],
+    createAdminUser: async (_token, input) => {
+      const normalizedEmail = input.email.trim().toLowerCase();
+      if (state.team.some((member) => member.email.toLowerCase() === normalizedEmail)) {
+        return { status: 'email_exists' };
+      }
+      const seq = state.userSeq;
+      state.userSeq += 1;
+      const member: AdminTeamMember = {
+        id: `00000000-0000-4000-8000-${String(seq).padStart(12, '0')}`,
+        email: normalizedEmail,
+        role: input.role,
+        active: true,
+        createdAt: '2026-11-22T06:00:00.000Z',
+        updatedAt: '2026-11-22T06:00:00.000Z',
+      };
+      state.team.push(member);
+      return { status: 'ok', member };
+    },
+    updateAdminUser: async (_token, userId, input) => {
+      const idx = state.team.findIndex((member) => member.id === userId);
+      if (idx === -1) return { status: 'not_found' };
+      const existing = state.team[idx];
+      if (!existing) return { status: 'not_found' };
+      const nextRole = input.role ?? existing.role;
+      const nextActive = input.active ?? existing.active;
+      if (
+        existing.role === 'owner' &&
+        existing.active &&
+        (nextRole !== 'owner' || !nextActive) &&
+        !state.team.some(
+          (entry) => entry.id !== existing.id && entry.role === 'owner' && entry.active,
+        )
+      ) {
+        return { status: 'last_owner' };
+      }
+      const updated: AdminTeamMember = {
+        ...existing,
+        role: nextRole,
+        active: nextActive,
+        updatedAt: '2026-11-22T06:30:00.000Z',
+      };
+      state.team[idx] = updated;
+      return { status: 'ok', member: updated };
     },
     ...overrides,
   };
@@ -1194,5 +1285,227 @@ describe('Eight Burgers REST BFF', () => {
     expect(adminCancelledBody.counts.all).toBe(3);
 
     expect(pickupCreated.data.queueNumber).toBe('#8B-102');
+  });
+
+  it('enforces role-based permissions for owner, cashier, and staff accounts', async () => {
+    const { gateway } = createFakeGateway();
+    const app = createApp({ config: TEST_CONFIG, gateway });
+
+    // Seed one order so cashier and staff can update statuses including cancelled
+    const createOrderRes = await app.request('/api/v1/orders', {
+      method: 'POST',
+      headers: {
+        ...CSRF_HEADERS,
+        'Idempotency-Key': 'rbac-test-order-101',
+      },
+      body: JSON.stringify({
+        customerName: 'RBAC Customer',
+        contactNumber: '09175551234',
+        fulfillment: 'kiosk-pickup',
+        addressOrNotes: '',
+        paymentMethod: 'cash',
+        items: [{ itemId: 'burger-deluxe', quantity: 1, addonIds: [] }],
+      }),
+    });
+    expect(createOrderRes.status).toBe(201);
+    const createdOrder = ((await createOrderRes.json()) as { data: OrderRecord }).data;
+
+    for (const account of [
+      { email: CASHIER_USER.email, role: 'cashier', token: 'cashier-access-token' },
+      { email: STAFF_USER.email, role: 'staff', token: 'staff-access-token' },
+    ]) {
+      const loginRes = await app.request('/api/v1/auth/login', {
+        method: 'POST',
+        headers: CSRF_HEADERS,
+        body: JSON.stringify({ email: account.email, password: 'EightBurgersDev123!' }),
+      });
+      expect(loginRes.status).toBe(200);
+      const loginBody = (await loginRes.json()) as { data: { user: AdminUser } };
+      expect(loginBody.data.user.role).toBe(account.role);
+
+      const authCookie = { Cookie: `eb_access_token=${account.token}` };
+      const authMutationHeaders = { ...CSRF_HEADERS, ...authCookie };
+
+      // Allowed: view orders, update order status (including cancelled), toggle menu availability
+      const ordersRes = await app.request('/api/v1/admin/orders', { headers: authCookie });
+      expect(ordersRes.status).toBe(200);
+
+      const statusUpdateRes = await app.request(`/api/v1/admin/orders/${createdOrder.id}/status`, {
+        method: 'PATCH',
+        headers: authMutationHeaders,
+        body: JSON.stringify({ status: account.role === 'cashier' ? 'grilling' : 'cancelled' }),
+      });
+      expect(statusUpdateRes.status).toBe(200);
+
+      const toggleRes = await app.request('/api/v1/admin/menu-items/burger-deluxe/availability', {
+        method: 'PATCH',
+        headers: authMutationHeaders,
+        body: JSON.stringify({ available: account.role !== 'cashier' }),
+      });
+      expect(toggleRes.status).toBe(200);
+
+      // Forbidden (403 INSUFFICIENT_ROLE): menu CRUD, reset, image upload/delete, delivery settings
+      const createMenuRes = await app.request('/api/v1/admin/menu-items', {
+        method: 'POST',
+        headers: authMutationHeaders,
+        body: JSON.stringify({
+          name: 'Unauthorized Burger',
+          category: 'classic-burgers',
+          pricePhp: 199,
+          pattySpec: '100g Pure Beef',
+          description: 'Blocked for non-owners',
+          imageUrl: '',
+          available: true,
+          featured: false,
+          allowAddons: true,
+        }),
+      });
+      expect(createMenuRes.status).toBe(403);
+      expect(((await createMenuRes.json()) as { code: string }).code).toBe('INSUFFICIENT_ROLE');
+
+      const updateMenuRes = await app.request('/api/v1/admin/menu-items/burger-deluxe', {
+        method: 'PUT',
+        headers: authMutationHeaders,
+        body: JSON.stringify({
+          name: 'Burger Deluxe',
+          category: 'classic-burgers',
+          pricePhp: 999,
+          pattySpec: '100g Pure Beef',
+          description: 'Attempted price edit',
+          imageUrl: '',
+          available: true,
+          featured: true,
+          allowAddons: true,
+        }),
+      });
+      expect(updateMenuRes.status).toBe(403);
+
+      const deleteMenuRes = await app.request('/api/v1/admin/menu-items/burger-deluxe', {
+        method: 'DELETE',
+        headers: { Origin: 'http://localhost:5173', 'X-Requested-With': 'fetch', ...authCookie },
+      });
+      expect(deleteMenuRes.status).toBe(403);
+
+      const resetMenuRes = await app.request('/api/v1/admin/menu-items/reset', {
+        method: 'POST',
+        headers: { Origin: 'http://localhost:5173', 'X-Requested-With': 'fetch', ...authCookie },
+      });
+      expect(resetMenuRes.status).toBe(403);
+
+      const formData = new FormData();
+      formData.append(
+        'file',
+        new File([new Uint8Array([1, 2, 3])], 'burger.png', { type: 'image/png' }),
+      );
+      const uploadImageRes = await app.request('/api/v1/admin/menu-images', {
+        method: 'POST',
+        headers: { Origin: 'http://localhost:5173', 'X-Requested-With': 'fetch', ...authCookie },
+        body: formData,
+      });
+      expect(uploadImageRes.status).toBe(403);
+
+      const deleteImageRes = await app.request('/api/v1/admin/menu-images', {
+        method: 'DELETE',
+        headers: authMutationHeaders,
+        body: JSON.stringify({ imageUrl: '/storage/v1/object/public/menu-images/items/test.webp' }),
+      });
+      expect(deleteImageRes.status).toBe(403);
+
+      const deliveryPatchRes = await app.request('/api/v1/admin/delivery-pricing', {
+        method: 'PATCH',
+        headers: authMutationHeaders,
+        body: JSON.stringify({ freeDeliveryMinSubtotalPhp: 600 }),
+      });
+      expect(deliveryPatchRes.status).toBe(403);
+
+      const zoneCreateRes = await app.request('/api/v1/admin/delivery-zones', {
+        method: 'POST',
+        headers: authMutationHeaders,
+        body: JSON.stringify({
+          name: 'Blocked Zone',
+          areas: 'Nowhere',
+          maxDistanceKm: 5,
+          feePhp: 50,
+          etaMinutes: '20 min',
+          enabled: true,
+        }),
+      });
+      expect(zoneCreateRes.status).toBe(403);
+
+      const teamListRes = await app.request('/api/v1/admin/users', { headers: authCookie });
+      expect(teamListRes.status).toBe(403);
+      expect(((await teamListRes.json()) as { code: string }).code).toBe('INSUFFICIENT_ROLE');
+
+      const teamCreateRes = await app.request('/api/v1/admin/users', {
+        method: 'POST',
+        headers: authMutationHeaders,
+        body: JSON.stringify({
+          email: 'unauthorized@eightburgers.local',
+          password: 'Password123!',
+          role: 'staff',
+        }),
+      });
+      expect(teamCreateRes.status).toBe(403);
+    }
+  });
+
+  it('allows owners to list, register, and update team accounts while blocking self-modification', async () => {
+    const { gateway } = createFakeGateway();
+    const app = createApp({ config: TEST_CONFIG, gateway });
+    const ownerCookie = { Cookie: 'eb_access_token=valid-access-token' };
+    const ownerMutationHeaders = { ...CSRF_HEADERS, ...ownerCookie };
+
+    const listRes = await app.request('/api/v1/admin/users', { headers: ownerCookie });
+    expect(listRes.status).toBe(200);
+    const listBody = (await listRes.json()) as { data: AdminTeamMember[] };
+    expect(listBody.data).toHaveLength(3);
+
+    const createRes = await app.request('/api/v1/admin/users', {
+      method: 'POST',
+      headers: ownerMutationHeaders,
+      body: JSON.stringify({
+        email: '  Cashier2@EightBurgers.Local ',
+        password: 'CashierPass123!',
+        role: 'cashier',
+      }),
+    });
+    expect(createRes.status).toBe(201);
+    const created = ((await createRes.json()) as { data: AdminTeamMember }).data;
+    expect(created.email).toBe('cashier2@eightburgers.local');
+    expect(created.role).toBe('cashier');
+    expect(created.active).toBe(true);
+
+    // Duplicate email rejected with 409 EMAIL_ALREADY_REGISTERED
+    const dupRes = await app.request('/api/v1/admin/users', {
+      method: 'POST',
+      headers: ownerMutationHeaders,
+      body: JSON.stringify({
+        email: 'cashier2@eightburgers.local',
+        password: 'CashierPass123!',
+        role: 'staff',
+      }),
+    });
+    expect(dupRes.status).toBe(409);
+    expect(((await dupRes.json()) as { code: string }).code).toBe('EMAIL_ALREADY_REGISTERED');
+
+    // Update role and disable newly created user
+    const patchRes = await app.request(`/api/v1/admin/users/${created.id}`, {
+      method: 'PATCH',
+      headers: ownerMutationHeaders,
+      body: JSON.stringify({ role: 'staff', active: false }),
+    });
+    expect(patchRes.status).toBe(200);
+    const updated = ((await patchRes.json()) as { data: AdminTeamMember }).data;
+    expect(updated.role).toBe('staff');
+    expect(updated.active).toBe(false);
+
+    // Owner cannot modify or disable their own account
+    const selfPatchRes = await app.request(`/api/v1/admin/users/${ADMIN_USER.id}`, {
+      method: 'PATCH',
+      headers: ownerMutationHeaders,
+      body: JSON.stringify({ active: false }),
+    });
+    expect(selfPatchRes.status).toBe(400);
+    expect(((await selfPatchRes.json()) as { code: string }).code).toBe('CANNOT_MODIFY_SELF');
   });
 });

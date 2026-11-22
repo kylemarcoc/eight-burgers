@@ -10,9 +10,12 @@ import {
   type AdminOrderRange,
   type AdminOrderSort,
   type AdminOrderStatusFilter,
+  type AdminRole,
+  type AdminTeamMember,
   type AdminUser,
   type CancelPublicOrderByQueueRequest,
   type CatalogPayload,
+  type CreateAdminUserRequest,
   type DeliveryPricingConfig,
   type DeliveryZone,
   type DeliveryZoneInput,
@@ -26,6 +29,7 @@ import {
   type OrderStatus,
   type PlaceOrderRequest,
   type PublicOrderTracker,
+  type UpdateAdminUserRequest,
 } from '@eight-burgers/contracts';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { ApiConfig } from '../config/env';
@@ -99,6 +103,12 @@ export type ListAdminOrdersResult = {
   nextCursor: string | null;
   counts?: AdminOrderCounts;
 };
+
+export type CreateAdminUserResult =
+  { status: 'ok'; member: AdminTeamMember } | { status: 'email_exists' };
+
+export type UpdateAdminUserResult =
+  { status: 'ok'; member: AdminTeamMember } | { status: 'not_found' } | { status: 'last_owner' };
 
 export type ShopBackendGateway = {
   checkDatabaseReady: () => Promise<boolean>;
@@ -175,6 +185,16 @@ export type ShopBackendGateway = {
     status: OrderStatus,
     expectedVersion?: number,
   ) => Promise<MutationResult<OrderRecord>>;
+  listAdminUsers: (accessToken: string) => Promise<AdminTeamMember[]>;
+  createAdminUser: (
+    accessToken: string,
+    input: CreateAdminUserRequest,
+  ) => Promise<CreateAdminUserResult>;
+  updateAdminUser: (
+    accessToken: string,
+    userId: string,
+    input: UpdateAdminUserRequest,
+  ) => Promise<UpdateAdminUserResult>;
 };
 
 type DbMenuItemRow = {
@@ -259,10 +279,13 @@ type DbOrderRow = {
 type DbAdminUserRow = {
   user_id: string;
   email: string;
-  role: 'owner' | 'staff';
+  role: AdminRole;
   active: boolean;
+  created_at?: string;
+  updated_at?: string;
 };
 
+const ADMIN_USER_COLUMNS = 'user_id, email, role, active, created_at, updated_at';
 const MENU_ITEM_COLUMNS =
   'id, name, category, price_php, patty_spec, description, image_url, available, featured, allow_addons, sort_order, updated_at, version';
 const DELIVERY_ZONE_COLUMNS =
@@ -301,6 +324,17 @@ function buildAdminOrdersSearchOrFilter(rawQuery?: string): string | null {
   if (!cleaned) return null;
   const pattern = `"%${cleaned}%"`;
   return `queue_number.ilike.${pattern},customer_name.ilike.${pattern},contact_number.ilike.${pattern},delivery_zone_name.ilike.${pattern}`;
+}
+
+function mapAdminTeamMember(row: DbAdminUserRow): AdminTeamMember {
+  return {
+    id: row.user_id,
+    email: row.email,
+    role: row.role,
+    active: row.active,
+    createdAt: row.created_at ? normalizeIsoTimestamp(row.created_at) : new Date(0).toISOString(),
+    updatedAt: row.updated_at ? normalizeIsoTimestamp(row.updated_at) : new Date(0).toISOString(),
+  };
 }
 
 function mapMenuItem(row: DbMenuItemRow): MenuItem {
@@ -1222,6 +1256,114 @@ export function createSupabaseGateway(config: ApiConfig): ShopBackendGateway {
       const current = await this.getAdminOrderById(accessToken, orderId);
       if (!current) return { status: 'not_found' };
       return { status: 'conflict', latest: current };
+    },
+
+    async listAdminUsers(accessToken) {
+      const client = createUserRlsClient(accessToken);
+      const { data, error } = await client
+        .from('admin_users')
+        .select(ADMIN_USER_COLUMNS)
+        .order('created_at', { ascending: true })
+        .returns<DbAdminUserRow[]>();
+      if (error) throw error;
+      return (data ?? []).map(mapAdminTeamMember);
+    },
+
+    async createAdminUser(accessToken, input) {
+      const client = createUserRlsClient(accessToken);
+      const normalizedEmail = input.email.trim().toLowerCase();
+
+      const { data: existingRow, error: existingError } = await client
+        .from('admin_users')
+        .select('user_id')
+        .ilike('email', normalizedEmail)
+        .maybeSingle<{ user_id: string }>();
+      if (existingError) throw existingError;
+      if (existingRow) {
+        return { status: 'email_exists' };
+      }
+
+      const { data: authData, error: authError } = await serviceClient.auth.admin.createUser({
+        email: normalizedEmail,
+        password: input.password,
+        email_confirm: true,
+      });
+
+      if (authError || !authData.user) {
+        const message = (authError?.message ?? '').toLowerCase();
+        if (
+          message.includes('already') ||
+          message.includes('registered') ||
+          message.includes('exists')
+        ) {
+          return { status: 'email_exists' };
+        }
+        throw authError ?? new Error('Failed to create Staff Portal auth user.');
+      }
+
+      const { data: inserted, error: insertError } = await client
+        .from('admin_users')
+        .insert({
+          user_id: authData.user.id,
+          email: normalizedEmail,
+          role: input.role,
+          active: true,
+        })
+        .select(ADMIN_USER_COLUMNS)
+        .single<DbAdminUserRow>();
+
+      if (insertError) {
+        await serviceClient.auth.admin.deleteUser(authData.user.id).catch(() => undefined);
+        if (insertError.code === '23505') {
+          return { status: 'email_exists' };
+        }
+        throw insertError;
+      }
+
+      return { status: 'ok', member: mapAdminTeamMember(inserted) };
+    },
+
+    async updateAdminUser(accessToken, userId, input) {
+      if (!UUID_REGEX.test(userId)) {
+        return { status: 'not_found' };
+      }
+      const client = createUserRlsClient(accessToken);
+      const { data: existing, error: fetchError } = await client
+        .from('admin_users')
+        .select(ADMIN_USER_COLUMNS)
+        .eq('user_id', userId)
+        .maybeSingle<DbAdminUserRow>();
+      if (fetchError) throw fetchError;
+      if (!existing) {
+        return { status: 'not_found' };
+      }
+
+      const nextRole = input.role ?? existing.role;
+      const nextActive = input.active ?? existing.active;
+      if (existing.role === 'owner' && existing.active && (nextRole !== 'owner' || !nextActive)) {
+        const { count, error: countError } = await client
+          .from('admin_users')
+          .select('user_id', { count: 'exact', head: true })
+          .eq('role', 'owner')
+          .eq('active', true)
+          .neq('user_id', userId);
+        if (countError) throw countError;
+        if (!count || count < 1) {
+          return { status: 'last_owner' };
+        }
+      }
+
+      const { data: updated, error: updateError } = await client
+        .from('admin_users')
+        .update({ role: nextRole, active: nextActive })
+        .eq('user_id', userId)
+        .select(ADMIN_USER_COLUMNS)
+        .maybeSingle<DbAdminUserRow>();
+      if (updateError) throw updateError;
+      if (!updated) {
+        return { status: 'not_found' };
+      }
+      return { status: 'ok', member: mapAdminTeamMember(updated) };
     },
   };
 }

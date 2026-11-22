@@ -7,6 +7,7 @@ import {
 import { Hono } from 'hono';
 import { MenuImageOptimizationError, optimizeMenuImageToWebp } from '../lib/image-optimizer';
 import { problemResponse, zodFieldErrors } from '../lib/problem';
+import { createRequireAdminRolesMiddleware } from '../middleware/require-admin';
 import type { ApiDeps, ApiEnv } from '../types';
 
 export function createAdminMenuRoutes(
@@ -14,8 +15,10 @@ export function createAdminMenuRoutes(
 ): Hono<ApiEnv> {
   const app = new Hono<ApiEnv>();
   const optimizeImage = deps.optimizeMenuImage ?? optimizeMenuImageToWebp;
+  const requireOwner = createRequireAdminRolesMiddleware(['owner']);
+  const requireStaffPortal = createRequireAdminRolesMiddleware(['owner', 'cashier', 'staff']);
 
-  app.post('/menu-images', async (c) => {
+  app.post('/menu-images', requireOwner, async (c) => {
     const accessToken = c.get('adminAccessToken') ?? '';
     let formBody: Record<string, string | File | (string | File)[]>;
     try {
@@ -98,7 +101,7 @@ export function createAdminMenuRoutes(
     );
   });
 
-  app.delete('/menu-images', async (c) => {
+  app.delete('/menu-images', requireOwner, async (c) => {
     const accessToken = c.get('adminAccessToken') ?? '';
     let rawBody: unknown;
     try {
@@ -127,7 +130,7 @@ export function createAdminMenuRoutes(
     return c.body(null, 204);
   });
 
-  app.post('/menu-items', async (c) => {
+  app.post('/menu-items', requireOwner, async (c) => {
     const accessToken = c.get('adminAccessToken') ?? '';
     let rawBody: unknown;
     try {
@@ -157,7 +160,7 @@ export function createAdminMenuRoutes(
     return c.json({ data: created }, 201);
   });
 
-  app.put('/menu-items/:id', async (c) => {
+  app.put('/menu-items/:id', requireOwner, async (c) => {
     const accessToken = c.get('adminAccessToken') ?? '';
     const id = c.req.param('id');
     let rawBody: unknown;
@@ -205,7 +208,7 @@ export function createAdminMenuRoutes(
     return c.json({ data: result.data }, 200);
   });
 
-  app.patch('/menu-items/:id/availability', async (c) => {
+  app.patch('/menu-items/:id/availability', requireStaffPortal, async (c) => {
     const accessToken = c.get('adminAccessToken') ?? '';
     const id = c.req.param('id');
     let rawBody: unknown;
@@ -257,7 +260,7 @@ export function createAdminMenuRoutes(
     return c.json({ data: result.data }, 200);
   });
 
-  app.delete('/menu-items/:id', async (c) => {
+  app.delete('/menu-items/:id', requireOwner, async (c) => {
     const accessToken = c.get('adminAccessToken') ?? '';
     const id = c.req.param('id');
     const result = await deps.gateway.deleteMenuItem(accessToken, id);
@@ -272,7 +275,7 @@ export function createAdminMenuRoutes(
     return c.body(null, 204);
   });
 
-  app.post('/menu-items/reset', async (c) => {
+  app.post('/menu-items/reset', requireOwner, async (c) => {
     const accessToken = c.get('adminAccessToken') ?? '';
     const items = await deps.gateway.resetMenuCatalog(accessToken);
     return c.json({ data: items }, 200);

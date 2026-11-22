@@ -12,6 +12,7 @@ afterEach(() => {
   document.documentElement.classList.remove('dark');
   document.documentElement.dataset.uiTheme = 'light';
   window.history.replaceState({}, '', '/');
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 
@@ -91,6 +92,7 @@ describe('8Burgers Storefront, Bottom-Right Cart Portal, and Admin', () => {
   });
 
   it('requires sign-in on /admin, adds a listing, and reflects it on /', async () => {
+    vi.stubEnv('VITE_HIDE_PUBLIC_ADMIN', 'false');
     installMockShopApi({ authenticated: false });
     render(
       <ThemeProvider>
@@ -99,18 +101,18 @@ describe('8Burgers Storefront, Bottom-Right Cart Portal, and Admin', () => {
     );
 
     await screen.findByRole('heading', { level: 3, name: 'Burger Deluxe' });
-    fireEvent.click(screen.getByRole('link', { name: /owner admin/i }));
+    fireEvent.click(screen.getByRole('link', { name: /staff portal/i }));
     expect(
-      await screen.findByRole('heading', { level: 1, name: /owner admin sign-in/i }),
+      await screen.findByRole('heading', { level: 1, name: /staff portal sign-in/i }),
     ).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText(/admin email/i), {
+    fireEvent.change(screen.getByLabelText(/staff email/i), {
       target: { value: 'owner@eightburgers.local' },
     });
     fireEvent.change(screen.getByLabelText(/password/i), {
       target: { value: 'EightBurgersDev123!' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /sign in to owner admin/i }));
+    fireEvent.click(screen.getByRole('button', { name: /sign in to staff portal/i }));
 
     expect(
       await screen.findByRole('heading', { level: 1, name: /menu & delivery manager/i }),

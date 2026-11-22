@@ -18,12 +18,12 @@ export function AdminLoginForm() {
     event.preventDefault();
     const trimmedEmail = email.trim();
     if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
-      setFieldError('Enter a valid Owner Admin email address.');
+      setFieldError('Enter a valid Staff Portal email address.');
       emailRef.current?.focus();
       return;
     }
     if (!password) {
-      setFieldError('Enter your Owner Admin password.');
+      setFieldError('Enter your Staff Portal password.');
       passwordRef.current?.focus();
       return;
     }
@@ -49,17 +49,18 @@ export function AdminLoginForm() {
     >
       <div className="space-y-1.5 border-b border-ui-border pb-4">
         <h1 id="admin-login-heading" className="text-2xl font-bold tracking-tight text-ui-text">
-          Owner Admin Sign-In
+          Staff Portal Sign-In
         </h1>
         <p className="text-sm text-ui-text-muted">
-          Sign in to manage Chino Roces menu items, delivery zones, and incoming orders.
+          Sign in with an Owner, Cashier, or Staff account to manage Chino Roces orders and daily
+          menu availability.
         </p>
       </div>
 
       <form noValidate onSubmit={(event) => void handleSubmit(event)} className="mt-5 space-y-4">
         <div>
           <label htmlFor={emailId} className="block text-xs font-semibold text-ui-text">
-            Admin Email
+            Staff Email
           </label>
           <input
             ref={emailRef}
@@ -109,7 +110,7 @@ export function AdminLoginForm() {
           disabled={loginMutation.isPending}
           className="w-full rounded-xl bg-ui-accent px-4 py-2.5 text-sm font-semibold text-ui-on-accent hover:bg-ui-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {loginMutation.isPending ? 'Signing in…' : 'Sign in to Owner Admin'}
+          {loginMutation.isPending ? 'Signing in…' : 'Sign in to Staff Portal'}
         </button>
       </form>
     </section>

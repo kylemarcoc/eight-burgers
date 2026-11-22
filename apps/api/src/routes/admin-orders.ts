@@ -7,6 +7,7 @@ import {
 import { Hono } from 'hono';
 import { problemResponse, zodFieldErrors } from '../lib/problem';
 import type { AdminOrderCursor } from '../lib/supabase';
+import { createRequireAdminRolesMiddleware } from '../middleware/require-admin';
 import type { ApiDeps, ApiEnv } from '../types';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -28,8 +29,9 @@ function parseCompositeCursor(raw: string): AdminOrderCursor | null {
 
 export function createAdminOrderRoutes(deps: Pick<ApiDeps, 'gateway'>): Hono<ApiEnv> {
   const app = new Hono<ApiEnv>();
+  const requireStaffPortal = createRequireAdminRolesMiddleware(['owner', 'cashier', 'staff']);
 
-  app.get('/orders', async (c) => {
+  app.get('/orders', requireStaffPortal, async (c) => {
     const accessToken = c.get('adminAccessToken') ?? '';
     const statusParam = c.req.query('status');
     const rangeParam = c.req.query('range');
@@ -147,7 +149,7 @@ export function createAdminOrderRoutes(deps: Pick<ApiDeps, 'gateway'>): Hono<Api
     return c.json({ data: orders, nextCursor, ...(counts ? { counts } : {}) }, 200);
   });
 
-  app.patch('/orders/:id/status', async (c) => {
+  app.patch('/orders/:id/status', requireStaffPortal, async (c) => {
     const accessToken = c.get('adminAccessToken') ?? '';
     const orderId = c.req.param('id');
     let rawBody: unknown;

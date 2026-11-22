@@ -1,6 +1,8 @@
 import {
   MENU_IMAGE_ALLOWED_INPUT_MIME_TYPES,
   MENU_IMAGE_MAX_UPLOAD_BYTES,
+  getAdminPermissions,
+  type AdminRole,
   type UploadedMenuImage,
 } from '@eight-burgers/contracts';
 import {
@@ -81,7 +83,12 @@ function formatKilobytes(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
-export function AdminCatalogManager() {
+export type AdminCatalogManagerProps = {
+  role?: AdminRole;
+};
+
+export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps) {
+  const { canManageCatalog, canManageDelivery } = getAdminPermissions(role);
   const catalogQuery = useCatalogQuery();
   const {
     createMenuItem,
@@ -348,58 +355,61 @@ export function AdminCatalogManager() {
       <section className="flex flex-col gap-4 border-b border-ui-border pb-6 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-ui-text">
-            Menu & Delivery Manager
+            {canManageCatalog ? 'Menu & Delivery Manager' : 'Menu Stock Manager'}
           </h1>
           <p className="mt-1 text-sm text-ui-text-muted">
-            Add new burgers, paste updated Foodpanda or Facebook photo URLs, toggle sold-out items,
-            and configure Metro Manila delivery zones. Changes sync live to the database.
+            {canManageCatalog
+              ? 'Add new burgers, paste updated Foodpanda or Facebook photo URLs, toggle sold-out items, and configure Metro Manila delivery zones. Changes sync live to the database.'
+              : 'Toggle In Stock or Sold Out availability on menu items in real time. Adding, editing, or removing listings and delivery zones requires an Owner account.'}
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
-          {confirmReset ? (
-            <div className="flex shrink-0 items-center gap-2">
+        {canManageCatalog ? (
+          <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
+            {confirmReset ? (
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  disabled={resetCatalog.isPending}
+                  onClick={() => {
+                    void resetCatalog
+                      .mutateAsync()
+                      .then(() => {
+                        cancelEditing();
+                        setConfirmReset(false);
+                        setConfirmDeleteId(null);
+                        showStatus('Restored the default 8Burgers Chino Roces menu.');
+                      })
+                      .catch((error: unknown) => {
+                        showStatus(
+                          getApiErrorMessage(error, 'Unable to restore default menu right now.'),
+                          'error',
+                        );
+                      });
+                  }}
+                  className="rounded-xl bg-ui-error px-4 py-2 text-sm font-semibold text-ui-on-error hover:opacity-90 disabled:opacity-60"
+                >
+                  Confirm restore
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmReset(false)}
+                  className="rounded-xl border border-ui-border bg-ui-surface px-4 py-2 text-sm font-medium text-ui-text hover:bg-ui-surface-muted"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
               <button
                 type="button"
-                disabled={resetCatalog.isPending}
-                onClick={() => {
-                  void resetCatalog
-                    .mutateAsync()
-                    .then(() => {
-                      cancelEditing();
-                      setConfirmReset(false);
-                      setConfirmDeleteId(null);
-                      showStatus('Restored the default 8Burgers Chino Roces menu.');
-                    })
-                    .catch((error: unknown) => {
-                      showStatus(
-                        getApiErrorMessage(error, 'Unable to restore default menu right now.'),
-                        'error',
-                      );
-                    });
-                }}
-                className="rounded-xl bg-ui-error px-4 py-2 text-sm font-semibold text-ui-on-error hover:opacity-90 disabled:opacity-60"
+                onClick={() => setConfirmReset(true)}
+                className="shrink-0 rounded-xl border border-ui-border bg-ui-surface px-4 py-2 text-sm font-medium text-ui-text hover:bg-ui-surface-muted"
               >
-                Confirm restore
+                Restore Default Menu
               </button>
-              <button
-                type="button"
-                onClick={() => setConfirmReset(false)}
-                className="rounded-xl border border-ui-border bg-ui-surface px-4 py-2 text-sm font-medium text-ui-text hover:bg-ui-surface-muted"
-              >
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setConfirmReset(true)}
-              className="shrink-0 rounded-xl border border-ui-border bg-ui-surface px-4 py-2 text-sm font-medium text-ui-text hover:bg-ui-surface-muted"
-            >
-              Restore Default Menu
-            </button>
-          )}
-        </div>
+            )}
+          </div>
+        ) : null}
       </section>
 
       <section aria-label="Store metrics" className="grid grid-cols-3 gap-3">
@@ -452,367 +462,380 @@ export function AdminCatalogManager() {
       ) : null}
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
-        <section
-          aria-labelledby="listing-form-heading"
-          className="rounded-2xl border border-ui-border bg-ui-surface p-5 lg:col-span-5"
-        >
-          <div className="flex items-center justify-between gap-2 border-b border-ui-border pb-3">
-            <h2 id="listing-form-heading" className="text-lg font-bold text-ui-text">
-              {editingId ? 'Edit menu listing' : 'Add new menu item'}
-            </h2>
-            {editingId ? (
-              <button
-                type="button"
-                onClick={cancelEditing}
-                className="text-xs font-medium text-ui-text-muted underline hover:text-ui-text"
-              >
-                Cancel edit
-              </button>
-            ) : null}
-          </div>
-
-          {isEditingMissing ? (
-            <div
-              role="alert"
-              className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-ui-error/40 bg-ui-surface-muted px-3 py-2 text-xs text-ui-error"
-            >
-              <span>This menu item was removed by another session.</span>
-              <button
-                type="button"
-                onClick={cancelEditing}
-                className="rounded-lg border border-ui-border bg-ui-surface px-2.5 py-1 font-semibold text-ui-text hover:bg-ui-canvas"
-              >
-                Cancel edit
-              </button>
-            </div>
-          ) : editConflict ? (
-            <div
-              role="alert"
-              className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-ui-error/40 bg-ui-surface-muted px-3 py-2 text-xs text-ui-error"
-            >
-              <span>This item changed on another device. Reload latest values before saving.</span>
-              <button
-                type="button"
-                onClick={() => void reloadLatestEditingItem()}
-                className="rounded-lg border border-ui-border bg-ui-surface px-2.5 py-1 font-semibold text-ui-text hover:bg-ui-canvas"
-              >
-                Reload latest item
-              </button>
-            </div>
-          ) : null}
-
-          <form
-            noValidate
-            onSubmit={(event) => void handleSubmit(event)}
-            className="mt-4 space-y-4"
+        {canManageCatalog ? (
+          <section
+            aria-labelledby="listing-form-heading"
+            className="rounded-2xl border border-ui-border bg-ui-surface p-5 lg:col-span-5"
           >
-            <div>
-              <label htmlFor="admin-item-name" className="block text-xs font-semibold text-ui-text">
-                Item Name
-              </label>
-              <input
-                ref={nameInputRef}
-                id="admin-item-name"
-                type="text"
-                maxLength={120}
-                value={form.name}
-                aria-invalid={Boolean(formErrors.name)}
-                aria-describedby={formErrors.name ? nameErrorId : undefined}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setForm((prev) => ({ ...prev, name: value }));
-                  if (formErrors.name && value.trim()) {
-                    setFormErrors((prev) => ({ ...prev, name: undefined }));
-                  }
-                }}
-                placeholder="e.g. Chino Roces Double Smash"
-                className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text ${
-                  formErrors.name ? 'border-ui-error' : 'border-ui-border'
-                }`}
-              />
-              {formErrors.name ? (
-                <p
-                  id={nameErrorId}
-                  role="alert"
-                  className="mt-1 text-xs font-semibold text-ui-error"
+            <div className="flex items-center justify-between gap-2 border-b border-ui-border pb-3">
+              <h2 id="listing-form-heading" className="text-lg font-bold text-ui-text">
+                {editingId ? 'Edit menu listing' : 'Add new menu item'}
+              </h2>
+              {editingId ? (
+                <button
+                  type="button"
+                  onClick={cancelEditing}
+                  className="text-xs font-medium text-ui-text-muted underline hover:text-ui-text"
                 >
-                  {formErrors.name}
-                </p>
+                  Cancel edit
+                </button>
               ) : null}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label
-                  htmlFor="admin-item-category"
-                  className="block text-xs font-semibold text-ui-text"
+            {isEditingMissing ? (
+              <div
+                role="alert"
+                className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-ui-error/40 bg-ui-surface-muted px-3 py-2 text-xs text-ui-error"
+              >
+                <span>This menu item was removed by another session.</span>
+                <button
+                  type="button"
+                  onClick={cancelEditing}
+                  className="rounded-lg border border-ui-border bg-ui-surface px-2.5 py-1 font-semibold text-ui-text hover:bg-ui-canvas"
                 >
-                  Category
-                </label>
-                <select
-                  id="admin-item-category"
-                  value={form.category}
-                  onChange={(event) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      category: event.target.value as MenuCategory,
-                    }))
-                  }
-                  className="mt-1 w-full rounded-xl border border-ui-border bg-ui-canvas px-3 py-2 text-sm text-ui-text"
-                >
-                  {MENU_CATEGORIES.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.label}
-                    </option>
-                  ))}
-                </select>
+                  Cancel edit
+                </button>
               </div>
+            ) : editConflict ? (
+              <div
+                role="alert"
+                className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-ui-error/40 bg-ui-surface-muted px-3 py-2 text-xs text-ui-error"
+              >
+                <span>
+                  This item changed on another device. Reload latest values before saving.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void reloadLatestEditingItem()}
+                  className="rounded-lg border border-ui-border bg-ui-surface px-2.5 py-1 font-semibold text-ui-text hover:bg-ui-canvas"
+                >
+                  Reload latest item
+                </button>
+              </div>
+            ) : null}
 
+            <form
+              noValidate
+              onSubmit={(event) => void handleSubmit(event)}
+              className="mt-4 space-y-4"
+            >
               <div>
                 <label
-                  htmlFor="admin-item-price"
+                  htmlFor="admin-item-name"
                   className="block text-xs font-semibold text-ui-text"
                 >
-                  Price (₱)
+                  Item Name
                 </label>
                 <input
-                  ref={priceInputRef}
-                  id="admin-item-price"
-                  type="number"
-                  min={1}
-                  max={100000}
-                  step={1}
-                  value={form.pricePhp}
-                  aria-invalid={Boolean(formErrors.pricePhp)}
-                  aria-describedby={formErrors.pricePhp ? priceErrorId : undefined}
+                  ref={nameInputRef}
+                  id="admin-item-name"
+                  type="text"
+                  maxLength={120}
+                  value={form.name}
+                  aria-invalid={Boolean(formErrors.name)}
+                  aria-describedby={formErrors.name ? nameErrorId : undefined}
                   onChange={(event) => {
                     const value = event.target.value;
-                    setForm((prev) => ({ ...prev, pricePhp: value }));
-                    const numeric = Number(value);
-                    if (formErrors.pricePhp && Number.isFinite(numeric) && numeric > 0) {
-                      setFormErrors((prev) => ({ ...prev, pricePhp: undefined }));
+                    setForm((prev) => ({ ...prev, name: value }));
+                    if (formErrors.name && value.trim()) {
+                      setFormErrors((prev) => ({ ...prev, name: undefined }));
                     }
                   }}
-                  className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text tabular-nums ${
-                    formErrors.pricePhp ? 'border-ui-error' : 'border-ui-border'
+                  placeholder="e.g. Chino Roces Double Smash"
+                  className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text ${
+                    formErrors.name ? 'border-ui-error' : 'border-ui-border'
                   }`}
                 />
-                {formErrors.pricePhp ? (
+                {formErrors.name ? (
                   <p
-                    id={priceErrorId}
+                    id={nameErrorId}
                     role="alert"
                     className="mt-1 text-xs font-semibold text-ui-error"
                   >
-                    {formErrors.pricePhp}
+                    {formErrors.name}
                   </p>
                 ) : null}
               </div>
-            </div>
 
-            <div>
-              <label htmlFor="admin-item-spec" className="block text-xs font-semibold text-ui-text">
-                Patty / Portion Spec
-              </label>
-              <input
-                id="admin-item-spec"
-                type="text"
-                maxLength={80}
-                value={form.pattySpec}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, pattySpec: event.target.value }))
-                }
-                placeholder="e.g. 100g Pure Beef"
-                className="mt-1 w-full rounded-xl border border-ui-border bg-ui-canvas px-3 py-2 text-sm text-ui-text"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="admin-item-description"
-                className="block text-xs font-semibold text-ui-text"
-              >
-                Ingredients & Description
-              </label>
-              <textarea
-                ref={descriptionInputRef}
-                id="admin-item-description"
-                rows={3}
-                maxLength={500}
-                value={form.description}
-                aria-invalid={Boolean(formErrors.description)}
-                aria-describedby={formErrors.description ? descriptionErrorId : undefined}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setForm((prev) => ({ ...prev, description: value }));
-                  if (formErrors.description && value.trim()) {
-                    setFormErrors((prev) => ({ ...prev, description: undefined }));
-                  }
-                }}
-                placeholder="Describe patty, cheeses, veggies, and sauces..."
-                className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text ${
-                  formErrors.description ? 'border-ui-error' : 'border-ui-border'
-                }`}
-              />
-              {formErrors.description ? (
-                <p
-                  id={descriptionErrorId}
-                  role="alert"
-                  className="mt-1 text-xs font-semibold text-ui-error"
-                >
-                  {formErrors.description}
-                </p>
-              ) : null}
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <label
-                  htmlFor="admin-item-image"
-                  className="block text-xs font-semibold text-ui-text"
-                >
-                  Menu Photo (Upload or Image URL)
-                </label>
-                <input
-                  ref={fileInputRef}
-                  id="admin-item-image-file"
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/avif"
-                  aria-label="Upload menu photo"
-                  disabled={uploadMenuImage.isPending}
-                  onChange={(event) => void handleImageFileChange(event)}
-                  className="sr-only"
-                />
-                <button
-                  type="button"
-                  disabled={uploadMenuImage.isPending}
-                  onClick={() => fileInputRef.current?.click()}
-                  className="rounded-lg border border-ui-border bg-ui-surface-muted px-2.5 py-1 text-xs font-semibold text-ui-text hover:bg-ui-canvas disabled:opacity-60"
-                >
-                  {uploadMenuImage.isPending ? 'Uploading & optimizing…' : 'Upload photo'}
-                </button>
-              </div>
-              <p className="text-[11px] text-ui-text-muted">
-                JPG, PNG, WebP, or AVIF up to 5 MB — automatically optimized to WebP and stored in
-                Supabase Storage.
-              </p>
-              {uploadError ? (
-                <p role="alert" className="text-xs font-semibold text-ui-error">
-                  {uploadError}
-                </p>
-              ) : null}
-              {uploadedImageMeta && pendingUploadedUrl === form.imageUrl ? (
-                <p role="status" className="text-xs font-medium text-ui-accent tabular-nums">
-                  Uploaded WebP ({formatKilobytes(uploadedImageMeta.sizeBytes)} ·{' '}
-                  {uploadedImageMeta.width}×{uploadedImageMeta.height}) — save listing to publish.
-                </p>
-              ) : null}
-              <input
-                ref={imageInputRef}
-                id="admin-item-image"
-                type="url"
-                maxLength={500}
-                value={form.imageUrl}
-                aria-invalid={Boolean(formErrors.imageUrl)}
-                aria-describedby={formErrors.imageUrl ? imageErrorId : undefined}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setForm((prev) => ({ ...prev, imageUrl: value }));
-                  if (formErrors.imageUrl && isSafeImageUrl(value)) {
-                    setFormErrors((prev) => ({ ...prev, imageUrl: undefined }));
-                  }
-                }}
-                placeholder="https://images.deliveryhero.io/..."
-                className={`w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text ${
-                  formErrors.imageUrl ? 'border-ui-error' : 'border-ui-border'
-                }`}
-              />
-              {formErrors.imageUrl ? (
-                <p id={imageErrorId} role="alert" className="text-xs font-semibold text-ui-error">
-                  {formErrors.imageUrl}
-                </p>
-              ) : null}
-
-              <div className="flex flex-wrap gap-1.5">
-                {IMAGE_PRESETS.slice(0, 4).map((preset) => (
-                  <button
-                    key={preset.label}
-                    type="button"
-                    onClick={() => {
-                      if (pendingUploadedUrl && pendingUploadedUrl !== preset.url) {
-                        cleanupPendingUpload(pendingUploadedUrl);
-                        setPendingUploadedUrl(null);
-                        setUploadedImageMeta(null);
-                      }
-                      setForm((prev) => ({ ...prev, imageUrl: preset.url }));
-                      setFormErrors((prev) => ({ ...prev, imageUrl: undefined }));
-                    }}
-                    className="rounded-md border border-ui-border bg-ui-surface-muted px-2 py-1 text-xs text-ui-text-muted hover:text-ui-text"
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label
+                    htmlFor="admin-item-category"
+                    className="block text-xs font-semibold text-ui-text"
                   >
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
+                    Category
+                  </label>
+                  <select
+                    id="admin-item-category"
+                    value={form.category}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        category: event.target.value as MenuCategory,
+                      }))
+                    }
+                    className="mt-1 w-full rounded-xl border border-ui-border bg-ui-canvas px-3 py-2 text-sm text-ui-text"
+                  >
+                    {MENU_CATEGORIES.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-              <div className="overflow-hidden rounded-xl border border-ui-border bg-ui-surface-muted">
-                <div className="aspect-[16/9] w-full">
-                  <FoodImage
-                    src={form.imageUrl}
-                    alt={form.name || 'Menu item preview'}
-                    category={form.category}
-                    badgeText={form.name || 'Preview'}
-                    className="h-full w-full"
+                <div>
+                  <label
+                    htmlFor="admin-item-price"
+                    className="block text-xs font-semibold text-ui-text"
+                  >
+                    Price (₱)
+                  </label>
+                  <input
+                    ref={priceInputRef}
+                    id="admin-item-price"
+                    type="number"
+                    min={1}
+                    max={100000}
+                    step={1}
+                    value={form.pricePhp}
+                    aria-invalid={Boolean(formErrors.pricePhp)}
+                    aria-describedby={formErrors.pricePhp ? priceErrorId : undefined}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setForm((prev) => ({ ...prev, pricePhp: value }));
+                      const numeric = Number(value);
+                      if (formErrors.pricePhp && Number.isFinite(numeric) && numeric > 0) {
+                        setFormErrors((prev) => ({ ...prev, pricePhp: undefined }));
+                      }
+                    }}
+                    className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text tabular-nums ${
+                      formErrors.pricePhp ? 'border-ui-error' : 'border-ui-border'
+                    }`}
                   />
+                  {formErrors.pricePhp ? (
+                    <p
+                      id={priceErrorId}
+                      role="alert"
+                      className="mt-1 text-xs font-semibold text-ui-error"
+                    >
+                      {formErrors.pricePhp}
+                    </p>
+                  ) : null}
                 </div>
               </div>
-            </div>
 
-            <div className="grid grid-cols-1 gap-2 rounded-xl border border-ui-border bg-ui-surface-muted p-3 text-xs text-ui-text sm:grid-cols-3">
-              <label className="flex cursor-pointer items-center gap-2">
+              <div>
+                <label
+                  htmlFor="admin-item-spec"
+                  className="block text-xs font-semibold text-ui-text"
+                >
+                  Patty / Portion Spec
+                </label>
                 <input
-                  type="checkbox"
-                  checked={form.available}
+                  id="admin-item-spec"
+                  type="text"
+                  maxLength={80}
+                  value={form.pattySpec}
                   onChange={(event) =>
-                    setForm((prev) => ({ ...prev, available: event.target.checked }))
+                    setForm((prev) => ({ ...prev, pattySpec: event.target.value }))
                   }
-                  className="accent-ui-accent h-4 w-4 rounded"
+                  placeholder="e.g. 100g Pure Beef"
+                  className="mt-1 w-full rounded-xl border border-ui-border bg-ui-canvas px-3 py-2 text-sm text-ui-text"
                 />
-                <span>In stock</span>
-              </label>
-              <label className="flex cursor-pointer items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={form.featured}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, featured: event.target.checked }))
-                  }
-                  className="accent-ui-accent h-4 w-4 rounded"
-                />
-                <span>Featured</span>
-              </label>
-              <label className="flex cursor-pointer items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={form.allowAddons}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, allowAddons: event.target.checked }))
-                  }
-                  className="accent-ui-accent h-4 w-4 rounded"
-                />
-                <span>Allow add-ons</span>
-              </label>
-            </div>
+              </div>
 
-            <button
-              type="submit"
-              disabled={isSavingItem}
-              className="w-full rounded-xl bg-ui-accent px-4 py-2.5 text-sm font-semibold text-ui-on-accent hover:bg-ui-accent-hover disabled:opacity-60"
-            >
-              {isSavingItem ? 'Saving…' : editingId ? 'Save Listing Changes' : 'Add Item to Menu'}
-            </button>
-          </form>
-        </section>
+              <div>
+                <label
+                  htmlFor="admin-item-description"
+                  className="block text-xs font-semibold text-ui-text"
+                >
+                  Ingredients & Description
+                </label>
+                <textarea
+                  ref={descriptionInputRef}
+                  id="admin-item-description"
+                  rows={3}
+                  maxLength={500}
+                  value={form.description}
+                  aria-invalid={Boolean(formErrors.description)}
+                  aria-describedby={formErrors.description ? descriptionErrorId : undefined}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setForm((prev) => ({ ...prev, description: value }));
+                    if (formErrors.description && value.trim()) {
+                      setFormErrors((prev) => ({ ...prev, description: undefined }));
+                    }
+                  }}
+                  placeholder="Describe patty, cheeses, veggies, and sauces..."
+                  className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text ${
+                    formErrors.description ? 'border-ui-error' : 'border-ui-border'
+                  }`}
+                />
+                {formErrors.description ? (
+                  <p
+                    id={descriptionErrorId}
+                    role="alert"
+                    className="mt-1 text-xs font-semibold text-ui-error"
+                  >
+                    {formErrors.description}
+                  </p>
+                ) : null}
+              </div>
 
-        <section aria-labelledby="inventory-heading" className="space-y-4 lg:col-span-7">
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label
+                    htmlFor="admin-item-image"
+                    className="block text-xs font-semibold text-ui-text"
+                  >
+                    Menu Photo (Upload or Image URL)
+                  </label>
+                  <input
+                    ref={fileInputRef}
+                    id="admin-item-image-file"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/avif"
+                    aria-label="Upload menu photo"
+                    disabled={uploadMenuImage.isPending}
+                    onChange={(event) => void handleImageFileChange(event)}
+                    className="sr-only"
+                  />
+                  <button
+                    type="button"
+                    disabled={uploadMenuImage.isPending}
+                    onClick={() => fileInputRef.current?.click()}
+                    className="rounded-lg border border-ui-border bg-ui-surface-muted px-2.5 py-1 text-xs font-semibold text-ui-text hover:bg-ui-canvas disabled:opacity-60"
+                  >
+                    {uploadMenuImage.isPending ? 'Uploading & optimizing…' : 'Upload photo'}
+                  </button>
+                </div>
+                <p className="text-[11px] text-ui-text-muted">
+                  JPG, PNG, WebP, or AVIF up to 5 MB — automatically optimized to WebP and stored in
+                  Supabase Storage.
+                </p>
+                {uploadError ? (
+                  <p role="alert" className="text-xs font-semibold text-ui-error">
+                    {uploadError}
+                  </p>
+                ) : null}
+                {uploadedImageMeta && pendingUploadedUrl === form.imageUrl ? (
+                  <p role="status" className="text-xs font-medium text-ui-accent tabular-nums">
+                    Uploaded WebP ({formatKilobytes(uploadedImageMeta.sizeBytes)} ·{' '}
+                    {uploadedImageMeta.width}×{uploadedImageMeta.height}) — save listing to publish.
+                  </p>
+                ) : null}
+                <input
+                  ref={imageInputRef}
+                  id="admin-item-image"
+                  type="url"
+                  maxLength={500}
+                  value={form.imageUrl}
+                  aria-invalid={Boolean(formErrors.imageUrl)}
+                  aria-describedby={formErrors.imageUrl ? imageErrorId : undefined}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setForm((prev) => ({ ...prev, imageUrl: value }));
+                    if (formErrors.imageUrl && isSafeImageUrl(value)) {
+                      setFormErrors((prev) => ({ ...prev, imageUrl: undefined }));
+                    }
+                  }}
+                  placeholder="https://images.deliveryhero.io/..."
+                  className={`w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text ${
+                    formErrors.imageUrl ? 'border-ui-error' : 'border-ui-border'
+                  }`}
+                />
+                {formErrors.imageUrl ? (
+                  <p id={imageErrorId} role="alert" className="text-xs font-semibold text-ui-error">
+                    {formErrors.imageUrl}
+                  </p>
+                ) : null}
+
+                <div className="flex flex-wrap gap-1.5">
+                  {IMAGE_PRESETS.slice(0, 4).map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => {
+                        if (pendingUploadedUrl && pendingUploadedUrl !== preset.url) {
+                          cleanupPendingUpload(pendingUploadedUrl);
+                          setPendingUploadedUrl(null);
+                          setUploadedImageMeta(null);
+                        }
+                        setForm((prev) => ({ ...prev, imageUrl: preset.url }));
+                        setFormErrors((prev) => ({ ...prev, imageUrl: undefined }));
+                      }}
+                      className="rounded-md border border-ui-border bg-ui-surface-muted px-2 py-1 text-xs text-ui-text-muted hover:text-ui-text"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="overflow-hidden rounded-xl border border-ui-border bg-ui-surface-muted">
+                  <div className="aspect-[16/9] w-full">
+                    <FoodImage
+                      src={form.imageUrl}
+                      alt={form.name || 'Menu item preview'}
+                      category={form.category}
+                      badgeText={form.name || 'Preview'}
+                      className="h-full w-full"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-2 rounded-xl border border-ui-border bg-ui-surface-muted p-3 text-xs text-ui-text sm:grid-cols-3">
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={form.available}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, available: event.target.checked }))
+                    }
+                    className="accent-ui-accent h-4 w-4 rounded"
+                  />
+                  <span>In stock</span>
+                </label>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={form.featured}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, featured: event.target.checked }))
+                    }
+                    className="accent-ui-accent h-4 w-4 rounded"
+                  />
+                  <span>Featured</span>
+                </label>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={form.allowAddons}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, allowAddons: event.target.checked }))
+                    }
+                    className="accent-ui-accent h-4 w-4 rounded"
+                  />
+                  <span>Allow add-ons</span>
+                </label>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSavingItem}
+                className="w-full rounded-xl bg-ui-accent px-4 py-2.5 text-sm font-semibold text-ui-on-accent hover:bg-ui-accent-hover disabled:opacity-60"
+              >
+                {isSavingItem ? 'Saving…' : editingId ? 'Save Listing Changes' : 'Add Item to Menu'}
+              </button>
+            </form>
+          </section>
+        ) : null}
+
+        <section
+          aria-labelledby="inventory-heading"
+          className={`space-y-4 ${canManageCatalog ? 'lg:col-span-7' : 'lg:col-span-12'}`}
+        >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h2 id="inventory-heading" className="text-lg font-bold text-ui-text">
               Menu Listings ({filteredMenu.length})
@@ -967,65 +990,69 @@ export function AdminCatalogManager() {
                       >
                         {item.available ? 'In Stock' : 'Sold Out'}
                       </button>
-                      <button
-                        type="button"
-                        disabled={isRowPending}
-                        aria-label={`Edit ${item.name}`}
-                        onClick={() => startEditing(item)}
-                        className="whitespace-nowrap rounded-lg border border-ui-border bg-ui-surface px-3 py-1.5 text-xs font-semibold text-ui-text hover:bg-ui-surface-muted disabled:opacity-60"
-                      >
-                        Edit
-                      </button>
-                      {isConfirmingDelete ? (
+                      {canManageCatalog ? (
                         <>
                           <button
                             type="button"
                             disabled={isRowPending}
-                            aria-label={`Confirm delete ${item.name}`}
-                            onClick={() => {
-                              setItemPending(item.id, true);
-                              void deleteMenuItem
-                                .mutateAsync(item.id)
-                                .then(() => {
-                                  if (editingId === item.id) cancelEditing();
-                                  setConfirmDeleteId(null);
-                                  showStatus(`Removed "${item.name}" from menu.`);
-                                })
-                                .catch((error: unknown) => {
-                                  showStatus(
-                                    getApiErrorMessage(error, 'Unable to delete menu item.'),
-                                    'error',
-                                  );
-                                })
-                                .finally(() => {
-                                  setItemPending(item.id, false);
-                                });
-                            }}
-                            className="whitespace-nowrap rounded-lg bg-ui-error px-3 py-1.5 text-xs font-semibold text-ui-on-error hover:opacity-90 disabled:opacity-60"
+                            aria-label={`Edit ${item.name}`}
+                            onClick={() => startEditing(item)}
+                            className="whitespace-nowrap rounded-lg border border-ui-border bg-ui-surface px-3 py-1.5 text-xs font-semibold text-ui-text hover:bg-ui-surface-muted disabled:opacity-60"
                           >
-                            Confirm delete
+                            Edit
                           </button>
-                          <button
-                            type="button"
-                            disabled={isRowPending}
-                            aria-label={`Cancel delete ${item.name}`}
-                            onClick={() => setConfirmDeleteId(null)}
-                            className="whitespace-nowrap rounded-lg border border-ui-border bg-ui-surface px-2.5 py-1.5 text-xs font-medium text-ui-text hover:bg-ui-surface-muted disabled:opacity-60"
-                          >
-                            Cancel
-                          </button>
+                          {isConfirmingDelete ? (
+                            <>
+                              <button
+                                type="button"
+                                disabled={isRowPending}
+                                aria-label={`Confirm delete ${item.name}`}
+                                onClick={() => {
+                                  setItemPending(item.id, true);
+                                  void deleteMenuItem
+                                    .mutateAsync(item.id)
+                                    .then(() => {
+                                      if (editingId === item.id) cancelEditing();
+                                      setConfirmDeleteId(null);
+                                      showStatus(`Removed "${item.name}" from menu.`);
+                                    })
+                                    .catch((error: unknown) => {
+                                      showStatus(
+                                        getApiErrorMessage(error, 'Unable to delete menu item.'),
+                                        'error',
+                                      );
+                                    })
+                                    .finally(() => {
+                                      setItemPending(item.id, false);
+                                    });
+                                }}
+                                className="whitespace-nowrap rounded-lg bg-ui-error px-3 py-1.5 text-xs font-semibold text-ui-on-error hover:opacity-90 disabled:opacity-60"
+                              >
+                                Confirm delete
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isRowPending}
+                                aria-label={`Cancel delete ${item.name}`}
+                                onClick={() => setConfirmDeleteId(null)}
+                                className="whitespace-nowrap rounded-lg border border-ui-border bg-ui-surface px-2.5 py-1.5 text-xs font-medium text-ui-text hover:bg-ui-surface-muted disabled:opacity-60"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={isRowPending}
+                              aria-label={`Delete ${item.name}`}
+                              onClick={() => setConfirmDeleteId(item.id)}
+                              className="whitespace-nowrap rounded-lg border border-ui-border bg-ui-surface px-3 py-1.5 text-xs font-semibold text-ui-error hover:bg-ui-surface-muted disabled:opacity-60"
+                            >
+                              Delete
+                            </button>
+                          )}
                         </>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={isRowPending}
-                          aria-label={`Delete ${item.name}`}
-                          onClick={() => setConfirmDeleteId(item.id)}
-                          className="whitespace-nowrap rounded-lg border border-ui-border bg-ui-surface px-3 py-1.5 text-xs font-semibold text-ui-error hover:bg-ui-surface-muted disabled:opacity-60"
-                        >
-                          Delete
-                        </button>
-                      )}
+                      ) : null}
                     </div>
                   </li>
                 );
@@ -1035,7 +1062,7 @@ export function AdminCatalogManager() {
         </section>
       </div>
 
-      <AdminDeliverySettings onStatusMessage={showStatus} />
+      {canManageDelivery ? <AdminDeliverySettings onStatusMessage={showStatus} /> : null}
     </div>
   );
 }

@@ -227,7 +227,7 @@ describe('AdminOrdersManager', () => {
     fireEvent.click(screen.getByRole('button', { name: /^refresh$/i }));
 
     expect(
-      await screen.findByRole('heading', { level: 1, name: /owner admin sign-in/i }),
+      await screen.findByRole('heading', { level: 1, name: /staff portal sign-in/i }),
     ).toBeTruthy();
   });
 

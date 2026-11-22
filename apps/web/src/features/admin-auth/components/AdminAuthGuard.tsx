@@ -12,7 +12,7 @@ export function AdminAuthGuard({ children }: { children: ReactNode }) {
         role="status"
         className="flex min-h-[40vh] items-center justify-center text-sm text-ui-text-muted"
       >
-        Checking Owner Admin session…
+        Checking Staff Portal session…
       </div>
     );
   }
@@ -23,7 +23,9 @@ export function AdminAuthGuard({ children }: { children: ReactNode }) {
         role="alert"
         className="mx-auto my-8 max-w-md space-y-3 rounded-2xl border border-ui-error/40 bg-ui-surface p-6 text-center"
       >
-        <p className="text-base font-semibold text-ui-text">Unable to verify admin session.</p>
+        <p className="text-base font-semibold text-ui-text">
+          Unable to verify Staff Portal session.
+        </p>
         <p className="text-sm text-ui-text-muted">
           {getApiErrorMessage(sessionQuery.error, 'Check that the local API server is running.')}
         </p>
