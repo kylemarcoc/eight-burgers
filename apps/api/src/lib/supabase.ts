@@ -11,6 +11,7 @@ import {
   type AdminOrderSort,
   type AdminOrderStatusFilter,
   type AdminUser,
+  type CancelPublicOrderByQueueRequest,
   type CatalogPayload,
   type DeliveryPricingConfig,
   type DeliveryZone,
@@ -24,6 +25,7 @@ import {
   type OrderRecord,
   type OrderStatus,
   type PlaceOrderRequest,
+  type PublicOrderTracker,
 } from '@eight-burgers/contracts';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { ApiConfig } from '../config/env';
@@ -50,6 +52,17 @@ export type PlaceOrderRpcResult =
   | { status: 'idempotency_conflict' }
   | { status: 'delivery_unavailable' }
   | { status: 'out_of_delivery_range' };
+
+export type CancelOrderByReceiptResult =
+  | { status: 'ok'; order: OrderRecord }
+  | { status: 'not_found' }
+  | { status: 'not_cancellable'; order: OrderRecord };
+
+export type CancelPublicOrderByQueueResult =
+  | { status: 'ok'; tracker: PublicOrderTracker }
+  | { status: 'not_found' }
+  | { status: 'verification_failed' }
+  | { status: 'not_cancellable'; tracker: PublicOrderTracker };
 
 export type AuthTokens = {
   accessToken: string;
@@ -98,6 +111,15 @@ export type ShopBackendGateway = {
   getDeliveryPricing: () => Promise<DeliveryPricingConfig>;
   placeOrder: (params: PlaceOrderParams) => Promise<PlaceOrderRpcResult>;
   getOrderByReceipt: (orderId: string, receiptTokenHash: string) => Promise<OrderRecord | null>;
+  cancelOrderByReceipt: (
+    orderId: string,
+    receiptTokenHash: string,
+  ) => Promise<CancelOrderByReceiptResult>;
+  getPublicOrderStatusByQueue: (queueNumber: string) => Promise<PublicOrderTracker | null>;
+  cancelPublicOrderByQueue: (
+    queueNumber: string,
+    verification: CancelPublicOrderByQueueRequest,
+  ) => Promise<CancelPublicOrderByQueueResult>;
   signInAdmin: (email: string, password: string) => Promise<AuthSignInResult>;
   verifyAccessToken: (accessToken: string) => Promise<AdminUser | null>;
   refreshAdminSession: (refreshToken: string) => Promise<AuthRefreshResult | null>;
@@ -634,6 +656,64 @@ export function createSupabaseGateway(config: ApiConfig): ShopBackendGateway {
       return (data as OrderRecord | null) ?? null;
     },
 
+    async cancelOrderByReceipt(orderId, receiptTokenHash) {
+      if (!UUID_REGEX.test(orderId)) {
+        return { status: 'not_found' };
+      }
+      const { data, error } = await serviceClient.rpc('cancel_order_by_receipt', {
+        p_order_id: orderId,
+        p_receipt_token_hash: receiptTokenHash,
+      });
+      if (error) throw error;
+      const payload = data as
+        | { outcome: 'ok'; order: OrderRecord }
+        | { outcome: 'not_cancellable'; order: OrderRecord }
+        | null;
+      if (!payload || !payload.order) {
+        return { status: 'not_found' };
+      }
+      if (payload.outcome === 'not_cancellable') {
+        return { status: 'not_cancellable', order: payload.order };
+      }
+      return { status: 'ok', order: payload.order };
+    },
+
+    async getPublicOrderStatusByQueue(queueNumber) {
+      const cleaned = queueNumber.trim();
+      if (!cleaned) return null;
+      const { data, error } = await serviceClient.rpc('get_public_order_status_by_queue', {
+        p_queue_number: cleaned,
+      });
+      if (error) throw error;
+      return (data as PublicOrderTracker | null) ?? null;
+    },
+
+    async cancelPublicOrderByQueue(queueNumber, verification) {
+      const cleaned = queueNumber.trim();
+      if (!cleaned) return { status: 'not_found' };
+      const { data, error } = await serviceClient.rpc('cancel_public_order_by_queue', {
+        p_queue_number: cleaned,
+        p_customer_name: verification.customerName ?? null,
+        p_contact_number: verification.contactNumber ?? null,
+      });
+      if (error) throw error;
+      const payload = data as
+        | { outcome: 'ok'; tracker: PublicOrderTracker }
+        | { outcome: 'not_cancellable'; tracker: PublicOrderTracker }
+        | { outcome: 'verification_failed' }
+        | null;
+      if (!payload) {
+        return { status: 'not_found' };
+      }
+      if (payload.outcome === 'verification_failed') {
+        return { status: 'verification_failed' };
+      }
+      if (payload.outcome === 'not_cancellable') {
+        return { status: 'not_cancellable', tracker: payload.tracker };
+      }
+      return { status: 'ok', tracker: payload.tracker };
+    },
+
     async signInAdmin(email, password) {
       const authClient = createAuthClient();
       const { data, error } = await authClient.auth.signInWithPassword({ email, password });
@@ -1086,13 +1166,15 @@ export function createSupabaseGateway(config: ApiConfig): ShopBackendGateway {
               fetchStageCount('grilling'),
               fetchStageCount('ready'),
               fetchStageCount('completed'),
-            ]).then(([received, grilling, ready, completed]): AdminOrderCounts => ({
-              all: received + grilling + ready + completed,
+              fetchStageCount('cancelled'),
+            ]).then(([received, grilling, ready, completed, cancelled]): AdminOrderCounts => ({
+              all: received + grilling + ready + completed + cancelled,
               active: received + grilling + ready,
               received,
               grilling,
               ready,
               completed,
+              cancelled,
             })),
       ]);
 

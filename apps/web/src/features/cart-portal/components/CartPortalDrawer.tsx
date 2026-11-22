@@ -1,3 +1,4 @@
+import { normalizeQueueNumber, type PublicOrderTracker } from '@eight-burgers/contracts';
 import {
   Suspense,
   lazy,
@@ -11,7 +12,13 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useCatalogQuery } from '@/features/menu-catalog';
-import { useOrderReceiptQuery, usePlaceOrderMutation } from '@/features/orders';
+import {
+  useCancelOrderByQueueMutation,
+  useCancelOrderByReceiptMutation,
+  useOrderReceiptQuery,
+  usePlaceOrderMutation,
+  usePublicOrderTrackerQuery,
+} from '@/features/orders';
 import { ErrorBoundary } from '@/shared/components/ErrorBoundary';
 import { FoodImage } from '@/shared/components/FoodImage';
 import { getApiErrorMessage, isApiError } from '@/shared/lib/api-error';
@@ -35,6 +42,7 @@ import {
   useCartLines,
   useCartOpen,
   useLastPlacedOrder,
+  useTrackedQueueNumber,
 } from '@/shared/store/useCartStore';
 import { useResolvedCartSummary } from '../hooks/useResolvedCartSummary';
 
@@ -50,7 +58,109 @@ const RECEIPT_STATUS_LABELS: Record<OrderStatus, string> = {
   grilling: 'On the Grill',
   ready: 'Ready for Pickup / Dispatch',
   completed: 'Completed',
+  cancelled: 'Cancelled',
 };
+
+const PROGRESS_STAGE_ORDER: readonly Exclude<OrderStatus, 'cancelled'>[] = [
+  'received',
+  'grilling',
+  'ready',
+  'completed',
+];
+
+function KitchenProgressTracker({
+  status,
+  fulfillment,
+  deliveryEtaMinutes,
+}: {
+  status: OrderStatus;
+  fulfillment: FulfillmentMode;
+  deliveryEtaMinutes?: string;
+}) {
+  if (status === 'cancelled') {
+    return (
+      <div
+        role="region"
+        aria-label="Live kitchen progress"
+        className="rounded-xl border border-ui-error/40 bg-ui-error/10 px-3.5 py-3 text-xs text-ui-error"
+      >
+        <p className="font-bold">Order Cancelled</p>
+        <p className="mt-0.5 text-ui-text-muted">
+          This order was cancelled and removed from the active kitchen queue.
+        </p>
+      </div>
+    );
+  }
+
+  const currentIdx = PROGRESS_STAGE_ORDER.indexOf(status);
+  const steps: ReadonlyArray<{
+    key: Exclude<OrderStatus, 'cancelled'>;
+    label: string;
+    detail: string;
+  }> = [
+    {
+      key: 'received',
+      label: 'Order Received',
+      detail: 'Ticket is in the kitchen queue',
+    },
+    {
+      key: 'grilling',
+      label: 'On the Grill',
+      detail: 'Fresh beef patties are on the grill',
+    },
+    {
+      key: 'ready',
+      label: fulfillment === 'kiosk-pickup' ? 'Ready at Counter' : 'Out for Delivery',
+      detail:
+        fulfillment === 'kiosk-pickup'
+          ? 'Pick up at Chino Roces counter'
+          : deliveryEtaMinutes
+            ? `Estimated ${deliveryEtaMinutes}`
+            : 'Ready for rider dispatch',
+    },
+    {
+      key: 'completed',
+      label: 'Completed',
+      detail: 'Order handed off',
+    },
+  ];
+
+  return (
+    <div className="space-y-2 rounded-xl border border-ui-border bg-ui-surface p-3">
+      <div className="flex items-center justify-between text-xs">
+        <span className="font-semibold text-ui-text">Live Kitchen Progress</span>
+        <span className="font-medium text-ui-accent">{RECEIPT_STATUS_LABELS[status]}</span>
+      </div>
+      <ol aria-label="Live kitchen progress" className="grid grid-cols-2 gap-2">
+        {steps.map((step, index) => {
+          const isCompleted = index < currentIdx || status === 'completed';
+          const isCurrent = index === currentIdx && status !== 'completed';
+          return (
+            <li
+              key={step.key}
+              aria-current={isCurrent ? 'step' : undefined}
+              className={`rounded-lg border px-2.5 py-2 text-xs ${
+                isCurrent
+                  ? 'border-ui-accent bg-ui-surface-muted font-semibold text-ui-text'
+                  : isCompleted
+                    ? 'border-ui-border bg-ui-surface-muted/60 text-ui-text'
+                    : 'border-ui-border/60 bg-ui-canvas text-ui-text-muted opacity-75'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-1">
+                <span className="font-semibold">{step.label}</span>
+                <span className="text-[11px] font-medium">
+                  {isCurrent ? 'Now' : isCompleted ? 'Done' : ''}
+                </span>
+              </div>
+              <p className="mt-0.5 text-[11px] font-normal text-ui-text-muted">{step.detail}</p>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
 
 function createIdempotencyKey(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -137,23 +247,54 @@ export function CartPortalDrawer() {
   const cartSummary = useResolvedCartSummary();
   const isCartOpen = useCartOpen();
   const lastPlacedOrderState = useLastPlacedOrder();
+  const trackedQueueNumber = useTrackedQueueNumber();
   const {
     setCartOpen,
     setLineQuantity,
     removeCartLine,
     clearCart,
     setLastPlacedOrder,
+    setTrackedQueueNumber,
     dismissLastOrder,
   } = useCartActions();
 
-  const placeOrderMutation = usePlaceOrderMutation();
-  const liveReceiptQuery = useOrderReceiptQuery(
-    lastPlacedOrderState?.order.id ?? null,
-    lastPlacedOrderState?.receiptToken ?? null,
-    isCartOpen,
+  const activeQueueNumber = trackedQueueNumber ?? lastPlacedOrderState?.order.queueNumber ?? null;
+  const hasMatchingInMemoryReceipt = Boolean(
+    lastPlacedOrderState &&
+    (!activeQueueNumber ||
+      normalizeQueueNumber(lastPlacedOrderState.order.queueNumber) ===
+        normalizeQueueNumber(activeQueueNumber)),
   );
-  const lastPlacedOrder = liveReceiptQuery.data ?? lastPlacedOrderState?.order ?? null;
+
+  const placeOrderMutation = usePlaceOrderMutation();
+  const cancelByReceiptMutation = useCancelOrderByReceiptMutation();
+  const cancelByQueueMutation = useCancelOrderByQueueMutation();
+
+  const liveReceiptQuery = useOrderReceiptQuery(
+    hasMatchingInMemoryReceipt ? (lastPlacedOrderState?.order.id ?? null) : null,
+    hasMatchingInMemoryReceipt ? (lastPlacedOrderState?.receiptToken ?? null) : null,
+    hasMatchingInMemoryReceipt,
+  );
+  const publicTrackerQuery = usePublicOrderTrackerQuery(
+    activeQueueNumber,
+    Boolean(activeQueueNumber && !hasMatchingInMemoryReceipt),
+  );
+
+  const lastPlacedOrder = hasMatchingInMemoryReceipt
+    ? (liveReceiptQuery.data ?? lastPlacedOrderState?.order ?? null)
+    : null;
+  const publicTrackedOrder: PublicOrderTracker | null = !hasMatchingInMemoryReceipt
+    ? (publicTrackerQuery.data ?? null)
+    : null;
+  const hasTrackedOrderContext = Boolean(lastPlacedOrder || activeQueueNumber);
   const deliveryPricing = catalogQuery.data?.deliveryPricing ?? EMPTY_DELIVERY_PRICING;
+
+  const [drawerTab, setDrawerTab] = useState<'bag' | 'tracker'>('bag');
+  const [queueLookupInput, setQueueLookupInput] = useState('');
+  const [queueLookupError, setQueueLookupError] = useState<string | null>(null);
+  const [confirmCancelOrder, setConfirmCancelOrder] = useState(false);
+  const [cancelVerificationInput, setCancelVerificationInput] = useState('');
+  const [cancelOrderError, setCancelOrderError] = useState<string | null>(null);
 
   const [customerName, setCustomerName] = useState('');
   const [contactNumber, setContactNumber] = useState('');
@@ -222,6 +363,10 @@ export function CartPortalDrawer() {
 
   const handleClose = useCallback(() => {
     setConfirmClear(false);
+    setConfirmCancelOrder(false);
+    setCancelVerificationInput('');
+    setCancelOrderError(null);
+    setQueueLookupError(null);
     setCopyStatus('idle');
     setSubmitError(null);
     setRemovedNotice(null);
@@ -483,6 +628,10 @@ export function CartPortalDrawer() {
         order: response.data,
         receiptToken: response.receiptToken,
       });
+      setDrawerTab('tracker');
+      setConfirmCancelOrder(false);
+      setCancelVerificationInput('');
+      setCancelOrderError(null);
       idempotencyRef.current = { signature: '', key: createIdempotencyKey() };
       setCustomerName('');
       setContactNumber('');
@@ -501,6 +650,79 @@ export function CartPortalDrawer() {
       }
     }
   }
+
+  function handleQueueLookupSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalized = normalizeQueueNumber(queueLookupInput);
+    if (!normalized) {
+      setQueueLookupError('Enter your queue number (for example #8B-101 or 101).');
+      return;
+    }
+    setQueueLookupError(null);
+    setConfirmCancelOrder(false);
+    setCancelVerificationInput('');
+    setCancelOrderError(null);
+    setTrackedQueueNumber(normalized);
+    setDrawerTab('tracker');
+    setQueueLookupInput('');
+  }
+
+  async function handleConfirmReceiptCancel() {
+    if (!lastPlacedOrderState || !lastPlacedOrder) return;
+    setCancelOrderError(null);
+    try {
+      const updated = await cancelByReceiptMutation.mutateAsync({
+        orderId: lastPlacedOrder.id,
+        receiptToken: lastPlacedOrderState.receiptToken,
+      });
+      setLastPlacedOrder({
+        order: updated,
+        receiptToken: lastPlacedOrderState.receiptToken,
+      });
+      setConfirmCancelOrder(false);
+    } catch (error) {
+      setCancelOrderError(
+        getApiErrorMessage(error, 'Could not cancel this order right now. Please try again.'),
+      );
+    }
+  }
+
+  async function handleConfirmPublicQueueCancel(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!publicTrackedOrder) return;
+    const trimmed = cancelVerificationInput.trim();
+    if (!trimmed) {
+      setCancelOrderError(
+        publicTrackedOrder.fulfillment === 'delivery'
+          ? 'Enter the mobile number used on this delivery order.'
+          : 'Enter the customer name used on this pickup order.',
+      );
+      return;
+    }
+    setCancelOrderError(null);
+    try {
+      await cancelByQueueMutation.mutateAsync({
+        queueNumber: publicTrackedOrder.queueNumber,
+        verification:
+          publicTrackedOrder.fulfillment === 'delivery'
+            ? { contactNumber: trimmed }
+            : { customerName: trimmed },
+      });
+      setConfirmCancelOrder(false);
+      setCancelVerificationInput('');
+    } catch (error) {
+      setCancelOrderError(
+        getApiErrorMessage(
+          error,
+          'Could not verify and cancel this order. Check your details and try again.',
+        ),
+      );
+    }
+  }
+
+  const showTrackerView =
+    hasTrackedOrderContext &&
+    (cartSummary.lines.length === 0 && cartLines.length === 0 ? true : drawerTab === 'tracker');
 
   return createPortal(
     <div ref={portalRootRef} className="fixed inset-0 z-50 flex justify-end">
@@ -537,7 +759,42 @@ export function CartPortalDrawer() {
         </header>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          {lastPlacedOrder && cartSummary.lines.length === 0 && cartLines.length === 0 ? (
+          {hasTrackedOrderContext && (cartSummary.lines.length > 0 || cartLines.length > 0) ? (
+            <div
+              role="tablist"
+              aria-label="Cart drawer view"
+              className="mb-4 grid grid-cols-2 gap-1.5 rounded-xl border border-ui-border bg-ui-surface-muted p-1"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={!showTrackerView}
+                onClick={() => setDrawerTab('bag')}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  !showTrackerView
+                    ? 'bg-ui-accent text-ui-on-accent'
+                    : 'text-ui-text-muted hover:text-ui-text'
+                }`}
+              >
+                Your Bag ({cartSummary.totalItems})
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={showTrackerView}
+                onClick={() => setDrawerTab('tracker')}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold tabular-nums transition-colors ${
+                  showTrackerView
+                    ? 'bg-ui-accent text-ui-on-accent'
+                    : 'text-ui-text-muted hover:text-ui-text'
+                }`}
+              >
+                Order {activeQueueNumber}
+              </button>
+            </div>
+          ) : null}
+
+          {showTrackerView && lastPlacedOrder ? (
             <div
               role="status"
               aria-live="polite"
@@ -545,7 +802,13 @@ export function CartPortalDrawer() {
             >
               <div className="flex items-center justify-between border-b border-dashed border-ui-border pb-3">
                 <div>
-                  <p className="text-xs font-semibold text-ui-accent uppercase">Order Confirmed</p>
+                  <p
+                    className={`text-xs font-semibold uppercase ${
+                      lastPlacedOrder.status === 'cancelled' ? 'text-ui-error' : 'text-ui-accent'
+                    }`}
+                  >
+                    {lastPlacedOrder.status === 'cancelled' ? 'Order Cancelled' : 'Order Confirmed'}
+                  </p>
                   <h3
                     ref={receiptHeadingRef}
                     tabIndex={-1}
@@ -561,6 +824,12 @@ export function CartPortalDrawer() {
                 </span>
               </div>
 
+              <KitchenProgressTracker
+                status={lastPlacedOrder.status}
+                fulfillment={lastPlacedOrder.fulfillment}
+                deliveryEtaMinutes={lastPlacedOrder.deliveryEtaMinutes}
+              />
+
               <div className="space-y-1 text-xs text-ui-text-muted">
                 <p>
                   <span className="font-semibold text-ui-text">Guest:</span>{' '}
@@ -571,7 +840,8 @@ export function CartPortalDrawer() {
                     <span className="font-semibold text-ui-text">Status:</span>{' '}
                     <span>{RECEIPT_STATUS_LABELS[lastPlacedOrder.status]}</span>
                   </p>
-                  {lastPlacedOrder.status !== 'completed' ? (
+                  {lastPlacedOrder.status !== 'completed' &&
+                  lastPlacedOrder.status !== 'cancelled' ? (
                     <button
                       type="button"
                       disabled={liveReceiptQuery.isFetching}
@@ -671,10 +941,72 @@ export function CartPortalDrawer() {
                 </div>
               </div>
 
-              {lastPlacedOrder.paymentMethod !== 'cash' ? (
+              {lastPlacedOrder.paymentMethod !== 'cash' &&
+              lastPlacedOrder.status !== 'cancelled' ? (
                 <p className="rounded-xl border border-ui-border bg-ui-surface px-3 py-2 text-xs text-ui-text-muted">
                   Confirm {lastPlacedOrder.paymentMethod.toUpperCase()} payment details with the
                   Chino Roces counter ({STORE_METADATA.contact}) when sending your order.
+                </p>
+              ) : null}
+
+              {lastPlacedOrder.status === 'received' && lastPlacedOrderState?.receiptToken ? (
+                <div className="space-y-2 rounded-xl border border-ui-border bg-ui-surface p-3">
+                  {cancelOrderError ? (
+                    <p role="alert" className="text-xs font-semibold text-ui-error">
+                      {cancelOrderError}
+                    </p>
+                  ) : null}
+                  {confirmCancelOrder ? (
+                    <div className="space-y-2">
+                      <p className="text-xs text-ui-text">
+                        Cancel order{' '}
+                        <span className="font-semibold">{lastPlacedOrder.queueNumber}</span> before
+                        it goes on the grill?
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          disabled={cancelByReceiptMutation.isPending}
+                          onClick={() => void handleConfirmReceiptCancel()}
+                          className="rounded-lg bg-ui-error px-3 py-1.5 text-xs font-semibold text-ui-on-error hover:opacity-90 disabled:opacity-50"
+                        >
+                          {cancelByReceiptMutation.isPending ? 'Cancelling…' : 'Confirm Cancel'}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={cancelByReceiptMutation.isPending}
+                          onClick={() => {
+                            setConfirmCancelOrder(false);
+                            setCancelOrderError(null);
+                          }}
+                          className="rounded-lg border border-ui-border bg-ui-surface-muted px-3 py-1.5 text-xs font-semibold text-ui-text hover:bg-ui-canvas"
+                        >
+                          Keep Order
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-ui-text-muted">
+                        Need to change or cancel before grilling starts?
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setConfirmCancelOrder(true);
+                          setCancelOrderError(null);
+                        }}
+                        className="shrink-0 rounded-lg border border-ui-error/40 bg-ui-error/10 px-2.5 py-1 text-xs font-semibold text-ui-error hover:bg-ui-error/20"
+                      >
+                        Cancel Order
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : lastPlacedOrder.status === 'grilling' || lastPlacedOrder.status === 'ready' ? (
+                <p className="rounded-xl border border-ui-border bg-ui-surface px-3 py-2 text-xs text-ui-text-muted">
+                  This order is already being prepared in the kitchen and can no longer be cancelled
+                  online.
                 </p>
               ) : null}
 
@@ -729,6 +1061,8 @@ export function CartPortalDrawer() {
                 type="button"
                 onClick={() => {
                   setCopyStatus('idle');
+                  setConfirmCancelOrder(false);
+                  setCancelOrderError(null);
                   dismissLastOrder();
                   handleClose();
                 }}
@@ -736,6 +1070,225 @@ export function CartPortalDrawer() {
               >
                 Done · Back to Menu
               </button>
+            </div>
+          ) : showTrackerView && activeQueueNumber ? (
+            <div
+              role="status"
+              aria-live="polite"
+              className="space-y-4 rounded-2xl border border-ui-border bg-ui-surface-muted p-5"
+            >
+              {publicTrackerQuery.isPending ? (
+                <div className="space-y-2 py-8 text-center">
+                  <p className="text-sm font-semibold text-ui-text">
+                    Looking up order {activeQueueNumber}…
+                  </p>
+                  <p className="text-xs text-ui-text-muted">
+                    Fetching live kitchen progress from Chino Roces.
+                  </p>
+                </div>
+              ) : publicTrackerQuery.isError || !publicTrackedOrder ? (
+                <div role="alert" className="space-y-3 py-4 text-center">
+                  <p className="text-sm font-semibold text-ui-error">
+                    Order {activeQueueNumber} could not be found.
+                  </p>
+                  <p className="text-xs text-ui-text-muted">
+                    {getApiErrorMessage(
+                      publicTrackerQuery.error,
+                      'Check your queue number on your receipt (for example #8B-101) and try again.',
+                    )}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      dismissLastOrder();
+                      setQueueLookupError(null);
+                    }}
+                    className="rounded-xl bg-ui-accent px-4 py-2 text-xs font-semibold text-ui-on-accent hover:bg-ui-accent-hover"
+                  >
+                    Try Another Queue Number
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between border-b border-dashed border-ui-border pb-3">
+                    <div>
+                      <p
+                        className={`text-xs font-semibold uppercase ${
+                          publicTrackedOrder.status === 'cancelled'
+                            ? 'text-ui-error'
+                            : 'text-ui-accent'
+                        }`}
+                      >
+                        {publicTrackedOrder.status === 'cancelled'
+                          ? 'Order Cancelled'
+                          : 'Live Order Tracker'}
+                      </p>
+                      <h3
+                        ref={receiptHeadingRef}
+                        tabIndex={-1}
+                        className="mt-0.5 text-2xl font-bold text-ui-text tabular-nums focus:outline-none"
+                      >
+                        {publicTrackedOrder.queueNumber}
+                      </h3>
+                    </div>
+                    <span className="rounded-lg bg-ui-surface px-2.5 py-1 text-xs font-semibold text-ui-text">
+                      {publicTrackedOrder.fulfillment === 'kiosk-pickup'
+                        ? 'Chino Roces Pickup'
+                        : 'Delivery'}
+                    </span>
+                  </div>
+
+                  <KitchenProgressTracker
+                    status={publicTrackedOrder.status}
+                    fulfillment={publicTrackedOrder.fulfillment}
+                    deliveryEtaMinutes={publicTrackedOrder.deliveryEtaMinutes}
+                  />
+
+                  <div className="space-y-1 text-xs text-ui-text-muted">
+                    <div className="flex items-center justify-between gap-2">
+                      <p>
+                        <span className="font-semibold text-ui-text">Status:</span>{' '}
+                        <span>{RECEIPT_STATUS_LABELS[publicTrackedOrder.status]}</span>
+                      </p>
+                      {publicTrackedOrder.status !== 'completed' &&
+                      publicTrackedOrder.status !== 'cancelled' ? (
+                        <button
+                          type="button"
+                          disabled={publicTrackerQuery.isFetching}
+                          onClick={() => void publicTrackerQuery.refetch()}
+                          className="rounded-md border border-ui-border bg-ui-surface px-2 py-0.5 text-[11px] font-semibold text-ui-text hover:bg-ui-canvas disabled:opacity-50"
+                        >
+                          {publicTrackerQuery.isFetching ? 'Checking…' : 'Refresh status'}
+                        </button>
+                      ) : null}
+                    </div>
+                    {publicTrackedOrder.fulfillment === 'delivery' &&
+                    publicTrackedOrder.deliveryZoneName ? (
+                      <p>
+                        <span className="font-semibold text-ui-text">Zone:</span>{' '}
+                        {publicTrackedOrder.deliveryZoneName}
+                        {publicTrackedOrder.deliveryEtaMinutes
+                          ? ` · ${publicTrackedOrder.deliveryEtaMinutes}`
+                          : ''}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <ul className="space-y-2 border-y border-dashed border-ui-border py-3 text-sm">
+                    {publicTrackedOrder.lines.map((line) => (
+                      <li key={line.lineId} className="flex items-start justify-between gap-2">
+                        <span>
+                          <span className="font-semibold tabular-nums">{line.quantity}×</span>{' '}
+                          {line.name}
+                          {line.addonNames.length > 0 ? (
+                            <span className="block text-xs text-ui-text-muted">
+                              + {line.addonNames.join(', ')}
+                            </span>
+                          ) : null}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+
+                  {publicTrackedOrder.status === 'received' ? (
+                    <div className="space-y-2 rounded-xl border border-ui-border bg-ui-surface p-3">
+                      {cancelOrderError ? (
+                        <p role="alert" className="text-xs font-semibold text-ui-error">
+                          {cancelOrderError}
+                        </p>
+                      ) : null}
+                      {confirmCancelOrder ? (
+                        <form
+                          noValidate
+                          onSubmit={(event) => void handleConfirmPublicQueueCancel(event)}
+                          className="space-y-2.5"
+                        >
+                          <label
+                            htmlFor="cancel-verify-input"
+                            className="block text-xs font-semibold text-ui-text"
+                          >
+                            {publicTrackedOrder.fulfillment === 'delivery'
+                              ? 'Confirm Mobile Number on Order'
+                              : 'Confirm Customer Name on Order'}
+                          </label>
+                          <input
+                            id="cancel-verify-input"
+                            type={publicTrackedOrder.fulfillment === 'delivery' ? 'tel' : 'text'}
+                            value={cancelVerificationInput}
+                            onChange={(event) => {
+                              setCancelVerificationInput(event.target.value);
+                              if (cancelOrderError) setCancelOrderError(null);
+                            }}
+                            placeholder={
+                              publicTrackedOrder.fulfillment === 'delivery'
+                                ? '0917 000 0000'
+                                : 'e.g. Marco'
+                            }
+                            className="w-full rounded-lg border border-ui-border bg-ui-canvas px-3 py-1.5 text-xs text-ui-text"
+                          />
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="submit"
+                              disabled={cancelByQueueMutation.isPending}
+                              className="rounded-lg bg-ui-error px-3 py-1.5 text-xs font-semibold text-ui-on-error hover:opacity-90 disabled:opacity-50"
+                            >
+                              {cancelByQueueMutation.isPending ? 'Cancelling…' : 'Confirm Cancel'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={cancelByQueueMutation.isPending}
+                              onClick={() => {
+                                setConfirmCancelOrder(false);
+                                setCancelVerificationInput('');
+                                setCancelOrderError(null);
+                              }}
+                              className="rounded-lg border border-ui-border bg-ui-surface-muted px-3 py-1.5 text-xs font-semibold text-ui-text hover:bg-ui-canvas"
+                            >
+                              Keep Order
+                            </button>
+                          </div>
+                        </form>
+                      ) : (
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs text-ui-text-muted">
+                            Need to cancel before grilling starts?
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setConfirmCancelOrder(true);
+                              setCancelOrderError(null);
+                            }}
+                            className="shrink-0 rounded-lg border border-ui-error/40 bg-ui-error/10 px-2.5 py-1 text-xs font-semibold text-ui-error hover:bg-ui-error/20"
+                          >
+                            Cancel Order
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ) : publicTrackedOrder.status === 'grilling' ||
+                    publicTrackedOrder.status === 'ready' ? (
+                    <p className="rounded-xl border border-ui-border bg-ui-surface px-3 py-2 text-xs text-ui-text-muted">
+                      This order is already being prepared in the kitchen and can no longer be
+                      cancelled online.
+                    </p>
+                  ) : null}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmCancelOrder(false);
+                      setCancelVerificationInput('');
+                      setCancelOrderError(null);
+                      dismissLastOrder();
+                      handleClose();
+                    }}
+                    className="w-full rounded-xl bg-ui-accent px-4 py-2.5 text-sm font-semibold text-ui-on-accent hover:bg-ui-accent-hover"
+                  >
+                    Done · Back to Menu
+                  </button>
+                </>
+              )}
             </div>
           ) : cartLines.length > 0 && catalogQuery.isPending ? (
             <div
@@ -770,7 +1323,7 @@ export function CartPortalDrawer() {
               </button>
             </div>
           ) : cartSummary.lines.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3 py-12 text-center">
+            <div className="flex h-full flex-col items-center justify-center gap-3 py-8 text-center">
               {removedNotice ? (
                 <div
                   role="status"
@@ -784,6 +1337,45 @@ export function CartPortalDrawer() {
                 Add a 100g pure beef burger, crinkle fries, or nachos from the Chino Roces menu to
                 start an order.
               </p>
+
+              <form
+                noValidate
+                onSubmit={handleQueueLookupSubmit}
+                className="mt-2 w-full max-w-xs space-y-2 rounded-2xl border border-ui-border bg-ui-surface-muted p-3 text-left"
+              >
+                <label
+                  htmlFor="track-order-queue-input"
+                  className="block text-xs font-semibold text-ui-text"
+                >
+                  Track an existing order
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    id="track-order-queue-input"
+                    type="text"
+                    maxLength={20}
+                    value={queueLookupInput}
+                    onChange={(event) => {
+                      setQueueLookupInput(event.target.value);
+                      if (queueLookupError) setQueueLookupError(null);
+                    }}
+                    placeholder="e.g. #8B-101 or 101"
+                    className="min-w-0 flex-1 rounded-xl border border-ui-border bg-ui-canvas px-3 py-1.5 text-xs text-ui-text"
+                  />
+                  <button
+                    type="submit"
+                    className="shrink-0 rounded-xl border border-ui-border bg-ui-surface px-3 py-1.5 text-xs font-semibold text-ui-text hover:bg-ui-canvas"
+                  >
+                    Track Order
+                  </button>
+                </div>
+                {queueLookupError ? (
+                  <p role="alert" className="text-xs font-semibold text-ui-error">
+                    {queueLookupError}
+                  </p>
+                ) : null}
+              </form>
+
               <button
                 type="button"
                 onClick={handleClose}

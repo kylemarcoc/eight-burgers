@@ -55,7 +55,7 @@ describe('useCartStore', () => {
     ]);
   });
 
-  it('persists only cart lines and never writes lastPlacedOrder or PII to localStorage', () => {
+  it('persists cart lines and non-PII trackedQueueNumber while never writing receiptToken or guest PII to localStorage', () => {
     const actions = useCartStore.getState().actions;
     actions.addToCart(
       { id: 'burger-deluxe', available: true, allowAddons: true },
@@ -80,8 +80,14 @@ describe('useCartStore', () => {
       },
     });
 
+    // Adding another item to the bag preserves tracked order state
+    actions.addToCart({ id: 'chicano-burger', available: true, allowAddons: false });
+    expect(useCartStore.getState().trackedQueueNumber).toBe('#8B-101');
+    expect(useCartStore.getState().lastPlacedOrder?.order.queueNumber).toBe('#8B-101');
+
     const persisted = window.localStorage.getItem(CART_STORAGE_KEY) ?? '';
     expect(persisted).toContain('burger-deluxe');
+    expect(persisted).toContain('#8B-101');
     expect(persisted).not.toContain('super-secret-receipt-token');
     expect(persisted).not.toContain('09171234567');
   });

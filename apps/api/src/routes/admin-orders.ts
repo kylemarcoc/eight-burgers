@@ -48,7 +48,7 @@ export function createAdminOrderRoutes(deps: Pick<ApiDeps, 'gateway'>): Hono<Api
           title: 'Bad Request',
           detail: 'Unsupported order status filter.',
           fieldErrors: {
-            status: ['Must be all, active, received, grilling, ready, or completed.'],
+            status: ['Must be all, active, received, grilling, ready, completed, or cancelled.'],
           },
         });
       }

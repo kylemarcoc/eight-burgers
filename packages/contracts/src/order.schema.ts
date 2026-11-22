@@ -10,7 +10,13 @@ export const PAYMENT_METHOD_VALUES = ['cash', 'gcash', 'maya'] as const;
 export const paymentMethodSchema = z.enum(PAYMENT_METHOD_VALUES);
 export type PaymentMethod = z.infer<typeof paymentMethodSchema>;
 
-export const ORDER_STATUS_VALUES = ['received', 'grilling', 'ready', 'completed'] as const;
+export const ORDER_STATUS_VALUES = [
+  'received',
+  'grilling',
+  'ready',
+  'completed',
+  'cancelled',
+] as const;
 export const orderStatusSchema = z.enum(ORDER_STATUS_VALUES);
 export type OrderStatus = z.infer<typeof orderStatusSchema>;
 
@@ -21,6 +27,7 @@ export const ADMIN_ORDER_STATUS_FILTER_VALUES = [
   'grilling',
   'ready',
   'completed',
+  'cancelled',
 ] as const;
 export const adminOrderStatusFilterSchema = z.enum(ADMIN_ORDER_STATUS_FILTER_VALUES);
 export type AdminOrderStatusFilter = z.infer<typeof adminOrderStatusFilterSchema>;
@@ -40,6 +47,7 @@ export const adminOrderCountsSchema = z.object({
   grilling: z.number().int().min(0),
   ready: z.number().int().min(0),
   completed: z.number().int().min(0),
+  cancelled: z.number().int().min(0),
 });
 export type AdminOrderCounts = z.infer<typeof adminOrderCountsSchema>;
 
@@ -179,6 +187,72 @@ export const updateOrderStatusRequestSchema = z.strictObject({
   expectedVersion: z.number().int().positive().optional(),
 });
 export type UpdateOrderStatusRequest = z.infer<typeof updateOrderStatusRequestSchema>;
+
+export const publicOrderLineSummarySchema = z.object({
+  lineId: z.string().trim().min(1).max(160),
+  name: z.string().trim().min(1).max(120),
+  quantity: z.number().int().min(1).max(50),
+  addonNames: z.array(z.string().trim().min(1).max(80)).max(10),
+});
+export type PublicOrderLineSummary = z.infer<typeof publicOrderLineSummarySchema>;
+
+export const publicOrderTrackerSchema = z.object({
+  queueNumber: z.string().trim().min(1).max(20),
+  fulfillment: fulfillmentModeSchema,
+  deliveryZoneName: z.string().trim().min(1).max(120).optional(),
+  deliveryEtaMinutes: z.string().trim().min(1).max(40).optional(),
+  lines: z.array(publicOrderLineSummarySchema).min(1).max(50),
+  status: orderStatusSchema,
+  createdAtIso: z.string(),
+  updatedAt: z.string().optional(),
+});
+export type PublicOrderTracker = z.infer<typeof publicOrderTrackerSchema>;
+
+export const publicOrderTrackerResponseSchema = z.object({
+  data: publicOrderTrackerSchema,
+});
+export type PublicOrderTrackerResponse = z.infer<typeof publicOrderTrackerResponseSchema>;
+
+export const cancelPublicOrderByQueueRequestSchema = z
+  .strictObject({
+    customerName: z.string().trim().max(80).optional(),
+    contactNumber: z.string().trim().max(32).optional(),
+  })
+  .refine(
+    (data) =>
+      Boolean(data.customerName && data.customerName.trim().length > 0) ||
+      Boolean(data.contactNumber && data.contactNumber.trim().length > 0),
+    {
+      message: 'Provide the customer name or mobile number used on the order.',
+    },
+  );
+export type CancelPublicOrderByQueueRequest = z.infer<typeof cancelPublicOrderByQueueRequestSchema>;
+
+export function normalizeQueueNumber(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  const prefixedMatch = /^#?8B-(\d+)$/i.exec(trimmed);
+  if (prefixedMatch?.[1]) {
+    return `#8B-${prefixedMatch[1]}`;
+  }
+  const numericOnlyMatch = /^#?(\d+)$/.exec(trimmed);
+  if (numericOnlyMatch?.[1]) {
+    return `#8B-${numericOnlyMatch[1]}`;
+  }
+  const upper = trimmed.toUpperCase();
+  return upper.startsWith('#') ? upper : `#${upper}`;
+}
+
+export function normalizeContactDigits(raw: string): string {
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length === 12 && digits.startsWith('63')) {
+    return `0${digits.slice(2)}`;
+  }
+  if (digits.length === 10 && digits.startsWith('9')) {
+    return `0${digits}`;
+  }
+  return digits;
+}
 
 export const catalogPayloadSchema = z.object({
   menu: z.array(menuItemSchema),

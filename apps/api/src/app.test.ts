@@ -2,10 +2,13 @@ import {
   DEFAULT_DELIVERY_PRICING,
   DEFAULT_MENU_ITEMS,
   MENU_ADDONS,
+  normalizeContactDigits,
+  normalizeQueueNumber,
   type AdminUser,
   type DeliveryPricingConfig,
   type MenuItem,
   type OrderRecord,
+  type PublicOrderTracker,
 } from '@eight-burgers/contracts';
 import { describe, expect, it } from 'vitest';
 import { createApp } from './app';
@@ -28,6 +31,24 @@ const ADMIN_USER: AdminUser = {
   email: 'owner@eightburgers.local',
   role: 'owner',
 };
+
+function toPublicOrderTracker(order: OrderRecord): PublicOrderTracker {
+  return {
+    queueNumber: order.queueNumber,
+    fulfillment: order.fulfillment,
+    ...(order.deliveryZoneName ? { deliveryZoneName: order.deliveryZoneName } : {}),
+    ...(order.deliveryEtaMinutes ? { deliveryEtaMinutes: order.deliveryEtaMinutes } : {}),
+    lines: order.lines.map((line) => ({
+      lineId: line.lineId,
+      name: line.name,
+      quantity: line.quantity,
+      addonNames: line.addonNames,
+    })),
+    status: order.status,
+    createdAtIso: order.createdAtIso,
+    ...(order.updatedAt ? { updatedAt: order.updatedAt } : {}),
+  };
+}
 
 function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
   gateway: ShopBackendGateway;
@@ -170,6 +191,71 @@ function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
       const entry = state.orders.get(orderId);
       if (!entry || entry.receiptTokenHash !== receiptTokenHash) return null;
       return entry.order;
+    },
+    cancelOrderByReceipt: async (orderId, receiptTokenHash) => {
+      const entry = state.orders.get(orderId);
+      if (!entry || entry.receiptTokenHash !== receiptTokenHash) {
+        return { status: 'not_found' };
+      }
+      if (entry.order.status === 'cancelled') {
+        return { status: 'ok', order: entry.order };
+      }
+      if (entry.order.status !== 'received') {
+        return { status: 'not_cancellable', order: entry.order };
+      }
+      entry.order = {
+        ...entry.order,
+        status: 'cancelled',
+        updatedAt: '2026-11-22T05:00:00.000Z',
+        version: (entry.order.version ?? 1) + 1,
+      };
+      return { status: 'ok', order: entry.order };
+    },
+    getPublicOrderStatusByQueue: async (queueNumber) => {
+      const normalized = normalizeQueueNumber(queueNumber);
+      const entry = [...state.orders.values()]
+        .reverse()
+        .find((item) => item.order.queueNumber.toUpperCase() === normalized.toUpperCase());
+      return entry ? toPublicOrderTracker(entry.order) : null;
+    },
+    cancelPublicOrderByQueue: async (queueNumber, verification) => {
+      const normalized = normalizeQueueNumber(queueNumber);
+      const entry = [...state.orders.values()]
+        .reverse()
+        .find((item) => item.order.queueNumber.toUpperCase() === normalized.toUpperCase());
+      if (!entry) return { status: 'not_found' };
+
+      const orderDigits = normalizeContactDigits(entry.order.contactNumber);
+      const inputDigits = normalizeContactDigits(verification.contactNumber ?? '');
+      const orderName = entry.order.customerName.trim().replace(/\s+/g, ' ').toLowerCase();
+      const inputName = (verification.customerName ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+      const verified =
+        entry.order.fulfillment === 'delivery'
+          ? Boolean(orderDigits && inputDigits && orderDigits === inputDigits)
+          : Boolean(
+              (orderName && inputName && orderName === inputName) ||
+              (orderDigits && inputDigits && orderDigits === inputDigits),
+            );
+
+      if (!verified) {
+        return { status: 'verification_failed' };
+      }
+
+      if (entry.order.status === 'cancelled') {
+        return { status: 'ok', tracker: toPublicOrderTracker(entry.order) };
+      }
+      if (entry.order.status !== 'received') {
+        return { status: 'not_cancellable', tracker: toPublicOrderTracker(entry.order) };
+      }
+
+      entry.order = {
+        ...entry.order,
+        status: 'cancelled',
+        updatedAt: '2026-11-22T05:00:00.000Z',
+        version: (entry.order.version ?? 1) + 1,
+      };
+      return { status: 'ok', tracker: toPublicOrderTracker(entry.order) };
     },
     signInAdmin: async (email, password) => {
       if (email === 'nonadmin@eightburgers.local' && password === 'valid-pass') {
@@ -333,16 +419,21 @@ function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
 
       const counts = {
         all: baseFiltered.length,
-        active: baseFiltered.filter((order) => order.status !== 'completed').length,
+        active: baseFiltered.filter(
+          (order) => order.status !== 'completed' && order.status !== 'cancelled',
+        ).length,
         received: baseFiltered.filter((order) => order.status === 'received').length,
         grilling: baseFiltered.filter((order) => order.status === 'grilling').length,
         ready: baseFiltered.filter((order) => order.status === 'ready').length,
         completed: baseFiltered.filter((order) => order.status === 'completed').length,
+        cancelled: baseFiltered.filter((order) => order.status === 'cancelled').length,
       };
 
       const statusFiltered = baseFiltered.filter((order) => {
         if (!params.status || params.status === 'all') return true;
-        if (params.status === 'active') return order.status !== 'completed';
+        if (params.status === 'active') {
+          return order.status !== 'completed' && order.status !== 'cancelled';
+        }
         return order.status === params.status;
       });
 
@@ -782,6 +873,7 @@ describe('Eight Burgers REST BFF', () => {
       grilling: 1,
       ready: 0,
       completed: 1,
+      cancelled: 0,
     });
 
     // Page 2 with composite cursor does NOT drop #8B-102 even though createdAtIso is identical
@@ -942,5 +1034,165 @@ describe('Eight Burgers REST BFF', () => {
     });
     expect(deleteRes.status).toBe(204);
     expect(state.uploadedImages.has(uploadBody.data.imageUrl)).toBe(false);
+  });
+
+  it('supports public non-PII queue tracking and two-tier order cancellation while status is received', async () => {
+    const { gateway } = createFakeGateway();
+    const app = createApp({ config: TEST_CONFIG, gateway });
+
+    // Place a delivery order (#8B-101) and a kiosk pickup order (#8B-102)
+    const deliveryOrderRes = await app.request('/api/v1/orders', {
+      method: 'POST',
+      headers: {
+        ...CSRF_HEADERS,
+        'Idempotency-Key': 'cancel-test-delivery-order-101',
+      },
+      body: JSON.stringify({
+        customerName: 'Marco Santos',
+        contactNumber: '09171234567',
+        fulfillment: 'delivery',
+        deliveryPin: { lat: 14.5608, lng: 121.0124 },
+        addressOrNotes: 'Unit 402 Chino Roces',
+        paymentMethod: 'gcash',
+        items: [{ itemId: 'burger-deluxe', quantity: 2, addonIds: [] }],
+      }),
+    });
+    expect(deliveryOrderRes.status).toBe(201);
+    const deliveryCreated = (await deliveryOrderRes.json()) as {
+      data: OrderRecord;
+      receiptToken: string;
+    };
+
+    const pickupOrderRes = await app.request('/api/v1/orders', {
+      method: 'POST',
+      headers: {
+        ...CSRF_HEADERS,
+        'Idempotency-Key': 'cancel-test-pickup-order-102',
+      },
+      body: JSON.stringify({
+        customerName: 'Ana Reyes',
+        contactNumber: '',
+        fulfillment: 'kiosk-pickup',
+        addressOrNotes: '',
+        paymentMethod: 'cash',
+        items: [{ itemId: 'chicano-burger', quantity: 1, addonIds: [] }],
+      }),
+    });
+    expect(pickupOrderRes.status).toBe(201);
+    const pickupCreated = (await pickupOrderRes.json()) as {
+      data: OrderRecord;
+      receiptToken: string;
+    };
+
+    // Public tracker lookup works by numeric or prefixed queue number and omits PII
+    const trackRes = await app.request('/api/v1/orders/track/101');
+    expect(trackRes.status).toBe(200);
+    const trackBody = (await trackRes.json()) as { data: Record<string, unknown> };
+    expect(trackBody.data.queueNumber).toBe('#8B-101');
+    expect(trackBody.data.status).toBe('received');
+    expect(trackBody.data.customerName).toBeUndefined();
+    expect(trackBody.data.contactNumber).toBeUndefined();
+    expect(trackBody.data.addressOrNotes).toBeUndefined();
+
+    // Tier 1: Cancel order #8B-101 with valid X-Order-Receipt-Token
+    const badTokenCancel = await app.request(`/api/v1/orders/${deliveryCreated.data.id}/cancel`, {
+      method: 'POST',
+      headers: {
+        ...CSRF_HEADERS,
+        'X-Order-Receipt-Token': 'wrong-token',
+      },
+    });
+    expect(badTokenCancel.status).toBe(404);
+
+    const tier1Cancel = await app.request(`/api/v1/orders/${deliveryCreated.data.id}/cancel`, {
+      method: 'POST',
+      headers: {
+        ...CSRF_HEADERS,
+        'X-Order-Receipt-Token': deliveryCreated.receiptToken,
+      },
+    });
+    expect(tier1Cancel.status).toBe(200);
+    const tier1Body = (await tier1Cancel.json()) as { data: OrderRecord };
+    expect(tier1Body.data.status).toBe('cancelled');
+
+    // Tier 2: Cross-device queue cancel rejects wrong customer name with 403 and succeeds with matching name
+    const wrongNameCancel = await app.request('/api/v1/orders/track/8B-102/cancel', {
+      method: 'POST',
+      headers: CSRF_HEADERS,
+      body: JSON.stringify({ customerName: 'Wrong Person' }),
+    });
+    expect(wrongNameCancel.status).toBe(403);
+
+    const tier2Cancel = await app.request('/api/v1/orders/track/102/cancel', {
+      method: 'POST',
+      headers: CSRF_HEADERS,
+      body: JSON.stringify({ customerName: '  ana   reyes ' }),
+    });
+    expect(tier2Cancel.status).toBe(200);
+    const tier2Body = (await tier2Cancel.json()) as { data: PublicOrderTracker };
+    expect(tier2Body.data.status).toBe('cancelled');
+
+    // Once an order is grilling, customer cancellation returns 409 ORDER_NOT_CANCELLABLE
+    const grillingOrderRes = await app.request('/api/v1/orders', {
+      method: 'POST',
+      headers: {
+        ...CSRF_HEADERS,
+        'Idempotency-Key': 'cancel-test-grilling-order-103',
+      },
+      body: JSON.stringify({
+        customerName: 'Chef Locked',
+        contactNumber: '09181112222',
+        fulfillment: 'delivery',
+        deliveryPin: { lat: 14.5608, lng: 121.0124 },
+        addressOrNotes: 'Makati',
+        paymentMethod: 'cash',
+        items: [{ itemId: 'burger-deluxe', quantity: 2, addonIds: [] }],
+      }),
+    });
+    const grillingCreated = (await grillingOrderRes.json()) as {
+      data: OrderRecord;
+      receiptToken: string;
+    };
+
+    await app.request(`/api/v1/admin/orders/${grillingCreated.data.id}/status`, {
+      method: 'PATCH',
+      headers: {
+        ...CSRF_HEADERS,
+        Cookie: 'eb_access_token=valid-access-token',
+      },
+      body: JSON.stringify({ status: 'grilling', expectedVersion: 1 }),
+    });
+
+    const lateTier1Cancel = await app.request(`/api/v1/orders/${grillingCreated.data.id}/cancel`, {
+      method: 'POST',
+      headers: {
+        ...CSRF_HEADERS,
+        'X-Order-Receipt-Token': grillingCreated.receiptToken,
+      },
+    });
+    expect(lateTier1Cancel.status).toBe(409);
+
+    const lateTier2Cancel = await app.request('/api/v1/orders/track/103/cancel', {
+      method: 'POST',
+      headers: CSRF_HEADERS,
+      body: JSON.stringify({ contactNumber: '+63 918 111 2222' }),
+    });
+    expect(lateTier2Cancel.status).toBe(409);
+
+    // Admin orders filter & counts exclude cancelled from active and list cancelled orders
+    const adminCancelledRes = await app.request('/api/v1/admin/orders?status=cancelled', {
+      headers: { Cookie: 'eb_access_token=valid-access-token' },
+    });
+    expect(adminCancelledRes.status).toBe(200);
+    const adminCancelledBody = (await adminCancelledRes.json()) as {
+      data: OrderRecord[];
+      counts: { all: number; active: number; cancelled: number; grilling: number };
+    };
+    expect(adminCancelledBody.data).toHaveLength(2);
+    expect(adminCancelledBody.counts.cancelled).toBe(2);
+    expect(adminCancelledBody.counts.active).toBe(1);
+    expect(adminCancelledBody.counts.all).toBe(3);
+
+    expect(pickupCreated.data.queueNumber).toBe('#8B-102');
   });
 });

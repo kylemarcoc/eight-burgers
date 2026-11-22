@@ -1,5 +1,10 @@
 import { createHash, createHmac } from 'node:crypto';
-import { placeOrderRequestSchema, type PlaceOrderRequest } from '@eight-burgers/contracts';
+import {
+  cancelPublicOrderByQueueRequestSchema,
+  normalizeQueueNumber,
+  placeOrderRequestSchema,
+  type PlaceOrderRequest,
+} from '@eight-burgers/contracts';
 import { Hono } from 'hono';
 import { readAuthCookies } from '../lib/cookies';
 import { problemResponse, zodFieldErrors } from '../lib/problem';
@@ -160,6 +165,165 @@ export function createOrderRoutes(deps: ApiDeps): Hono<ApiEnv> {
       },
       201,
     );
+  });
+
+  app.get('/orders/track/:queueNumber', async (c) => {
+    const decision = limiter.check(`orders-track:${extractClientIp(c.req.raw.headers)}`);
+    if (!decision.allowed) {
+      c.header('Retry-After', String(decision.retryAfterSeconds));
+      return problemResponse(c, {
+        status: 429,
+        code: 'RATE_LIMITED',
+        title: 'Too Many Requests',
+        detail: 'Too many order status lookups. Please wait a moment and try again.',
+      });
+    }
+
+    const normalizedQueue = normalizeQueueNumber(c.req.param('queueNumber') ?? '');
+    if (!normalizedQueue || normalizedQueue.length > 20) {
+      return problemResponse(c, {
+        status: 404,
+        code: 'ORDER_NOT_FOUND',
+        title: 'Not Found',
+        detail: 'No order found for that queue number.',
+      });
+    }
+
+    const tracker = await deps.gateway.getPublicOrderStatusByQueue(normalizedQueue);
+    if (!tracker) {
+      return problemResponse(c, {
+        status: 404,
+        code: 'ORDER_NOT_FOUND',
+        title: 'Not Found',
+        detail: 'No order found for that queue number.',
+      });
+    }
+
+    c.header('Cache-Control', 'no-store');
+    return c.json({ data: tracker }, 200);
+  });
+
+  app.post('/orders/track/:queueNumber/cancel', async (c) => {
+    const decision = limiter.check(`orders-cancel:${extractClientIp(c.req.raw.headers)}`);
+    if (!decision.allowed) {
+      c.header('Retry-After', String(decision.retryAfterSeconds));
+      return problemResponse(c, {
+        status: 429,
+        code: 'RATE_LIMITED',
+        title: 'Too Many Requests',
+        detail: 'Too many cancellation attempts. Please wait a moment and try again.',
+      });
+    }
+
+    const normalizedQueue = normalizeQueueNumber(c.req.param('queueNumber') ?? '');
+    if (!normalizedQueue || normalizedQueue.length > 20) {
+      return problemResponse(c, {
+        status: 404,
+        code: 'ORDER_NOT_FOUND',
+        title: 'Not Found',
+        detail: 'No order found for that queue number.',
+      });
+    }
+
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch {
+      return problemResponse(c, {
+        status: 400,
+        code: 'INVALID_JSON',
+        title: 'Bad Request',
+        detail: 'Request body must be valid JSON.',
+      });
+    }
+
+    const parsed = cancelPublicOrderByQueueRequestSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return problemResponse(c, {
+        status: 400,
+        code: 'VALIDATION_ERROR',
+        title: 'Validation Failed',
+        detail: 'Provide the customer name or mobile number used on the order.',
+        fieldErrors: zodFieldErrors(parsed.error),
+      });
+    }
+
+    const result = await deps.gateway.cancelPublicOrderByQueue(normalizedQueue, parsed.data);
+    if (result.status === 'not_found') {
+      return problemResponse(c, {
+        status: 404,
+        code: 'ORDER_NOT_FOUND',
+        title: 'Not Found',
+        detail: 'No order found for that queue number.',
+      });
+    }
+
+    if (result.status === 'verification_failed') {
+      return problemResponse(c, {
+        status: 403,
+        code: 'ORDER_VERIFICATION_FAILED',
+        title: 'Verification Failed',
+        detail: 'The verification details entered do not match this order.',
+      });
+    }
+
+    if (result.status === 'not_cancellable') {
+      return problemResponse(c, {
+        status: 409,
+        code: 'ORDER_NOT_CANCELLABLE',
+        title: 'Order Already In Progress',
+        detail: 'This order is already being prepared and can no longer be cancelled online.',
+      });
+    }
+
+    c.header('Cache-Control', 'no-store');
+    return c.json({ data: result.tracker }, 200);
+  });
+
+  app.post('/orders/:id/cancel', async (c) => {
+    const decision = limiter.check(`orders-cancel:${extractClientIp(c.req.raw.headers)}`);
+    if (!decision.allowed) {
+      c.header('Retry-After', String(decision.retryAfterSeconds));
+      return problemResponse(c, {
+        status: 429,
+        code: 'RATE_LIMITED',
+        title: 'Too Many Requests',
+        detail: 'Too many cancellation attempts. Please wait a moment and try again.',
+      });
+    }
+
+    const orderId = c.req.param('id');
+    const receiptToken = c.req.header('x-order-receipt-token')?.trim();
+    if (!receiptToken) {
+      return problemResponse(c, {
+        status: 404,
+        code: 'ORDER_NOT_FOUND',
+        title: 'Not Found',
+        detail: 'Order receipt could not be found.',
+      });
+    }
+
+    const result = await deps.gateway.cancelOrderByReceipt(orderId, sha256Hex(receiptToken));
+    if (result.status === 'not_found') {
+      return problemResponse(c, {
+        status: 404,
+        code: 'ORDER_NOT_FOUND',
+        title: 'Not Found',
+        detail: 'Order receipt could not be found.',
+      });
+    }
+
+    if (result.status === 'not_cancellable') {
+      return problemResponse(c, {
+        status: 409,
+        code: 'ORDER_NOT_CANCELLABLE',
+        title: 'Order Already In Progress',
+        detail: 'This order is already being prepared and can no longer be cancelled online.',
+      });
+    }
+
+    c.header('Cache-Control', 'no-store');
+    return c.json({ data: result.order }, 200);
   });
 
   app.get('/orders/:id', async (c) => {

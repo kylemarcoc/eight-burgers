@@ -272,7 +272,15 @@ describe('contracts schemas and pricing math', () => {
       adminOrdersResponseSchema.safeParse({
         data: [],
         nextCursor: null,
-        counts: { all: 0, active: 0, received: 0, grilling: 0, ready: 0, completed: 0 },
+        counts: {
+          all: 0,
+          active: 0,
+          received: 0,
+          grilling: 0,
+          ready: 0,
+          completed: 0,
+          cancelled: 0,
+        },
       }).success,
     ).toBe(true);
 

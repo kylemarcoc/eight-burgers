@@ -7,12 +7,19 @@ import {
   useResolvedCartSummary,
 } from '@/features/cart-portal';
 import { STORE_METADATA } from '@/shared/shop/eight-burgers-seed';
-import { useCartActions } from '@/shared/store/useCartStore';
+import {
+  useCartActions,
+  useLastPlacedOrder,
+  useTrackedQueueNumber,
+} from '@/shared/store/useCartStore';
 
 export function KioskShell() {
   const { theme, toggleTheme } = useTheme();
   const cartSummary = useResolvedCartSummary();
   const { setCartOpen } = useCartActions();
+  const trackedQueueNumber = useTrackedQueueNumber();
+  const lastPlacedOrderState = useLastPlacedOrder();
+  const activeQueueNumber = trackedQueueNumber ?? lastPlacedOrderState?.order.queueNumber ?? null;
   const totalItems = cartSummary.totalItems;
   const showAdminNav = import.meta.env.VITE_HIDE_PUBLIC_ADMIN !== 'true';
   const isAdminRoute = Boolean(useMatch('/admin/*'));
@@ -73,7 +80,7 @@ export function KioskShell() {
                 onClick={() => setCartOpen(true)}
                 className="hidden rounded-xl border border-ui-border bg-ui-surface-muted px-3 py-2 text-xs font-semibold text-ui-text tabular-nums hover:bg-ui-canvas sm:inline-flex"
               >
-                Cart ({totalItems})
+                Cart ({totalItems}){activeQueueNumber ? ` · ${activeQueueNumber}` : ''}
               </button>
             ) : null}
             <button

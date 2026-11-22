@@ -3,9 +3,12 @@ import {
   DEFAULT_MENU_ITEMS,
   MENU_ADDONS,
   calculateDeliveryQuote,
+  normalizeContactDigits,
+  normalizeQueueNumber,
   slugifyMenuId,
   slugifyZoneId,
   type AdminUser,
+  type CancelPublicOrderByQueueRequest,
   type DeliveryPricingConfig,
   type DeliveryZoneInput,
   type MenuItem,
@@ -13,8 +16,27 @@ import {
   type OrderRecord,
   type OrderStatus,
   type PlaceOrderRequest,
+  type PublicOrderTracker,
 } from '@eight-burgers/contracts';
 import { vi } from 'vitest';
+
+function toPublicOrderTracker(order: OrderRecord): PublicOrderTracker {
+  return {
+    queueNumber: order.queueNumber,
+    fulfillment: order.fulfillment,
+    ...(order.deliveryZoneName ? { deliveryZoneName: order.deliveryZoneName } : {}),
+    ...(order.deliveryEtaMinutes ? { deliveryEtaMinutes: order.deliveryEtaMinutes } : {}),
+    lines: order.lines.map((line) => ({
+      lineId: line.lineId,
+      name: line.name,
+      quantity: line.quantity,
+      addonNames: line.addonNames,
+    })),
+    status: order.status,
+    createdAtIso: order.createdAtIso,
+    ...(order.updatedAt ? { updatedAt: order.updatedAt } : {}),
+  };
+}
 
 export type MockApiOptions = {
   authenticated?: boolean;
@@ -203,6 +225,77 @@ export function installMockShopApi(options: MockApiOptions = {}) {
       );
     }
 
+    if (method === 'GET' && path.startsWith('/orders/track/')) {
+      const rawQueue = decodeURIComponent(path.slice('/orders/track/'.length));
+      const normalized = normalizeQueueNumber(rawQueue);
+      const order = state.orders.find(
+        (entry) => normalizeQueueNumber(entry.queueNumber) === normalized,
+      );
+      if (!order)
+        return problemJson(404, 'ORDER_NOT_FOUND', 'No order found for that queue number.');
+      return jsonResponse({ data: toPublicOrderTracker(order) });
+    }
+
+    if (method === 'POST' && path.startsWith('/orders/track/') && path.endsWith('/cancel')) {
+      const rawQueue = decodeURIComponent(path.slice('/orders/track/'.length, -'/cancel'.length));
+      const normalized = normalizeQueueNumber(rawQueue);
+      const order = state.orders.find(
+        (entry) => normalizeQueueNumber(entry.queueNumber) === normalized,
+      );
+      if (!order)
+        return problemJson(404, 'ORDER_NOT_FOUND', 'No order found for that queue number.');
+
+      const payload = (body ?? {}) as CancelPublicOrderByQueueRequest;
+      const orderDigits = normalizeContactDigits(order.contactNumber);
+      const inputDigits = normalizeContactDigits(payload.contactNumber ?? '');
+      const orderName = order.customerName.trim().replace(/\s+/g, ' ').toLowerCase();
+      const inputName = (payload.customerName ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+      const verified =
+        order.fulfillment === 'delivery'
+          ? Boolean(orderDigits && inputDigits && orderDigits === inputDigits)
+          : Boolean(
+              (orderName && inputName && orderName === inputName) ||
+              (orderDigits && inputDigits && orderDigits === inputDigits),
+            );
+
+      if (!verified) {
+        return problemJson(
+          403,
+          'ORDER_VERIFICATION_FAILED',
+          'The verification details entered do not match this order.',
+        );
+      }
+
+      if (order.status !== 'received' && order.status !== 'cancelled') {
+        return problemJson(
+          409,
+          'ORDER_NOT_CANCELLABLE',
+          'This order is already being prepared and can no longer be cancelled online.',
+        );
+      }
+
+      order.status = 'cancelled';
+      order.version = (order.version ?? 1) + 1;
+      return jsonResponse({ data: toPublicOrderTracker(order) });
+    }
+
+    if (method === 'POST' && path.startsWith('/orders/') && path.endsWith('/cancel')) {
+      const orderId = path.slice('/orders/'.length, -'/cancel'.length);
+      const order = state.orders.find((entry) => entry.id === orderId);
+      if (!order) return problemJson(404, 'ORDER_NOT_FOUND', 'Order not found.');
+      if (order.status !== 'received' && order.status !== 'cancelled') {
+        return problemJson(
+          409,
+          'ORDER_NOT_CANCELLABLE',
+          'This order is already being prepared and can no longer be cancelled online.',
+        );
+      }
+      order.status = 'cancelled';
+      order.version = (order.version ?? 1) + 1;
+      return jsonResponse({ data: order });
+    }
+
     if (method === 'GET' && path.startsWith('/orders/')) {
       const orderId = path.slice('/orders/'.length);
       const order = state.orders.find((entry) => entry.id === orderId);
@@ -280,16 +373,21 @@ export function installMockShopApi(options: MockApiOptions = {}) {
 
         const counts = {
           all: baseFiltered.length,
-          active: baseFiltered.filter((order) => order.status !== 'completed').length,
+          active: baseFiltered.filter(
+            (order) => order.status !== 'completed' && order.status !== 'cancelled',
+          ).length,
           received: baseFiltered.filter((order) => order.status === 'received').length,
           grilling: baseFiltered.filter((order) => order.status === 'grilling').length,
           ready: baseFiltered.filter((order) => order.status === 'ready').length,
           completed: baseFiltered.filter((order) => order.status === 'completed').length,
+          cancelled: baseFiltered.filter((order) => order.status === 'cancelled').length,
         };
 
         const statusFiltered = baseFiltered.filter((order) => {
           if (statusParam === 'all') return true;
-          if (statusParam === 'active') return order.status !== 'completed';
+          if (statusParam === 'active') {
+            return order.status !== 'completed' && order.status !== 'cancelled';
+          }
           return order.status === statusParam;
         });
 

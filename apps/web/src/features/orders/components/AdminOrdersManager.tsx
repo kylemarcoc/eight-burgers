@@ -26,6 +26,7 @@ const ORDER_STATUS_OPTIONS: readonly { value: OrderStatus; label: string }[] = [
   { value: 'grilling', label: 'On the Grill' },
   { value: 'ready', label: 'Ready for Pickup / Dispatch' },
   { value: 'completed', label: 'Completed' },
+  { value: 'cancelled', label: 'Cancelled' },
 ];
 
 const ORDER_STATUS_LABELS = new Map<OrderStatus, string>(
@@ -38,6 +39,7 @@ const FILTER_OPTIONS: readonly { value: AdminOrderStatusFilter; label: string }[
   { value: 'grilling', label: 'On the Grill' },
   { value: 'ready', label: 'Ready' },
   { value: 'completed', label: 'Completed' },
+  { value: 'cancelled', label: 'Cancelled' },
   { value: 'all', label: 'All' },
 ];
 
@@ -169,11 +171,13 @@ export function AdminOrdersManager() {
     let grilling = 0;
     let ready = 0;
     let completed = 0;
+    let cancelled = 0;
     for (const order of orders) {
       if (order.status === 'received') received += 1;
       else if (order.status === 'grilling') grilling += 1;
       else if (order.status === 'ready') ready += 1;
       else if (order.status === 'completed') completed += 1;
+      else if (order.status === 'cancelled') cancelled += 1;
     }
     return {
       all: orders.length,
@@ -182,6 +186,7 @@ export function AdminOrdersManager() {
       grilling,
       ready,
       completed,
+      cancelled,
     };
   }, [ordersQuery.data?.pages, orders]);
 
@@ -437,24 +442,39 @@ export function AdminOrdersManager() {
               {orders.map((order) => {
                 const formattedTime = formatOrderTimestamp(order.createdAtIso, nowDate);
                 const elapsedLabel =
-                  order.status !== 'completed'
+                  order.status !== 'completed' && order.status !== 'cancelled'
                     ? formatElapsedWait(order.createdAtIso, nowMs)
                     : null;
                 const isUpdatingStatus = pendingOrderIds.has(order.id);
                 return (
                   <article
                     key={order.id}
-                    className="flex flex-col justify-between gap-3 rounded-2xl border border-ui-border bg-ui-surface p-4"
+                    className={`flex flex-col justify-between gap-3 rounded-2xl border p-4 ${
+                      order.status === 'cancelled'
+                        ? 'border-ui-error/40 bg-ui-surface-muted/70'
+                        : 'border-ui-border bg-ui-surface'
+                    }`}
                   >
                     <div className="flex items-start justify-between gap-3 border-b border-ui-border pb-3">
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="rounded-md bg-ui-accent px-2 py-0.5 text-xs font-bold text-ui-on-accent tabular-nums">
+                          <span
+                            className={`rounded-md px-2 py-0.5 text-xs font-bold tabular-nums ${
+                              order.status === 'cancelled'
+                                ? 'bg-ui-error/15 text-ui-error line-through'
+                                : 'bg-ui-accent text-ui-on-accent'
+                            }`}
+                          >
                             {order.queueNumber}
                           </span>
                           <h3 className="text-sm font-semibold text-ui-text">
                             {order.customerName}
                           </h3>
+                          {order.status === 'cancelled' ? (
+                            <span className="rounded-md border border-ui-error/40 bg-ui-error/10 px-2 py-0.5 text-[11px] font-semibold text-ui-error">
+                              Cancelled
+                            </span>
+                          ) : null}
                           {elapsedLabel ? (
                             <span className="text-xs text-ui-text-muted tabular-nums">
                               {elapsedLabel}

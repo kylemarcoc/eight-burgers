@@ -1,15 +1,20 @@
-import type {
-  AdminOrderRange,
-  AdminOrderSort,
-  AdminOrderStatusFilter,
-  OrderStatus,
-  PlaceOrderRequest,
+import {
+  normalizeQueueNumber,
+  type AdminOrderRange,
+  type AdminOrderSort,
+  type AdminOrderStatusFilter,
+  type CancelPublicOrderByQueueRequest,
+  type OrderStatus,
+  type PlaceOrderRequest,
 } from '@eight-burgers/contracts';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isApiError } from '@/shared/lib/api-error';
 import {
+  cancelOrderByQueueRequest,
+  cancelOrderByReceiptRequest,
   fetchAdminOrders,
   fetchOrderReceipt,
+  fetchPublicOrderTracker,
   orderKeys,
   patchAdminOrderStatus,
   placeOrderRequest,
@@ -40,7 +45,57 @@ export function useOrderReceiptQuery(
     queryKey: orderKeys.receipt(orderId ?? 'none'),
     queryFn: ({ signal }) => fetchOrderReceipt(orderId ?? '', receiptToken ?? '', signal),
     enabled: Boolean(enabled && orderId && receiptToken),
-    refetchInterval: (query) => (query.state.data?.status === 'completed' ? false : 15_000),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === 'completed' || status === 'cancelled' ? false : 15_000;
+    },
+  });
+}
+
+export function usePublicOrderTrackerQuery(queueNumber: string | null, enabled = true) {
+  const normalized = queueNumber ? normalizeQueueNumber(queueNumber) : '';
+  return useQuery({
+    queryKey: orderKeys.tracker(normalized || 'none'),
+    queryFn: ({ signal }) => fetchPublicOrderTracker(normalized, signal),
+    enabled: Boolean(enabled && normalized),
+    retry: (failureCount, error) => {
+      if (isApiError(error) && error.status === 404) {
+        return false;
+      }
+      return failureCount < 1;
+    },
+    refetchInterval: (query) => {
+      if (query.state.error) return false;
+      const status = query.state.data?.status;
+      return status === 'completed' || status === 'cancelled' ? false : 15_000;
+    },
+  });
+}
+
+export function useCancelOrderByReceiptMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: { orderId: string; receiptToken: string }) =>
+      cancelOrderByReceiptRequest(params),
+    onSuccess: (updatedOrder) => {
+      queryClient.setQueryData(orderKeys.receipt(updatedOrder.id), updatedOrder);
+      void queryClient.invalidateQueries({
+        queryKey: orderKeys.tracker(updatedOrder.queueNumber),
+      });
+      void queryClient.invalidateQueries({ queryKey: orderKeys.adminAll });
+    },
+  });
+}
+
+export function useCancelOrderByQueueMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: { queueNumber: string; verification: CancelPublicOrderByQueueRequest }) =>
+      cancelOrderByQueueRequest(params),
+    onSuccess: (updatedTracker) => {
+      queryClient.setQueryData(orderKeys.tracker(updatedTracker.queueNumber), updatedTracker);
+      void queryClient.invalidateQueries({ queryKey: orderKeys.adminAll });
+    },
   });
 }
 

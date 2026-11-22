@@ -1,6 +1,7 @@
 import {
   buildCartLineId,
   normalizeAddonIds,
+  normalizeQueueNumber,
   type CartLineItem,
   type MenuAddonId,
   type MenuItem,
@@ -20,6 +21,7 @@ export type PlacedOrderReceipt = {
 
 type PersistedCartPayload = {
   cart: CartLineItem[];
+  trackedQueueNumber?: string | null;
 };
 
 export type CartActions = {
@@ -32,6 +34,7 @@ export type CartActions = {
   removeCartLine: (lineId: string) => void;
   clearCart: () => void;
   setLastPlacedOrder: (receipt: PlacedOrderReceipt | null) => void;
+  setTrackedQueueNumber: (queueNumber: string | null) => void;
   dismissLastOrder: () => void;
   reset: () => void;
 };
@@ -40,8 +43,16 @@ export type CartStoreState = {
   cart: CartLineItem[];
   isCartOpen: boolean;
   lastPlacedOrder: PlacedOrderReceipt | null;
+  trackedQueueNumber: string | null;
   actions: CartActions;
 };
+
+function sanitizeTrackedQueueNumber(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const normalized = normalizeQueueNumber(raw);
+  if (!normalized || normalized.length > 20) return null;
+  return normalized;
+}
 
 function sanitizeCartLines(raw: unknown): CartLineItem[] {
   if (!Array.isArray(raw)) return [];
@@ -109,13 +120,19 @@ const cartPersistStorage: PersistStorage<PersistedCartPayload> = {
         } catch {
           // Ignore restricted storage removal errors.
         }
-        const parsed = JSON.parse(raw) as Partial<StorageValue<{ cart?: unknown }>> & {
+        const parsed = JSON.parse(raw) as Partial<
+          StorageValue<{ cart?: unknown; trackedQueueNumber?: unknown }>
+        > & {
           cart?: unknown;
+          trackedQueueNumber?: unknown;
         };
         const payload =
           parsed && typeof parsed === 'object' && 'state' in parsed ? parsed.state : parsed;
         return {
-          state: { cart: sanitizeCartLines(payload?.cart) },
+          state: {
+            cart: sanitizeCartLines(payload?.cart),
+            trackedQueueNumber: sanitizeTrackedQueueNumber(payload?.trackedQueueNumber),
+          },
           version: 2,
         };
       }
@@ -163,6 +180,7 @@ export const useCartStore = create<CartStoreState>()(
       cart: [],
       isCartOpen: false,
       lastPlacedOrder: null,
+      trackedQueueNumber: null,
       actions: {
         setCartOpen: (open) =>
           set((draft) => {
@@ -187,8 +205,6 @@ export const useCartStore = create<CartStoreState>()(
                 addonIds,
               });
             }
-
-            draft.lastPlacedOrder = null;
           }),
 
         setLineQuantity: (lineId, quantity) =>
@@ -222,11 +238,27 @@ export const useCartStore = create<CartStoreState>()(
         setLastPlacedOrder: (receipt) =>
           set((draft) => {
             draft.lastPlacedOrder = receipt;
+            if (receipt) {
+              draft.trackedQueueNumber = sanitizeTrackedQueueNumber(receipt.order.queueNumber);
+            }
+          }),
+
+        setTrackedQueueNumber: (queueNumber) =>
+          set((draft) => {
+            const normalized = sanitizeTrackedQueueNumber(queueNumber);
+            draft.trackedQueueNumber = normalized;
+            if (
+              draft.lastPlacedOrder &&
+              sanitizeTrackedQueueNumber(draft.lastPlacedOrder.order.queueNumber) !== normalized
+            ) {
+              draft.lastPlacedOrder = null;
+            }
           }),
 
         dismissLastOrder: () =>
           set((draft) => {
             draft.lastPlacedOrder = null;
+            draft.trackedQueueNumber = null;
           }),
 
         reset: () => {
@@ -236,6 +268,7 @@ export const useCartStore = create<CartStoreState>()(
               draft.cart = [];
               draft.isCartOpen = false;
               draft.lastPlacedOrder = null;
+              draft.trackedQueueNumber = null;
             });
           } finally {
             suppressNextPersist = false;
@@ -247,7 +280,10 @@ export const useCartStore = create<CartStoreState>()(
       name: CART_STORAGE_KEY,
       version: 2,
       storage: cartPersistStorage,
-      partialize: (state): PersistedCartPayload => ({ cart: state.cart }),
+      partialize: (state): PersistedCartPayload => ({
+        cart: state.cart,
+        trackedQueueNumber: state.trackedQueueNumber,
+      }),
       merge: (persistedState, currentState): CartStoreState => {
         if (!persistedState || typeof persistedState !== 'object') {
           return currentState;
@@ -256,6 +292,7 @@ export const useCartStore = create<CartStoreState>()(
         return {
           ...currentState,
           cart: sanitizeCartLines(candidate.cart),
+          trackedQueueNumber: sanitizeTrackedQueueNumber(candidate.trackedQueueNumber),
         };
       },
     },
@@ -270,4 +307,6 @@ export const useCartLines = (): readonly CartLineItem[] => useCartStore((state) 
 export const useCartOpen = (): boolean => useCartStore((state) => state.isCartOpen);
 export const useLastPlacedOrder = (): PlacedOrderReceipt | null =>
   useCartStore((state) => state.lastPlacedOrder);
+export const useTrackedQueueNumber = (): string | null =>
+  useCartStore((state) => state.trackedQueueNumber);
 export const useCartActions = (): CartActions => useCartStore((state) => state.actions);

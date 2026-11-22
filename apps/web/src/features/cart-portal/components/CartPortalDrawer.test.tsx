@@ -355,4 +355,111 @@ describe('CartPortalDrawer', () => {
     expect(increaseBtn.disabled).toBe(true);
     expect(within(dialog).getByText('Max 50')).toBeTruthy();
   });
+
+  it('renders the 4-stage live kitchen progress tracker and supports Tier 1 same-session order cancellation', async () => {
+    installMockShopApi();
+    render(
+      <TestQueryWrapper>
+        <CartDrawerTestHarness />
+      </TestQueryWrapper>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
+
+    const dialog = screen.getByRole('dialog', { name: /your order cart/i });
+    await within(dialog).findByText('Burger Deluxe');
+    fireEvent.change(within(dialog).getByLabelText(/your name/i), {
+      target: { value: 'Marco' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /buy order · ₱148/i }));
+
+    expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
+    const progressList = within(dialog).getByRole('list', { name: /live kitchen progress/i });
+    expect(within(progressList).getByText('Order Received')).toBeTruthy();
+    expect(within(progressList).getByText('On the Grill')).toBeTruthy();
+    expect(within(progressList).getByText('Ready at Counter')).toBeTruthy();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /^cancel order$/i }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /confirm cancel/i }));
+
+    expect(
+      await within(dialog).findByText(
+        /this order was cancelled and removed from the active kitchen queue/i,
+      ),
+    ).toBeTruthy();
+  });
+
+  it('tracks an order by queue number on any device and supports Tier 2 verified cancellation', async () => {
+    installMockShopApi({
+      initialOrders: [
+        {
+          id: '00000000-0000-4000-8000-000000000105',
+          queueNumber: '#8B-105',
+          customerName: 'Carla',
+          contactNumber: '09171234567',
+          fulfillment: 'delivery',
+          deliveryZoneId: 'makati-core',
+          deliveryZoneName: 'Makati Core',
+          deliveryEtaMinutes: '20–30 min',
+          addressOrNotes: 'Ayala Ave',
+          paymentMethod: 'gcash',
+          lines: [
+            {
+              lineId: 'burger-deluxe',
+              itemId: 'burger-deluxe',
+              name: 'Burger Deluxe',
+              unitPricePhp: 148,
+              addonNames: [],
+              addonsPricePhp: 0,
+              quantity: 1,
+              lineTotalPhp: 148,
+            },
+          ],
+          subtotalPhp: 148,
+          deliveryFeePhp: 45,
+          totalPhp: 193,
+          status: 'received',
+          createdAtIso: '2026-11-22T03:00:00.000Z',
+          version: 1,
+        },
+      ],
+    });
+
+    render(
+      <TestQueryWrapper>
+        <CartDrawerTestHarness />
+      </TestQueryWrapper>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
+    const dialog = screen.getByRole('dialog', { name: /your order cart/i });
+
+    fireEvent.change(within(dialog).getByLabelText(/track an existing order/i), {
+      target: { value: '105' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /track order/i }));
+
+    expect(await within(dialog).findByText('#8B-105')).toBeTruthy();
+    expect(within(dialog).getByText('Live Order Tracker')).toBeTruthy();
+    expect(within(dialog).queryByText('Carla')).toBeNull();
+    expect(within(dialog).queryByText('Ayala Ave')).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /^cancel order$/i }));
+    const verifyInput = within(dialog).getByLabelText(/confirm mobile number on order/i);
+
+    fireEvent.change(verifyInput, { target: { value: '09990000000' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /confirm cancel/i }));
+    expect(
+      await within(dialog).findByText(/verification details entered do not match this order/i),
+    ).toBeTruthy();
+
+    fireEvent.change(verifyInput, { target: { value: '+63 917 123 4567' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /confirm cancel/i }));
+    expect(
+      await within(dialog).findByText(
+        /this order was cancelled and removed from the active kitchen queue/i,
+      ),
+    ).toBeTruthy();
+  });
 });

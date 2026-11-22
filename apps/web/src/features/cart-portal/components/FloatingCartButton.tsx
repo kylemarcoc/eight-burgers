@@ -1,18 +1,63 @@
+import { useOrderReceiptQuery, usePublicOrderTrackerQuery } from '@/features/orders';
 import { formatPhp } from '@/shared/shop/shop-storage';
-import { useCartActions, useCartOpen } from '@/shared/store/useCartStore';
+import type { OrderStatus } from '@/shared/shop/types';
+import {
+  useCartActions,
+  useCartOpen,
+  useLastPlacedOrder,
+  useTrackedQueueNumber,
+} from '@/shared/store/useCartStore';
 import { useResolvedCartSummary } from '../hooks/useResolvedCartSummary';
+
+const TRACKER_STAGE_LABELS: Record<OrderStatus, string> = {
+  received: 'Order Received',
+  grilling: 'On the Grill',
+  ready: 'Ready',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+};
 
 export function FloatingCartButton() {
   const cartSummary = useResolvedCartSummary();
   const isCartOpen = useCartOpen();
+  const lastPlacedOrderState = useLastPlacedOrder();
+  const trackedQueueNumber = useTrackedQueueNumber();
   const { setCartOpen } = useCartActions();
+
+  const activeQueueNumber = trackedQueueNumber ?? lastPlacedOrderState?.order.queueNumber ?? null;
+  const hasMatchingInMemoryReceipt = Boolean(
+    lastPlacedOrderState &&
+    (!activeQueueNumber ||
+      lastPlacedOrderState.order.queueNumber.toUpperCase() === activeQueueNumber.toUpperCase()),
+  );
+
+  const receiptQuery = useOrderReceiptQuery(
+    hasMatchingInMemoryReceipt ? (lastPlacedOrderState?.order.id ?? null) : null,
+    hasMatchingInMemoryReceipt ? (lastPlacedOrderState?.receiptToken ?? null) : null,
+    hasMatchingInMemoryReceipt,
+  );
+  const publicTrackerQuery = usePublicOrderTrackerQuery(
+    activeQueueNumber,
+    Boolean(activeQueueNumber && !hasMatchingInMemoryReceipt),
+  );
+
+  const trackedStatus: OrderStatus | null = hasMatchingInMemoryReceipt
+    ? (receiptQuery.data?.status ?? lastPlacedOrderState?.order.status ?? null)
+    : (publicTrackerQuery.data?.status ?? null);
+  const trackedStageLabel = trackedStatus
+    ? TRACKER_STAGE_LABELS[trackedStatus]
+    : 'Track live status';
 
   const label =
     cartSummary.totalItems > 0
       ? `Open cart with ${cartSummary.totalItems} ${
           cartSummary.totalItems === 1 ? 'item' : 'items'
-        }, subtotal ${formatPhp(cartSummary.subtotalPhp)}`
-      : 'Open cart (empty)';
+        }, subtotal ${formatPhp(cartSummary.subtotalPhp)}${
+          activeQueueNumber ? ` (Tracking ${activeQueueNumber})` : ''
+        }`
+      : activeQueueNumber
+        ? `Open order tracker for ${activeQueueNumber} (${trackedStageLabel})`
+        : 'Open cart (empty)';
 
   return (
     <button
@@ -47,11 +92,19 @@ export function FloatingCartButton() {
       <span className="flex flex-col text-left leading-tight">
         <span className="text-xs font-medium opacity-90">
           {cartSummary.totalItems > 0
-            ? `${cartSummary.totalItems} ${cartSummary.totalItems === 1 ? 'item' : 'items'}`
-            : 'Cart'}
+            ? `${cartSummary.totalItems} ${cartSummary.totalItems === 1 ? 'item' : 'items'}${
+                activeQueueNumber ? ` · ${activeQueueNumber}` : ''
+              }`
+            : activeQueueNumber
+              ? `Order ${activeQueueNumber}`
+              : 'Cart'}
         </span>
         <span className="text-sm font-bold tabular-nums">
-          {cartSummary.totalItems > 0 ? formatPhp(cartSummary.subtotalPhp) : 'View bag'}
+          {cartSummary.totalItems > 0
+            ? formatPhp(cartSummary.subtotalPhp)
+            : activeQueueNumber
+              ? trackedStageLabel
+              : 'View bag'}
         </span>
       </span>
     </button>

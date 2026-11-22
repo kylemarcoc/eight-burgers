@@ -230,4 +230,55 @@ describe('AdminOrdersManager', () => {
       await screen.findByRole('heading', { level: 1, name: /owner admin sign-in/i }),
     ).toBeTruthy();
   });
+
+  it('excludes cancelled orders from the active queue and filters them under Cancelled', async () => {
+    installMockShopApi({
+      authenticated: true,
+      initialOrders: [
+        ...SAMPLE_ORDERS,
+        {
+          id: '00000000-0000-4000-8000-000000000103',
+          queueNumber: '#8B-103',
+          customerName: 'Cancelled Guest',
+          contactNumber: '',
+          fulfillment: 'kiosk-pickup',
+          addressOrNotes: '',
+          paymentMethod: 'cash',
+          lines: [
+            {
+              lineId: 'burger-deluxe',
+              itemId: 'burger-deluxe',
+              name: 'Burger Deluxe',
+              unitPricePhp: 148,
+              addonNames: [],
+              addonsPricePhp: 0,
+              quantity: 1,
+              lineTotalPhp: 148,
+            },
+          ],
+          subtotalPhp: 148,
+          deliveryFeePhp: 0,
+          totalPhp: 148,
+          status: 'cancelled',
+          createdAtIso: '2026-11-22T04:12:00.000Z',
+          version: 2,
+        },
+      ],
+    });
+
+    render(
+      <TestQueryWrapper>
+        <AdminOrdersManager />
+      </TestQueryWrapper>,
+    );
+
+    expect(await screen.findByRole('heading', { level: 3, name: 'Marco Santos' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { level: 3, name: 'Cancelled Guest' })).toBeNull();
+    expect(screen.getByRole('button', { name: /^active \(1\)$/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^cancelled \(1\)$/i })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /^cancelled \(1\)$/i }));
+    expect(await screen.findByRole('heading', { level: 3, name: 'Cancelled Guest' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { level: 3, name: 'Marco Santos' })).toBeNull();
+  });
 });
