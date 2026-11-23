@@ -26,7 +26,6 @@ function buildCanonicalPayloadHash(payload: PlaceOrderRequest): string {
     customerName: payload.customerName,
     contactNumber: payload.contactNumber,
     fulfillment: payload.fulfillment,
-    deliveryZoneId: payload.fulfillment === 'delivery' ? (payload.deliveryZoneId ?? null) : null,
     deliveryPin: payload.fulfillment === 'delivery' ? (payload.deliveryPin ?? null) : null,
     addressOrNotes: payload.addressOrNotes,
     paymentMethod: payload.paymentMethod,
@@ -144,6 +143,20 @@ export function createOrderRoutes(deps: ApiDeps): Hono<ApiEnv> {
         code: 'DELIVERY_UNAVAILABLE',
         title: 'Delivery Unavailable',
         detail: 'Delivery is currently paused. Switch to Chino Roces Pickup to continue.',
+      });
+    }
+
+    if (result.status === 'delivery_pin_required') {
+      return problemResponse(c, {
+        status: 400,
+        code: 'VALIDATION_ERROR',
+        title: 'Validation Failed',
+        detail: 'Please select a delivery address or use your device location.',
+        fieldErrors: {
+          deliveryPin: [
+            'Select a delivery address from the suggestions or use your device location.',
+          ],
+        },
       });
     }
 

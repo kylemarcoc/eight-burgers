@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import {
-  DEFAULT_DELIVERY_ZONES,
+  DEFAULT_DELIVERY_BASE_FEE_PHP,
+  DEFAULT_DELIVERY_ENABLED,
+  DEFAULT_DELIVERY_MAX_DISTANCE_KM,
+  DEFAULT_DELIVERY_PER_KM_RATE_PHP,
   DEFAULT_FREE_DELIVERY_MIN_SUBTOTAL_PHP,
   DEFAULT_MENU_ITEMS,
   MENU_ADDONS,
   slugifyMenuId,
-  slugifyZoneId,
   type AdminOrderCounts,
   type AdminOrderRange,
   type AdminOrderSort,
@@ -17,8 +19,7 @@ import {
   type CatalogPayload,
   type CreateAdminUserRequest,
   type DeliveryPricingConfig,
-  type DeliveryZone,
-  type DeliveryZoneInput,
+  type DeliveryPricingPatch,
   type MenuAddon,
   type MenuAddonId,
   type MenuCategory,
@@ -55,6 +56,7 @@ export type PlaceOrderRpcResult =
   | { status: 'price_changed'; latestTotalPhp: number }
   | { status: 'idempotency_conflict' }
   | { status: 'delivery_unavailable' }
+  | { status: 'delivery_pin_required' }
   | { status: 'out_of_delivery_range' };
 
 export type CancelOrderByReceiptResult =
@@ -154,25 +156,11 @@ export type ShopBackendGateway = {
     file: { buffer: Uint8Array; contentType: 'image/webp' },
   ) => Promise<{ path: string; imageUrl: string }>;
   deleteUnusedMenuImage: (accessToken: string, imageUrl: string) => Promise<'deleted' | 'ignored'>;
-  updateFreeDeliveryThreshold: (
+  updateDeliveryPricing: (
     accessToken: string,
-    minSubtotalPhp: number | null,
+    patch: Omit<DeliveryPricingPatch, 'expectedVersion'>,
     expectedVersion?: number,
   ) => Promise<MutationResult<DeliveryPricingConfig>>;
-  createDeliveryZone: (accessToken: string, input: DeliveryZoneInput) => Promise<DeliveryZone>;
-  updateDeliveryZone: (
-    accessToken: string,
-    id: string,
-    input: DeliveryZoneInput,
-    expectedVersion?: number,
-  ) => Promise<MutationResult<DeliveryZone>>;
-  setDeliveryZoneEnabled: (
-    accessToken: string,
-    id: string,
-    enabled: boolean,
-    expectedVersion?: number,
-  ) => Promise<MutationResult<DeliveryZone>>;
-  deleteDeliveryZone: (accessToken: string, id: string) => Promise<'deleted' | 'not_found'>;
   resetDeliveryPricing: (accessToken: string) => Promise<DeliveryPricingConfig>;
   listAdminOrders: (
     accessToken: string,
@@ -222,19 +210,11 @@ type DbMenuAddonRow = {
 
 type DbStoreSettingsRow = {
   id: number;
+  delivery_enabled: boolean;
+  delivery_base_fee_php: number;
+  delivery_per_km_rate_php: number;
+  delivery_max_distance_km: number | string;
   free_delivery_min_subtotal_php: number | null;
-  updated_at: string;
-  version: number;
-};
-
-type DbDeliveryZoneRow = {
-  id: string;
-  name: string;
-  areas: string;
-  max_distance_km: number | string;
-  fee_php: number;
-  eta_minutes: string;
-  enabled: boolean;
   updated_at: string;
   version: number;
 };
@@ -257,8 +237,6 @@ type DbOrderRow = {
   customer_name: string;
   contact_number: string;
   fulfillment: 'kiosk-pickup' | 'delivery';
-  delivery_zone_id: string | null;
-  delivery_zone_name: string | null;
   delivery_eta_minutes: string | null;
   delivery_pin_lat: number | null;
   delivery_pin_lng: number | null;
@@ -288,10 +266,10 @@ type DbAdminUserRow = {
 const ADMIN_USER_COLUMNS = 'user_id, email, role, active, created_at, updated_at';
 const MENU_ITEM_COLUMNS =
   'id, name, category, price_php, patty_spec, description, image_url, available, featured, allow_addons, sort_order, updated_at, version';
-const DELIVERY_ZONE_COLUMNS =
-  'id, name, areas, max_distance_km, fee_php, eta_minutes, enabled, updated_at, version';
+const STORE_SETTINGS_COLUMNS =
+  'id, delivery_enabled, delivery_base_fee_php, delivery_per_km_rate_php, delivery_max_distance_km, free_delivery_min_subtotal_php, updated_at, version';
 const ORDER_COLUMNS =
-  'id, queue_number, customer_name, contact_number, fulfillment, delivery_zone_id, delivery_zone_name, delivery_eta_minutes, delivery_pin_lat, delivery_pin_lng, delivery_distance_km, delivery_fee_waived, address_or_notes, payment_method, subtotal_php, delivery_fee_php, total_php, status, created_at, updated_at, version, order_lines(line_id, item_id, name, unit_price_php, addon_names, addons_price_php, quantity, line_total_php, position)';
+  'id, queue_number, customer_name, contact_number, fulfillment, delivery_eta_minutes, delivery_pin_lat, delivery_pin_lng, delivery_distance_km, delivery_fee_waived, address_or_notes, payment_method, subtotal_php, delivery_fee_php, total_php, status, created_at, updated_at, version, order_lines(line_id, item_id, name, unit_price_php, addon_names, addons_price_php, quantity, line_total_php, position)';
 
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
 
@@ -323,7 +301,7 @@ function buildAdminOrdersSearchOrFilter(rawQuery?: string): string | null {
     .trim();
   if (!cleaned) return null;
   const pattern = `"%${cleaned}%"`;
-  return `queue_number.ilike.${pattern},customer_name.ilike.${pattern},contact_number.ilike.${pattern},delivery_zone_name.ilike.${pattern}`;
+  return `queue_number.ilike.${pattern},customer_name.ilike.${pattern},contact_number.ilike.${pattern},address_or_notes.ilike.${pattern}`;
 }
 
 function mapAdminTeamMember(row: DbAdminUserRow): AdminTeamMember {
@@ -362,15 +340,22 @@ function mapAddon(row: DbMenuAddonRow): MenuAddon {
   };
 }
 
-function mapZone(row: DbDeliveryZoneRow): DeliveryZone {
+function mapDeliveryPricing(row: DbStoreSettingsRow | null): DeliveryPricingConfig {
+  if (!row) {
+    return {
+      deliveryEnabled: DEFAULT_DELIVERY_ENABLED,
+      baseFeePhp: DEFAULT_DELIVERY_BASE_FEE_PHP,
+      perKmRatePhp: DEFAULT_DELIVERY_PER_KM_RATE_PHP,
+      maxDistanceKm: DEFAULT_DELIVERY_MAX_DISTANCE_KM,
+      freeDeliveryMinSubtotalPhp: DEFAULT_FREE_DELIVERY_MIN_SUBTOTAL_PHP,
+    };
+  }
   return {
-    id: row.id,
-    name: row.name,
-    areas: row.areas,
-    maxDistanceKm: Number(row.max_distance_km),
-    feePhp: row.fee_php,
-    etaMinutes: row.eta_minutes,
-    enabled: row.enabled,
+    deliveryEnabled: row.delivery_enabled,
+    baseFeePhp: row.delivery_base_fee_php,
+    perKmRatePhp: row.delivery_per_km_rate_php,
+    maxDistanceKm: Number(row.delivery_max_distance_km),
+    freeDeliveryMinSubtotalPhp: row.free_delivery_min_subtotal_php,
     updatedAt: normalizeIsoTimestamp(row.updated_at),
     version: row.version,
   };
@@ -396,8 +381,6 @@ function mapOrder(row: DbOrderRow): OrderRecord {
     customerName: row.customer_name,
     contactNumber: row.contact_number,
     fulfillment: row.fulfillment,
-    ...(row.delivery_zone_id ? { deliveryZoneId: row.delivery_zone_id } : {}),
-    ...(row.delivery_zone_name ? { deliveryZoneName: row.delivery_zone_name } : {}),
     ...(row.delivery_eta_minutes ? { deliveryEtaMinutes: row.delivery_eta_minutes } : {}),
     ...(row.delivery_pin_lat !== null && row.delivery_pin_lng !== null
       ? { deliveryPin: { lat: row.delivery_pin_lat, lng: row.delivery_pin_lng } }
@@ -474,32 +457,14 @@ export function createSupabaseGateway(config: ApiConfig): ShopBackendGateway {
   async function fetchDeliveryPricingWithClient(
     client: SupabaseClient,
   ): Promise<DeliveryPricingConfig> {
-    const [settingsRes, zonesRes] = await Promise.all([
-      client
-        .from('store_settings')
-        .select('id, free_delivery_min_subtotal_php, updated_at, version')
-        .eq('id', 1)
-        .maybeSingle<DbStoreSettingsRow>(),
-      client
-        .from('delivery_zones')
-        .select(DELIVERY_ZONE_COLUMNS)
-        .order('max_distance_km', { ascending: true })
-        .returns<DbDeliveryZoneRow[]>(),
-    ]);
+    const { data, error } = await client
+      .from('store_settings')
+      .select(STORE_SETTINGS_COLUMNS)
+      .eq('id', 1)
+      .maybeSingle<DbStoreSettingsRow>();
 
-    if (settingsRes.error) throw settingsRes.error;
-    if (zonesRes.error) throw zonesRes.error;
-
-    return {
-      zones: (zonesRes.data ?? []).map(mapZone),
-      freeDeliveryMinSubtotalPhp: settingsRes.data
-        ? settingsRes.data.free_delivery_min_subtotal_php
-        : DEFAULT_FREE_DELIVERY_MIN_SUBTOTAL_PHP,
-      ...(settingsRes.data?.updated_at
-        ? { updatedAt: normalizeIsoTimestamp(settingsRes.data.updated_at) }
-        : {}),
-      ...(settingsRes.data?.version !== undefined ? { version: settingsRes.data.version } : {}),
-    };
+    if (error) throw error;
+    return mapDeliveryPricing(data);
   }
 
   async function cleanupUnusedMenuImages(
@@ -626,8 +591,6 @@ export function createSupabaseGateway(config: ApiConfig): ShopBackendGateway {
         p_customer_name: request.customerName,
         p_contact_number: request.contactNumber,
         p_fulfillment: request.fulfillment,
-        p_delivery_zone_id:
-          request.fulfillment === 'delivery' ? (request.deliveryZoneId ?? null) : null,
         p_delivery_pin_lat:
           request.fulfillment === 'delivery' && request.deliveryPin
             ? request.deliveryPin.lat
@@ -659,6 +622,9 @@ export function createSupabaseGateway(config: ApiConfig): ShopBackendGateway {
         }
         if (msg.includes('DELIVERY_UNAVAILABLE')) {
           return { status: 'delivery_unavailable' };
+        }
+        if (msg.includes('DELIVERY_PIN_REQUIRED')) {
+          return { status: 'delivery_pin_required' };
         }
         if (msg.includes('OUT_OF_DELIVERY_RANGE')) {
           return { status: 'out_of_delivery_range' };
@@ -990,15 +956,38 @@ export function createSupabaseGateway(config: ApiConfig): ShopBackendGateway {
       return removedCount > 0 ? 'deleted' : 'ignored';
     },
 
-    async updateFreeDeliveryThreshold(accessToken, minSubtotalPhp, expectedVersion) {
+    async updateDeliveryPricing(accessToken, patch, expectedVersion) {
       const client = createUserRlsClient(accessToken);
+      const updateColumns: {
+        delivery_enabled?: boolean;
+        delivery_base_fee_php?: number;
+        delivery_per_km_rate_php?: number;
+        delivery_max_distance_km?: number;
+        free_delivery_min_subtotal_php?: number | null;
+      } = {};
+      if (patch.deliveryEnabled !== undefined) {
+        updateColumns.delivery_enabled = patch.deliveryEnabled;
+      }
+      if (patch.baseFeePhp !== undefined) {
+        updateColumns.delivery_base_fee_php = patch.baseFeePhp;
+      }
+      if (patch.perKmRatePhp !== undefined) {
+        updateColumns.delivery_per_km_rate_php = patch.perKmRatePhp;
+      }
+      if (patch.maxDistanceKm !== undefined) {
+        updateColumns.delivery_max_distance_km = Math.round(patch.maxDistanceKm * 10) / 10;
+      }
+      if (patch.freeDeliveryMinSubtotalPhp !== undefined) {
+        updateColumns.free_delivery_min_subtotal_php = patch.freeDeliveryMinSubtotalPhp;
+      }
+
       if (expectedVersion !== undefined) {
         const { data, error } = await client
           .from('store_settings')
-          .update({ free_delivery_min_subtotal_php: minSubtotalPhp })
+          .update(updateColumns)
           .eq('id', 1)
           .eq('version', expectedVersion)
-          .select('id, free_delivery_min_subtotal_php, updated_at, version')
+          .select(STORE_SETTINGS_COLUMNS)
           .maybeSingle<DbStoreSettingsRow>();
         if (error) throw error;
         if (!data) {
@@ -1006,139 +995,34 @@ export function createSupabaseGateway(config: ApiConfig): ShopBackendGateway {
           if (current.version === undefined) return { status: 'not_found' };
           return { status: 'conflict', latest: current };
         }
-      } else {
-        const { error } = await client
-          .from('store_settings')
-          .upsert({ id: 1, free_delivery_min_subtotal_php: minSubtotalPhp });
-        if (error) throw error;
+        return { status: 'ok', data: mapDeliveryPricing(data) };
       }
-
-      const updated = await fetchDeliveryPricingWithClient(client);
-      return { status: 'ok', data: updated };
-    },
-
-    async createDeliveryZone(accessToken, input) {
-      const client = createUserRlsClient(accessToken);
-      const { data: existingRows, error: idsError } = await client
-        .from('delivery_zones')
-        .select('id')
-        .returns<{ id: string }[]>();
-      if (idsError) throw idsError;
-
-      const existingIds = new Set((existingRows ?? []).map((row) => row.id));
-      const id = slugifyZoneId(input.name, existingIds);
 
       const { data, error } = await client
-        .from('delivery_zones')
-        .insert({
-          id,
-          name: input.name,
-          areas: input.areas,
-          max_distance_km: input.maxDistanceKm,
-          fee_php: input.feePhp,
-          eta_minutes: input.etaMinutes,
-          enabled: input.enabled,
-        })
-        .select(DELIVERY_ZONE_COLUMNS)
-        .single<DbDeliveryZoneRow>();
+        .from('store_settings')
+        .upsert({ id: 1, ...updateColumns })
+        .select(STORE_SETTINGS_COLUMNS)
+        .single<DbStoreSettingsRow>();
       if (error) throw error;
-      return mapZone(data);
-    },
-
-    async updateDeliveryZone(accessToken, id, input, expectedVersion) {
-      const client = createUserRlsClient(accessToken);
-      let updateQuery = client
-        .from('delivery_zones')
-        .update({
-          name: input.name,
-          areas: input.areas,
-          max_distance_km: input.maxDistanceKm,
-          fee_php: input.feePhp,
-          eta_minutes: input.etaMinutes,
-          enabled: input.enabled,
-        })
-        .eq('id', id);
-
-      if (expectedVersion !== undefined) {
-        updateQuery = updateQuery.eq('version', expectedVersion);
-      }
-
-      const { data, error } = await updateQuery
-        .select(DELIVERY_ZONE_COLUMNS)
-        .maybeSingle<DbDeliveryZoneRow>();
-      if (error) throw error;
-      if (data) return { status: 'ok', data: mapZone(data) };
-
-      const { data: current, error: fetchError } = await client
-        .from('delivery_zones')
-        .select(DELIVERY_ZONE_COLUMNS)
-        .eq('id', id)
-        .maybeSingle<DbDeliveryZoneRow>();
-      if (fetchError) throw fetchError;
-      if (!current) return { status: 'not_found' };
-      return { status: 'conflict', latest: mapZone(current) };
-    },
-
-    async setDeliveryZoneEnabled(accessToken, id, enabled, expectedVersion) {
-      const client = createUserRlsClient(accessToken);
-      let updateQuery = client.from('delivery_zones').update({ enabled }).eq('id', id);
-
-      if (expectedVersion !== undefined) {
-        updateQuery = updateQuery.eq('version', expectedVersion);
-      }
-
-      const { data, error } = await updateQuery
-        .select(DELIVERY_ZONE_COLUMNS)
-        .maybeSingle<DbDeliveryZoneRow>();
-      if (error) throw error;
-      if (data) return { status: 'ok', data: mapZone(data) };
-
-      const { data: current, error: fetchError } = await client
-        .from('delivery_zones')
-        .select(DELIVERY_ZONE_COLUMNS)
-        .eq('id', id)
-        .maybeSingle<DbDeliveryZoneRow>();
-      if (fetchError) throw fetchError;
-      if (!current) return { status: 'not_found' };
-      return { status: 'conflict', latest: mapZone(current) };
-    },
-
-    async deleteDeliveryZone(accessToken, id) {
-      const client = createUserRlsClient(accessToken);
-      const { data, error } = await client
-        .from('delivery_zones')
-        .delete()
-        .eq('id', id)
-        .select('id')
-        .returns<{ id: string }[]>();
-      if (error) throw error;
-      return data && data.length > 0 ? 'deleted' : 'not_found';
+      return { status: 'ok', data: mapDeliveryPricing(data) };
     },
 
     async resetDeliveryPricing(accessToken) {
       const client = createUserRlsClient(accessToken);
-      const { error: deleteError } = await client.from('delivery_zones').delete().neq('id', '');
-      if (deleteError) throw deleteError;
-
-      const { error: insertError } = await client.from('delivery_zones').insert(
-        DEFAULT_DELIVERY_ZONES.map((zone) => ({
-          id: zone.id,
-          name: zone.name,
-          areas: zone.areas,
-          max_distance_km: zone.maxDistanceKm,
-          fee_php: zone.feePhp,
-          eta_minutes: zone.etaMinutes,
-          enabled: zone.enabled,
-        })),
-      );
-      if (insertError) throw insertError;
-
-      const { error: settingsError } = await client
+      const { data, error } = await client
         .from('store_settings')
-        .upsert({ id: 1, free_delivery_min_subtotal_php: DEFAULT_FREE_DELIVERY_MIN_SUBTOTAL_PHP });
-      if (settingsError) throw settingsError;
-
-      return fetchDeliveryPricingWithClient(client);
+        .upsert({
+          id: 1,
+          delivery_enabled: DEFAULT_DELIVERY_ENABLED,
+          delivery_base_fee_php: DEFAULT_DELIVERY_BASE_FEE_PHP,
+          delivery_per_km_rate_php: DEFAULT_DELIVERY_PER_KM_RATE_PHP,
+          delivery_max_distance_km: DEFAULT_DELIVERY_MAX_DISTANCE_KM,
+          free_delivery_min_subtotal_php: DEFAULT_FREE_DELIVERY_MIN_SUBTOTAL_PHP,
+        })
+        .select(STORE_SETTINGS_COLUMNS)
+        .single<DbStoreSettingsRow>();
+      if (error) throw error;
+      return mapDeliveryPricing(data);
     },
 
     async listAdminOrders(accessToken, params) {

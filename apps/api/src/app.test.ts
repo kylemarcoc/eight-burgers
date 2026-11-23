@@ -2,6 +2,7 @@ import {
   DEFAULT_DELIVERY_PRICING,
   DEFAULT_MENU_ITEMS,
   MENU_ADDONS,
+  calculateDeliveryQuote,
   normalizeContactDigits,
   normalizeQueueNumber,
   type AdminTeamMember,
@@ -70,7 +71,6 @@ function toPublicOrderTracker(order: OrderRecord): PublicOrderTracker {
   return {
     queueNumber: order.queueNumber,
     fulfillment: order.fulfillment,
-    ...(order.deliveryZoneName ? { deliveryZoneName: order.deliveryZoneName } : {}),
     ...(order.deliveryEtaMinutes ? { deliveryEtaMinutes: order.deliveryEtaMinutes } : {}),
     lines: order.lines.map((line) => ({
       lineId: line.lineId,
@@ -117,12 +117,7 @@ function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
       version: 1,
     })),
     deliveryPricing: {
-      zones: DEFAULT_DELIVERY_PRICING.zones.map((zone) => ({
-        ...zone,
-        updatedAt: '2026-11-22T01:00:00.000Z',
-        version: 1,
-      })),
-      freeDeliveryMinSubtotalPhp: DEFAULT_DELIVERY_PRICING.freeDeliveryMinSubtotalPhp,
+      ...DEFAULT_DELIVERY_PRICING,
       updatedAt: '2026-11-22T01:00:00.000Z',
       version: 1,
     },
@@ -189,15 +184,28 @@ function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
         });
       }
 
-      if (
-        request.fulfillment === 'delivery' &&
-        request.deliveryPin &&
-        request.deliveryPin.lat < 14.2
-      ) {
-        return { status: 'out_of_delivery_range' };
+      if (request.fulfillment === 'delivery' && !state.deliveryPricing.deliveryEnabled) {
+        return { status: 'delivery_unavailable' };
+      }
+      if (request.fulfillment === 'delivery' && !request.deliveryPin) {
+        return { status: 'delivery_pin_required' };
       }
 
-      const deliveryFeePhp = request.fulfillment === 'delivery' && subtotal < 500 ? 35 : 0;
+      const quote = calculateDeliveryQuote({
+        fulfillment: request.fulfillment,
+        subtotalPhp: subtotal,
+        deliveryPricing: state.deliveryPricing,
+        pin: request.deliveryPin,
+      });
+
+      if (request.fulfillment === 'delivery' && quote.outOfRange) {
+        return { status: 'out_of_delivery_range' };
+      }
+      if (request.fulfillment === 'delivery' && !quote.available) {
+        return { status: 'delivery_unavailable' };
+      }
+
+      const deliveryFeePhp = quote.feePhp;
       const totalPhp = subtotal + deliveryFeePhp;
       if (request.expectedTotalPhp !== undefined && request.expectedTotalPhp !== totalPhp) {
         return { status: 'price_changed', latestTotalPhp: totalPhp };
@@ -211,13 +219,12 @@ function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
         customerName: request.customerName,
         contactNumber: request.contactNumber,
         fulfillment: request.fulfillment,
-        ...(request.fulfillment === 'delivery'
-          ? {
-              deliveryZoneId: 'chino-roces-san-antonio',
-              deliveryZoneName: 'Chino Roces & San Antonio',
-              deliveryEtaMinutes: '15–25 min',
-            }
+        ...(request.fulfillment === 'delivery' && request.deliveryPin
+          ? { deliveryPin: request.deliveryPin }
           : {}),
+        ...(quote.distanceKm !== null ? { deliveryDistanceKm: quote.distanceKm } : {}),
+        ...(quote.etaMinutes ? { deliveryEtaMinutes: quote.etaMinutes } : {}),
+        ...(quote.isFreeDelivery ? { deliveryFeeWaived: true } : {}),
         addressOrNotes: request.addressOrNotes,
         paymentMethod: request.paymentMethod,
         lines,
@@ -404,50 +411,34 @@ function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
       }
       return state.uploadedImages.delete(imageUrl) ? 'deleted' : 'ignored';
     },
-    updateFreeDeliveryThreshold: async (_token, minSubtotalPhp, expectedVersion) => {
+    updateDeliveryPricing: async (_token, patch, expectedVersion) => {
       if (expectedVersion !== undefined && state.deliveryPricing.version !== expectedVersion) {
         return { status: 'conflict', latest: state.deliveryPricing };
       }
       state.deliveryPricing = {
         ...state.deliveryPricing,
-        freeDeliveryMinSubtotalPhp: minSubtotalPhp,
+        ...(patch.deliveryEnabled !== undefined ? { deliveryEnabled: patch.deliveryEnabled } : {}),
+        ...(patch.baseFeePhp !== undefined ? { baseFeePhp: patch.baseFeePhp } : {}),
+        ...(patch.perKmRatePhp !== undefined ? { perKmRatePhp: patch.perKmRatePhp } : {}),
+        ...(patch.maxDistanceKm !== undefined
+          ? { maxDistanceKm: Math.round(patch.maxDistanceKm * 10) / 10 }
+          : {}),
+        ...(patch.freeDeliveryMinSubtotalPhp !== undefined
+          ? { freeDeliveryMinSubtotalPhp: patch.freeDeliveryMinSubtotalPhp }
+          : {}),
+        updatedAt: '2026-11-22T04:00:00.000Z',
         version: (state.deliveryPricing.version ?? 1) + 1,
       };
       return { status: 'ok', data: state.deliveryPricing };
     },
-    createDeliveryZone: async (_token, input) => ({
-      id: 'new-zone',
-      ...input,
-      updatedAt: '2026-11-22T03:00:00.000Z',
-      version: 1,
-    }),
-    updateDeliveryZone: async (_token, id, input, expectedVersion) => {
-      const existing = state.deliveryPricing.zones.find((entry) => entry.id === id);
-      if (existing && expectedVersion !== undefined && existing.version !== expectedVersion) {
-        return { status: 'conflict', latest: existing };
-      }
-      return {
-        status: 'ok',
-        data: {
-          id,
-          ...input,
-          updatedAt: '2026-11-22T03:00:00.000Z',
-          version: (existing?.version ?? 1) + 1,
-        },
+    resetDeliveryPricing: async () => {
+      state.deliveryPricing = {
+        ...DEFAULT_DELIVERY_PRICING,
+        updatedAt: '2026-11-22T05:00:00.000Z',
+        version: (state.deliveryPricing.version ?? 1) + 1,
       };
+      return state.deliveryPricing;
     },
-    setDeliveryZoneEnabled: async (_token, id, enabled, expectedVersion) => {
-      const zone = state.deliveryPricing.zones.find((entry) => entry.id === id);
-      if (!zone) return { status: 'not_found' };
-      if (expectedVersion !== undefined && zone.version !== expectedVersion) {
-        return { status: 'conflict', latest: zone };
-      }
-      zone.enabled = enabled;
-      zone.version = (zone.version ?? 1) + 1;
-      return { status: 'ok', data: zone };
-    },
-    deleteDeliveryZone: async () => 'deleted',
-    resetDeliveryPricing: async () => state.deliveryPricing,
     listAdminOrders: async (_token, params) => {
       const allOrders = [...state.orders.values()].map((entry) => entry.order);
       const queryLower = params.q?.trim().toLowerCase() ?? '';
@@ -457,7 +448,7 @@ function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
             order.queueNumber.toLowerCase().includes(queryLower) ||
             order.customerName.toLowerCase().includes(queryLower) ||
             order.contactNumber.toLowerCase().includes(queryLower) ||
-            (order.deliveryZoneName?.toLowerCase().includes(queryLower) ?? false);
+            order.addressOrNotes.toLowerCase().includes(queryLower);
           if (!hit) return false;
         }
         return true;
@@ -678,6 +669,52 @@ describe('Eight Burgers REST BFF', () => {
     expect(validReceiptRes.status).toBe(200);
     expect(validReceiptRes.headers.get('cache-control')).toBe('no-store');
 
+    // Delivery order passing legacy deliveryZoneId is rejected with 400 VALIDATION_ERROR
+    const legacyZoneRes = await app.request('/api/v1/orders', {
+      method: 'POST',
+      headers: { ...CSRF_HEADERS, 'Idempotency-Key': '11111111-3333-4333-8444-555555555555' },
+      body: JSON.stringify({
+        customerName: 'Marco',
+        contactNumber: '09171234567',
+        fulfillment: 'delivery',
+        deliveryZoneId: 'chino-roces-san-antonio',
+        addressOrNotes: 'Ayala Avenue, Makati',
+        paymentMethod: 'cash',
+        items: [{ itemId: 'burger-deluxe', quantity: 1, addonIds: [] }],
+      }),
+    });
+    expect(legacyZoneRes.status).toBe(400);
+    const missingPinBody = (await legacyZoneRes.json()) as {
+      code: string;
+      fieldErrors?: Record<string, string[]>;
+    };
+    expect(missingPinBody.code).toBe('VALIDATION_ERROR');
+
+    // Delivery order with Ayala Triangle pin computes exact baseFee + perKmRate fee (₱35 + 1.7 * ₱10 = ₱52)
+    const pinOnlyDeliveryRes = await app.request('/api/v1/orders', {
+      method: 'POST',
+      headers: { ...CSRF_HEADERS, 'Idempotency-Key': '11111111-4444-4333-8444-555555555555' },
+      body: JSON.stringify({
+        customerName: 'Marco',
+        contactNumber: '09171234567',
+        fulfillment: 'delivery',
+        deliveryPin: { lat: 14.5572, lng: 121.0236 },
+        addressOrNotes: 'Ayala Triangle Gardens, Makati',
+        paymentMethod: 'cash',
+        items: [{ itemId: 'burger-deluxe', quantity: 1, addonIds: [] }],
+      }),
+    });
+    expect(pinOnlyDeliveryRes.status).toBe(201);
+    const deliveryOrderBody = (await pinOnlyDeliveryRes.json()) as {
+      data: OrderRecord & Record<string, unknown>;
+    };
+    expect(deliveryOrderBody.data.deliveryDistanceKm).toBe(1.7);
+    expect(deliveryOrderBody.data.deliveryFeePhp).toBe(52);
+    expect(deliveryOrderBody.data.totalPhp).toBe(200);
+    expect(deliveryOrderBody.data.deliveryEtaMinutes).toBe('20–30 min');
+    expect('deliveryZoneId' in deliveryOrderBody.data).toBe(false);
+    expect('deliveryZoneName' in deliveryOrderBody.data).toBe(false);
+
     // Out-of-range delivery pin returns 422
     const outOfRangeRes = await app.request('/api/v1/orders', {
       method: 'POST',
@@ -686,13 +723,14 @@ describe('Eight Burgers REST BFF', () => {
         customerName: 'Marco',
         contactNumber: '09171234567',
         fulfillment: 'delivery',
-        deliveryPin: { lat: 14.1, lng: 121.5 },
-        addressOrNotes: 'Far South',
+        deliveryPin: { lat: 14.1153, lng: 120.9621 },
+        addressOrNotes: 'Tagaytay Rotonda',
         paymentMethod: 'cash',
         items: [{ itemId: 'burger-deluxe', quantity: 1, addonIds: [] }],
       }),
     });
     expect(outOfRangeRes.status).toBe(422);
+    expect(((await outOfRangeRes.json()) as { code: string }).code).toBe('OUT_OF_DELIVERY_RANGE');
 
     // Stale expectedTotalPhp returns 409 PRICE_CHANGED
     const priceChangedRes = await app.request('/api/v1/orders', {
@@ -997,7 +1035,7 @@ describe('Eight Burgers REST BFF', () => {
     expect(badLimitRes.status).toBe(400);
   });
 
-  it('deduplicates concurrent refresh-token rotations and rejects sub-0.1km delivery zones', async () => {
+  it('deduplicates concurrent refresh-token rotations and validates distance-formula delivery pricing mutations', async () => {
     let refreshCalls = 0;
     const { gateway } = createFakeGateway({
       refreshAdminSession: async (refreshToken) => {
@@ -1028,41 +1066,254 @@ describe('Eight Burgers REST BFF', () => {
     expect(resB.status).toBe(200);
     expect(refreshCalls).toBe(1);
 
-    // Sub-0.1km delivery radius is rejected with 400 VALIDATION_ERROR
-    const tinyZoneRes = await app.request('/api/v1/admin/delivery-zones', {
-      method: 'POST',
-      headers: {
-        ...CSRF_HEADERS,
-        Cookie: 'eb_access_token=valid-access-token',
-      },
-      body: JSON.stringify({
-        name: 'Micro Zone',
-        areas: 'Lobby',
-        maxDistanceKm: 0.04,
-        feePhp: 20,
-        etaMinutes: '10 min',
-        enabled: true,
-      }),
-    });
-    expect(tinyZoneRes.status).toBe(400);
+    const ownerHeaders = {
+      ...CSRF_HEADERS,
+      Cookie: 'eb_access_token=valid-access-token',
+    };
 
-    // Disabling free-delivery threshold persists null (not coerced to 500)
-    const disableFreeDeliveryRes = await app.request('/api/v1/admin/delivery-pricing', {
+    // Sub-0.1km max distance, empty body, and negative rates are rejected with 400 VALIDATION_ERROR
+    for (const invalidBody of [
+      {},
+      { maxDistanceKm: 0.04 },
+      { baseFeePhp: -1 },
+      { perKmRatePhp: -5 },
+    ]) {
+      const invalidRes = await app.request('/api/v1/admin/delivery-pricing', {
+        method: 'PATCH',
+        headers: ownerHeaders,
+        body: JSON.stringify(invalidBody),
+      });
+      expect(invalidRes.status).toBe(400);
+    }
+
+    // Legacy delivery-zones routes are removed (404)
+    const removedZonesRes = await app.request('/api/v1/admin/delivery-zones', {
+      method: 'POST',
+      headers: ownerHeaders,
+      body: JSON.stringify({ name: 'Legacy' }),
+    });
+    expect(removedZonesRes.status).toBe(404);
+
+    // Owner updates distance formula pricing and pauses delivery (and disables threshold via null)
+    const patchRes = await app.request('/api/v1/admin/delivery-pricing', {
       method: 'PATCH',
-      headers: {
-        ...CSRF_HEADERS,
-        Cookie: 'eb_access_token=valid-access-token',
-      },
+      headers: ownerHeaders,
       body: JSON.stringify({
+        deliveryEnabled: false,
+        baseFeePhp: 45,
+        perKmRatePhp: 12,
+        maxDistanceKm: 18,
         freeDeliveryMinSubtotalPhp: null,
         expectedVersion: 1,
       }),
     });
-    expect(disableFreeDeliveryRes.status).toBe(200);
-    const disableBody = (await disableFreeDeliveryRes.json()) as {
-      data: DeliveryPricingConfig;
-    };
-    expect(disableBody.data.freeDeliveryMinSubtotalPhp).toBeNull();
+    expect(patchRes.status).toBe(200);
+    const patchedBody = (await patchRes.json()) as { data: DeliveryPricingConfig };
+    expect(patchedBody.data.deliveryEnabled).toBe(false);
+    expect(patchedBody.data.baseFeePhp).toBe(45);
+    expect(patchedBody.data.perKmRatePhp).toBe(12);
+    expect(patchedBody.data.maxDistanceKm).toBe(18);
+    expect(patchedBody.data.freeDeliveryMinSubtotalPhp).toBeNull();
+    expect(patchedBody.data.version).toBe(2);
+
+    // Paused delivery rejects checkout with 422 DELIVERY_UNAVAILABLE
+    const pausedOrderRes = await app.request('/api/v1/orders', {
+      method: 'POST',
+      headers: {
+        ...CSRF_HEADERS,
+        'Idempotency-Key': 'paused-delivery-check-123456',
+      },
+      body: JSON.stringify({
+        customerName: 'Marco',
+        contactNumber: '09171234567',
+        fulfillment: 'delivery',
+        deliveryPin: { lat: 14.5572, lng: 121.0236 },
+        addressOrNotes: 'Ayala Triangle',
+        paymentMethod: 'cash',
+        items: [{ itemId: 'burger-deluxe', quantity: 1, addonIds: [] }],
+      }),
+    });
+    expect(pausedOrderRes.status).toBe(422);
+    expect(((await pausedOrderRes.json()) as { code: string }).code).toBe('DELIVERY_UNAVAILABLE');
+
+    // Stale expectedVersion returns 409 CONFLICT
+    const staleRes = await app.request('/api/v1/admin/delivery-pricing', {
+      method: 'PATCH',
+      headers: ownerHeaders,
+      body: JSON.stringify({ baseFeePhp: 50, expectedVersion: 1 }),
+    });
+    expect(staleRes.status).toBe(409);
+
+    // Reset restores defaults cleanly
+    const resetRes = await app.request('/api/v1/admin/delivery-pricing/reset', {
+      method: 'POST',
+      headers: {
+        Origin: 'http://localhost:5173',
+        'X-Requested-With': 'fetch',
+        Cookie: 'eb_access_token=valid-access-token',
+      },
+    });
+    expect(resetRes.status).toBe(200);
+    const resetBody = (await resetRes.json()) as { data: DeliveryPricingConfig };
+    expect(resetBody.data.deliveryEnabled).toBe(true);
+    expect(resetBody.data.baseFeePhp).toBe(35);
+    expect(resetBody.data.perKmRatePhp).toBe(10);
+    expect(resetBody.data.maxDistanceKm).toBe(25);
+    expect(resetBody.data.freeDeliveryMinSubtotalPhp).toBe(500);
+  });
+
+  it('enforces paused delivery across checkout, pickup continuity, queue preservation, rate persistence, and resume', async () => {
+    const { gateway, state } = createFakeGateway();
+    const app = createApp({ config: TEST_CONFIG, gateway });
+    const ownerCookie = { Cookie: 'eb_access_token=valid-access-token' };
+    const ownerMutationHeaders = { ...CSRF_HEADERS, ...ownerCookie };
+
+    // 1. Set custom formula rates
+    const customRes = await app.request('/api/v1/admin/delivery-pricing', {
+      method: 'PATCH',
+      headers: ownerMutationHeaders,
+      body: JSON.stringify({
+        baseFeePhp: 45,
+        perKmRatePhp: 12,
+        maxDistanceKm: 18,
+        freeDeliveryMinSubtotalPhp: 600,
+        expectedVersion: 1,
+      }),
+    });
+    expect(customRes.status).toBe(200);
+    expect(((await customRes.json()) as { data: DeliveryPricingConfig }).data.version).toBe(2);
+
+    // 2. Partial pause preserves custom rates
+    const pauseRes = await app.request('/api/v1/admin/delivery-pricing', {
+      method: 'PATCH',
+      headers: ownerMutationHeaders,
+      body: JSON.stringify({
+        deliveryEnabled: false,
+        expectedVersion: 2,
+      }),
+    });
+    expect(pauseRes.status).toBe(200);
+    const pausedPricing = ((await pauseRes.json()) as { data: DeliveryPricingConfig }).data;
+    expect(pausedPricing).toMatchObject({
+      deliveryEnabled: false,
+      baseFeePhp: 45,
+      perKmRatePhp: 12,
+      maxDistanceKm: 18,
+      freeDeliveryMinSubtotalPhp: 600,
+      version: 3,
+    });
+
+    // 3. Public catalog and delivery-pricing reflect paused state
+    const publicPricingRes = await app.request('/api/v1/delivery-pricing');
+    expect(publicPricingRes.status).toBe(200);
+    expect(
+      ((await publicPricingRes.json()) as { data: DeliveryPricingConfig }).data.deliveryEnabled,
+    ).toBe(false);
+
+    const publicCatalogRes = await app.request('/api/v1/catalog');
+    expect(publicCatalogRes.status).toBe(200);
+    expect(
+      ((await publicCatalogRes.json()) as { data: { deliveryPricing: DeliveryPricingConfig } }).data
+        .deliveryPricing.deliveryEnabled,
+    ).toBe(false);
+
+    // 4. Delivery order above free threshold is still rejected (422) without burning queue seq
+    const blockedDeliveryRes = await app.request('/api/v1/orders', {
+      method: 'POST',
+      headers: {
+        ...CSRF_HEADERS,
+        'Idempotency-Key': 'paused-retry-order-key-123456',
+      },
+      body: JSON.stringify({
+        customerName: 'Marco',
+        contactNumber: '09171234567',
+        fulfillment: 'delivery',
+        deliveryPin: { lat: 14.5572, lng: 121.0236 },
+        addressOrNotes: 'Ayala Triangle Gardens, Makati',
+        paymentMethod: 'gcash',
+        items: [{ itemId: 'overload-burger', quantity: 3, addonIds: [] }],
+      }),
+    });
+    expect(blockedDeliveryRes.status).toBe(422);
+    expect(blockedDeliveryRes.headers.get('content-type')).toContain('application/problem+json');
+    expect(((await blockedDeliveryRes.json()) as { code: string }).code).toBe(
+      'DELIVERY_UNAVAILABLE',
+    );
+    expect(state.seq).toBe(101);
+    expect(state.orders.size).toBe(0);
+
+    // 5. Kiosk pickup still succeeds while delivery is paused and mints #8B-101
+    const pickupRes = await app.request('/api/v1/orders', {
+      method: 'POST',
+      headers: {
+        ...CSRF_HEADERS,
+        'Idempotency-Key': 'pickup-during-pause-123456',
+      },
+      body: JSON.stringify({
+        customerName: 'Ana',
+        contactNumber: '',
+        fulfillment: 'kiosk-pickup',
+        addressOrNotes: '',
+        paymentMethod: 'cash',
+        items: [{ itemId: 'burger-deluxe', quantity: 1, addonIds: [] }],
+      }),
+    });
+    expect(pickupRes.status).toBe(201);
+    expect(((await pickupRes.json()) as { data: OrderRecord }).data.queueNumber).toBe('#8B-101');
+
+    // 6. Non-owner cannot resume delivery (403)
+    const cashierResumeRes = await app.request('/api/v1/admin/delivery-pricing', {
+      method: 'PATCH',
+      headers: {
+        ...CSRF_HEADERS,
+        Cookie: 'eb_access_token=cashier-access-token',
+      },
+      body: JSON.stringify({ deliveryEnabled: true }),
+    });
+    expect(cashierResumeRes.status).toBe(403);
+
+    // 7. Owner resumes delivery while custom rates remain intact
+    const resumeRes = await app.request('/api/v1/admin/delivery-pricing', {
+      method: 'PATCH',
+      headers: ownerMutationHeaders,
+      body: JSON.stringify({
+        deliveryEnabled: true,
+        expectedVersion: 3,
+      }),
+    });
+    expect(resumeRes.status).toBe(200);
+    expect(((await resumeRes.json()) as { data: DeliveryPricingConfig }).data).toMatchObject({
+      deliveryEnabled: true,
+      baseFeePhp: 45,
+      perKmRatePhp: 12,
+      maxDistanceKm: 18,
+      freeDeliveryMinSubtotalPhp: 600,
+      version: 4,
+    });
+
+    // 8. Retry delivery using the same key (rejected 422 wasn't stored) succeeds with custom rates
+    // Ayala Triangle = 1.7 km -> ₱45 + round(1.7 * 12 = 20.4 -> 20) = ₱65; ₱148 + ₱65 = ₱213
+    const retryDeliveryRes = await app.request('/api/v1/orders', {
+      method: 'POST',
+      headers: {
+        ...CSRF_HEADERS,
+        'Idempotency-Key': 'paused-retry-order-key-123456',
+      },
+      body: JSON.stringify({
+        customerName: 'Marco',
+        contactNumber: '09171234567',
+        fulfillment: 'delivery',
+        deliveryPin: { lat: 14.5572, lng: 121.0236 },
+        addressOrNotes: 'Ayala Triangle Gardens, Makati',
+        paymentMethod: 'gcash',
+        items: [{ itemId: 'burger-deluxe', quantity: 1, addonIds: [] }],
+      }),
+    });
+    expect(retryDeliveryRes.status).toBe(201);
+    const retryBody = (await retryDeliveryRes.json()) as { data: OrderRecord };
+    expect(retryBody.data.queueNumber).toBe('#8B-102');
+    expect(retryBody.data.deliveryFeePhp).toBe(65);
+    expect(retryBody.data.totalPhp).toBe(213);
   });
 
   it('uploads, optimizes to WebP, and cleans up unused menu images via admin endpoints', async () => {
@@ -1414,23 +1665,15 @@ describe('Eight Burgers REST BFF', () => {
       const deliveryPatchRes = await app.request('/api/v1/admin/delivery-pricing', {
         method: 'PATCH',
         headers: authMutationHeaders,
-        body: JSON.stringify({ freeDeliveryMinSubtotalPhp: 600 }),
+        body: JSON.stringify({ baseFeePhp: 60, freeDeliveryMinSubtotalPhp: 600 }),
       });
       expect(deliveryPatchRes.status).toBe(403);
 
-      const zoneCreateRes = await app.request('/api/v1/admin/delivery-zones', {
+      const deliveryResetRes = await app.request('/api/v1/admin/delivery-pricing/reset', {
         method: 'POST',
-        headers: authMutationHeaders,
-        body: JSON.stringify({
-          name: 'Blocked Zone',
-          areas: 'Nowhere',
-          maxDistanceKm: 5,
-          feePhp: 50,
-          etaMinutes: '20 min',
-          enabled: true,
-        }),
+        headers: { Origin: 'http://localhost:5173', 'X-Requested-With': 'fetch', ...authCookie },
       });
-      expect(zoneCreateRes.status).toBe(403);
+      expect(deliveryResetRes.status).toBe(403);
 
       const teamListRes = await app.request('/api/v1/admin/users', { headers: authCookie });
       expect(teamListRes.status).toBe(403);
@@ -1507,5 +1750,134 @@ describe('Eight Burgers REST BFF', () => {
     });
     expect(selfPatchRes.status).toBe(400);
     expect(((await selfPatchRes.json()) as { code: string }).code).toBe('CANNOT_MODIFY_SELF');
+  });
+
+  it('proxies address search and reverse geocoding with validation, rate limiting, and error handling', async () => {
+    const { gateway } = createFakeGateway();
+    const limiter = new SlidingWindowRateLimiter(4, 60_000, () => 1_000);
+    let failSearch = false;
+
+    const app = createApp({
+      config: TEST_CONFIG,
+      gateway,
+      locationRateLimiter: limiter,
+      locationProvider: {
+        search: async (query) => {
+          if (failSearch) {
+            throw new Error('Upstream unavailable');
+          }
+          return [
+            {
+              id: 'osm-w-1',
+              label: `6749 ${query}`,
+              secondaryLabel: 'Makati, Metro Manila',
+              coordinates: { lat: 14.5547, lng: 121.0244 },
+            },
+          ];
+        },
+        reverse: async (coords) =>
+          coords.lat > 14.5
+            ? { label: 'Chino Roces Avenue, San Antonio, Makati', coordinates: coords }
+            : null,
+      },
+    });
+
+    // Validation: query shorter than 2 chars -> 400
+    const shortRes = await app.request('/api/v1/location/search?q=a');
+    expect(shortRes.status).toBe(400);
+    expect(((await shortRes.json()) as { code: string }).code).toBe('VALIDATION_ERROR');
+
+    // Valid search -> 200
+    const searchRes = await app.request('/api/v1/location/search?q=Ayala%20Ave');
+    expect(searchRes.status).toBe(200);
+    expect(searchRes.headers.get('cache-control')).toBe('public, max-age=300');
+    const searchBody = (await searchRes.json()) as {
+      data: Array<{ id: string; label: string; coordinates: { lat: number; lng: number } }>;
+    };
+    expect(searchBody.data).toHaveLength(1);
+    expect(searchBody.data[0]?.label).toBe('6749 Ayala Ave');
+
+    // Reverse geocoding: invalid coords -> 400, valid coords -> 200
+    const badReverseRes = await app.request('/api/v1/location/reverse?lat=999&lng=121');
+    expect(badReverseRes.status).toBe(400);
+
+    const reverseRes = await app.request('/api/v1/location/reverse?lat=14.5608&lng=121.0124');
+    expect(reverseRes.status).toBe(200);
+    const reverseBody = (await reverseRes.json()) as {
+      data: { label: string; coordinates: { lat: number; lng: number } } | null;
+    };
+    expect(reverseBody.data?.label).toBe('Chino Roces Avenue, San Antonio, Makati');
+
+    // 4th request exceeds test limiter (max 3) -> 429 with Retry-After
+    const rateLimitedRes = await app.request('/api/v1/location/reverse?lat=14.1&lng=121.0');
+    expect(rateLimitedRes.status).toBe(429);
+    expect(rateLimitedRes.headers.get('retry-after')).toBeTruthy();
+
+    // Fresh limiter to test null reverse result and 503 search failure
+    const app2 = createApp({
+      config: TEST_CONFIG,
+      gateway,
+      locationProvider: {
+        search: async () => {
+          failSearch = true;
+          throw new Error('Photon down');
+        },
+        reverse: async () => null,
+      },
+    });
+    const nullReverseRes = await app2.request('/api/v1/location/reverse?lat=14.1&lng=121.0');
+    expect(nullReverseRes.status).toBe(200);
+    expect(((await nullReverseRes.json()) as { data: unknown }).data).toBeNull();
+
+    const failSearchRes = await app2.request('/api/v1/location/search?q=Makati');
+    expect(failSearchRes.status).toBe(503);
+    expect(((await failSearchRes.json()) as { code: string }).code).toBe(
+      'LOCATION_SERVICE_UNAVAILABLE',
+    );
+  });
+
+  it('validates location query bounds, rejects empty/non-numeric coordinates, and degrades unexpected reverse errors cleanly', async () => {
+    const { gateway } = createFakeGateway();
+    const app = createApp({
+      config: TEST_CONFIG,
+      gateway,
+      locationProvider: {
+        search: async () => [],
+        reverse: async () => {
+          throw new Error('Nominatim crashed');
+        },
+      },
+    });
+
+    for (const badPath of [
+      '/api/v1/location/search',
+      '/api/v1/location/search?q=%20%20',
+      `/api/v1/location/search?q=${'x'.repeat(121)}`,
+    ]) {
+      const res = await app.request(badPath);
+      expect(res.status).toBe(400);
+      expect(res.headers.get('content-type')).toContain('application/problem+json');
+      const body = (await res.json()) as {
+        code: string;
+        fieldErrors?: Record<string, string[]>;
+      };
+      expect(body.code).toBe('VALIDATION_ERROR');
+      expect(body.fieldErrors?.q?.length).toBeGreaterThan(0);
+    }
+
+    for (const badReversePath of [
+      '/api/v1/location/reverse',
+      '/api/v1/location/reverse?lat=&lng=',
+      '/api/v1/location/reverse?lng=121.01',
+      '/api/v1/location/reverse?lat=14.56&lng=abc',
+    ]) {
+      const res = await app.request(badReversePath);
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { code: string }).code).toBe('VALIDATION_ERROR');
+    }
+
+    const thrownReverseRes = await app.request('/api/v1/location/reverse?lat=14.56&lng=121.01');
+    expect(thrownReverseRes.status).toBe(200);
+    expect(((await thrownReverseRes.json()) as { data: unknown }).data).toBeNull();
   });
 });

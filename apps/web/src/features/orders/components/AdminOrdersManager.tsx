@@ -337,7 +337,7 @@ export function AdminOrdersManager() {
               maxLength={100}
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search queue #, name, phone, zone..."
+              placeholder="Search queue #, name, phone, address..."
               aria-label="Search customer orders"
               className="min-w-0 flex-1 rounded-xl border border-ui-border bg-ui-surface px-3 py-1.5 text-sm text-ui-text sm:w-64 sm:flex-none"
             />
@@ -482,12 +482,8 @@ export function AdminOrdersManager() {
                           ) : null}
                         </div>
                         <p className="mt-1 text-xs text-ui-text-muted">
-                          {order.fulfillment === 'kiosk-pickup'
-                            ? 'Kiosk Pickup'
-                            : order.deliveryZoneName
-                              ? `Delivery · ${order.deliveryZoneName}`
-                              : 'Delivery'}{' '}
-                          · {order.paymentMethod.toUpperCase()}
+                          {order.fulfillment === 'kiosk-pickup' ? 'Kiosk Pickup' : 'Delivery'} ·{' '}
+                          {order.paymentMethod.toUpperCase()}
                           {order.contactNumber ? ` · ${order.contactNumber}` : ''}
                           {formattedTime ? ` · ${formattedTime}` : ''}
                         </p>

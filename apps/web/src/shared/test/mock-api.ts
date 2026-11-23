@@ -6,14 +6,15 @@ import {
   normalizeContactDigits,
   normalizeQueueNumber,
   slugifyMenuId,
-  slugifyZoneId,
   type AdminRole,
   type AdminTeamMember,
   type AdminUser,
   type CancelPublicOrderByQueueRequest,
   type CreateAdminUserRequest,
   type DeliveryPricingConfig,
-  type DeliveryZoneInput,
+  type DeliveryPricingPatch,
+  type GeoCoordinates,
+  type LocationSuggestion,
   type MenuItem,
   type MenuItemInput,
   type OrderRecord,
@@ -28,7 +29,6 @@ function toPublicOrderTracker(order: OrderRecord): PublicOrderTracker {
   return {
     queueNumber: order.queueNumber,
     fulfillment: order.fulfillment,
-    ...(order.deliveryZoneName ? { deliveryZoneName: order.deliveryZoneName } : {}),
     ...(order.deliveryEtaMinutes ? { deliveryEtaMinutes: order.deliveryEtaMinutes } : {}),
     lines: order.lines.map((line) => ({
       lineId: line.lineId,
@@ -49,8 +49,44 @@ export type MockApiOptions = {
   initialMenu?: MenuItem[];
   initialDeliveryPricing?: DeliveryPricingConfig;
   initialOrders?: OrderRecord[];
+  locationSuggestions?: LocationSuggestion[];
+  onLocationSearch?: (query: string) => Response | Promise<Response>;
+  onLocationReverse?: (coords: GeoCoordinates) => Response | Promise<Response>;
   onExternalFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 };
+
+const DEFAULT_LOCATION_SUGGESTIONS: LocationSuggestion[] = [
+  {
+    id: 'mock-chino-roces',
+    label: 'Chino Roces Avenue',
+    secondaryLabel: 'San Antonio, Makati, Metro Manila',
+    coordinates: { lat: 14.5608, lng: 121.0124 },
+  },
+  {
+    id: 'mock-ayala-triangle',
+    label: 'Ayala Triangle Gardens',
+    secondaryLabel: 'Ayala Avenue, Bel-Air, Makati',
+    coordinates: { lat: 14.5572, lng: 121.0236 },
+  },
+  {
+    id: 'mock-bgc-high-street',
+    label: 'Bonifacio High Street',
+    secondaryLabel: 'BGC, Taguig, Metro Manila',
+    coordinates: { lat: 14.5508, lng: 121.0505 },
+  },
+  {
+    id: 'mock-filinvest-alabang',
+    label: 'Filinvest City Alabang',
+    secondaryLabel: 'Alabang, Muntinlupa, Metro Manila',
+    coordinates: { lat: 14.417, lng: 121.041 },
+  },
+  {
+    id: 'mock-tagaytay-rotonda',
+    label: 'Tagaytay Rotonda',
+    secondaryLabel: 'Silang Junction South, Tagaytay, Cavite',
+    coordinates: { lat: 14.1153, lng: 120.9621 },
+  },
+];
 
 const TEST_ADMIN_USERS: Record<AdminRole, AdminUser> = {
   owner: {
@@ -125,16 +161,11 @@ export function installMockShopApi(options: MockApiOptions = {}) {
     })),
     deliveryPricing: options.initialDeliveryPricing
       ? {
-          zones: options.initialDeliveryPricing.zones.map((zone) => ({
-            ...zone,
-            version: zone.version ?? 1,
-          })),
-          freeDeliveryMinSubtotalPhp: options.initialDeliveryPricing.freeDeliveryMinSubtotalPhp,
+          ...options.initialDeliveryPricing,
           version: options.initialDeliveryPricing.version ?? 1,
         }
       : {
-          zones: DEFAULT_DELIVERY_PRICING.zones.map((zone) => ({ ...zone, version: 1 })),
-          freeDeliveryMinSubtotalPhp: DEFAULT_DELIVERY_PRICING.freeDeliveryMinSubtotalPhp,
+          ...DEFAULT_DELIVERY_PRICING,
           version: 1,
         },
     orders: (options.initialOrders ?? []).map((order) => ({
@@ -172,8 +203,58 @@ export function installMockShopApi(options: MockApiOptions = {}) {
       });
     }
 
+    if (method === 'GET' && path === '/location/search') {
+      const queryString = rawUrl.includes('?') ? rawUrl.slice(rawUrl.indexOf('?') + 1) : '';
+      const params = new URLSearchParams(queryString);
+      const q = (params.get('q') ?? '').trim();
+      if (options.onLocationSearch) {
+        return options.onLocationSearch(q);
+      }
+      if (q.length < 2) {
+        return problemJson(
+          400,
+          'VALIDATION_ERROR',
+          'Provide an address search query between 2 and 120 characters.',
+        );
+      }
+      const lower = q.toLowerCase();
+      const source = options.locationSuggestions ?? DEFAULT_LOCATION_SUGGESTIONS;
+      const matches = source.filter(
+        (item) =>
+          item.label.toLowerCase().includes(lower) ||
+          (item.secondaryLabel?.toLowerCase().includes(lower) ?? false),
+      );
+      return jsonResponse({ data: matches.slice(0, 6) });
+    }
+
+    if (method === 'GET' && path === '/location/reverse') {
+      const queryString = rawUrl.includes('?') ? rawUrl.slice(rawUrl.indexOf('?') + 1) : '';
+      const params = new URLSearchParams(queryString);
+      const lat = Number(params.get('lat'));
+      const lng = Number(params.get('lng'));
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        return problemJson(400, 'VALIDATION_ERROR', 'Provide valid coordinates.');
+      }
+      if (options.onLocationReverse) {
+        return options.onLocationReverse({ lat, lng });
+      }
+      return jsonResponse({
+        data: {
+          label: 'Chino Roces Avenue, San Antonio, Makati',
+          coordinates: { lat, lng },
+        },
+      });
+    }
+
     if (method === 'POST' && path === '/orders') {
       const req = body as PlaceOrderRequest;
+      if (req.fulfillment === 'delivery' && !req.deliveryPin) {
+        return problemJson(
+          400,
+          'VALIDATION_ERROR',
+          'Select a delivery address from the suggestions or use your device location.',
+        );
+      }
       let subtotalPhp = 0;
       const lines = [];
       for (const line of req.items) {
@@ -205,11 +286,18 @@ export function installMockShopApi(options: MockApiOptions = {}) {
         });
       }
 
+      if (req.fulfillment === 'delivery' && !state.deliveryPricing.deliveryEnabled) {
+        return problemJson(
+          422,
+          'DELIVERY_UNAVAILABLE',
+          'Delivery is currently paused. Switch to Chino Roces Pickup to continue.',
+        );
+      }
+
       const quote = calculateDeliveryQuote({
         fulfillment: req.fulfillment,
         subtotalPhp,
         deliveryPricing: state.deliveryPricing,
-        zoneId: req.deliveryZoneId,
         pin: req.deliveryPin,
       });
 
@@ -230,12 +318,8 @@ export function installMockShopApi(options: MockApiOptions = {}) {
         customerName: req.customerName,
         contactNumber: req.contactNumber,
         fulfillment: req.fulfillment,
-        ...(quote.zone
-          ? {
-              deliveryZoneId: quote.zone.id,
-              deliveryZoneName: quote.zone.name,
-              deliveryEtaMinutes: quote.zone.etaMinutes,
-            }
+        ...(req.fulfillment === 'delivery' && quote.etaMinutes
+          ? { deliveryEtaMinutes: quote.etaMinutes }
           : {}),
         ...(req.fulfillment === 'delivery' && req.deliveryPin
           ? { deliveryPin: req.deliveryPin }
@@ -417,7 +501,7 @@ export function installMockShopApi(options: MockApiOptions = {}) {
               order.queueNumber.toLowerCase().includes(qParam) ||
               order.customerName.toLowerCase().includes(qParam) ||
               order.contactNumber.toLowerCase().includes(qParam) ||
-              (order.deliveryZoneName?.toLowerCase().includes(qParam) ?? false);
+              order.addressOrNotes.toLowerCase().includes(qParam);
             if (!matches) return false;
           }
           return true;
@@ -569,78 +653,38 @@ export function installMockShopApi(options: MockApiOptions = {}) {
       }
 
       if (method === 'PATCH' && path === '/admin/delivery-pricing') {
-        const payload = body as {
-          freeDeliveryMinSubtotalPhp: number | null;
-          expectedVersion?: number;
-        };
+        const payload = body as DeliveryPricingPatch;
         if (
           payload.expectedVersion !== undefined &&
           state.deliveryPricing.version !== payload.expectedVersion
         ) {
           return problemJson(409, 'CONFLICT', 'Delivery pricing was updated on another device.');
         }
-        state.deliveryPricing.freeDeliveryMinSubtotalPhp = payload.freeDeliveryMinSubtotalPhp;
+        if (payload.deliveryEnabled !== undefined) {
+          state.deliveryPricing.deliveryEnabled = payload.deliveryEnabled;
+        }
+        if (payload.baseFeePhp !== undefined) {
+          state.deliveryPricing.baseFeePhp = payload.baseFeePhp;
+        }
+        if (payload.perKmRatePhp !== undefined) {
+          state.deliveryPricing.perKmRatePhp = payload.perKmRatePhp;
+        }
+        if (payload.maxDistanceKm !== undefined) {
+          state.deliveryPricing.maxDistanceKm = Math.round(payload.maxDistanceKm * 10) / 10;
+        }
+        if (payload.freeDeliveryMinSubtotalPhp !== undefined) {
+          state.deliveryPricing.freeDeliveryMinSubtotalPhp = payload.freeDeliveryMinSubtotalPhp;
+        }
         state.deliveryPricing.version = (state.deliveryPricing.version ?? 1) + 1;
         return jsonResponse({ data: state.deliveryPricing });
       }
 
       if (method === 'POST' && path === '/admin/delivery-pricing/reset') {
         state.deliveryPricing = {
-          zones: DEFAULT_DELIVERY_PRICING.zones.map((zone) => ({ ...zone, version: 1 })),
-          freeDeliveryMinSubtotalPhp: DEFAULT_DELIVERY_PRICING.freeDeliveryMinSubtotalPhp,
+          ...DEFAULT_DELIVERY_PRICING,
           version: (state.deliveryPricing.version ?? 1) + 1,
         };
         return jsonResponse({ data: state.deliveryPricing });
-      }
-
-      if (method === 'POST' && path === '/admin/delivery-zones') {
-        const input = body as DeliveryZoneInput;
-        const id = slugifyZoneId(
-          input.name,
-          new Set(state.deliveryPricing.zones.map((zone) => zone.id)),
-        );
-        const created = { id, ...input, version: 1 };
-        state.deliveryPricing.zones.push(created);
-        return jsonResponse({ data: created }, 201);
-      }
-
-      if (method === 'PUT' && path.startsWith('/admin/delivery-zones/')) {
-        const id = path.slice('/admin/delivery-zones/'.length);
-        const idx = state.deliveryPricing.zones.findIndex((zone) => zone.id === id);
-        if (idx === -1) return problemJson(404, 'DELIVERY_ZONE_NOT_FOUND', 'Zone not found.');
-        const existing = state.deliveryPricing.zones[idx];
-        const { expectedVersion, ...input } = body as DeliveryZoneInput & {
-          expectedVersion?: number;
-        };
-        if (expectedVersion !== undefined && existing?.version !== expectedVersion) {
-          return problemJson(409, 'CONFLICT', 'Delivery zone was updated on another device.');
-        }
-        const updated = { id, ...input, version: (existing?.version ?? 1) + 1 };
-        state.deliveryPricing.zones[idx] = updated;
-        return jsonResponse({ data: updated });
-      }
-
-      if (
-        method === 'PATCH' &&
-        path.startsWith('/admin/delivery-zones/') &&
-        path.endsWith('/enabled')
-      ) {
-        const id = path.slice('/admin/delivery-zones/'.length, -'/enabled'.length);
-        const zone = state.deliveryPricing.zones.find((entry) => entry.id === id);
-        if (!zone) return problemJson(404, 'DELIVERY_ZONE_NOT_FOUND', 'Zone not found.');
-        const payload = body as { enabled: boolean; expectedVersion?: number };
-        if (payload.expectedVersion !== undefined && zone.version !== payload.expectedVersion) {
-          return problemJson(409, 'CONFLICT', 'Delivery zone was updated on another device.');
-        }
-        zone.enabled = Boolean(payload.enabled);
-        zone.version = (zone.version ?? 1) + 1;
-        return jsonResponse({ data: zone });
-      }
-
-      if (method === 'DELETE' && path.startsWith('/admin/delivery-zones/')) {
-        const id = path.slice('/admin/delivery-zones/'.length);
-        state.deliveryPricing.zones = state.deliveryPricing.zones.filter((zone) => zone.id !== id);
-        return new Response(null, { status: 204 });
       }
 
       if (method === 'GET' && path === '/admin/users') {

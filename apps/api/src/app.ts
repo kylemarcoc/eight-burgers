@@ -11,6 +11,7 @@ import { createAdminUserRoutes } from './routes/admin-users';
 import { createAuthRoutes } from './routes/auth';
 import { createCatalogRoutes } from './routes/catalog';
 import { createHealthRoutes } from './routes/health';
+import { createLocationRoutes } from './routes/location';
 import { createOrderRoutes } from './routes/orders';
 import type { ApiDeps, ApiEnv } from './types';
 
@@ -25,6 +26,7 @@ export function createApp(deps: ApiDeps): Hono<ApiEnv> {
 
   const apiV1 = new Hono<ApiEnv>();
   apiV1.route('/', createCatalogRoutes(deps));
+  apiV1.route('/', createLocationRoutes(deps));
   apiV1.route('/', createOrderRoutes(deps));
   apiV1.route('/', createAuthRoutes(deps));
 

@@ -1,20 +1,16 @@
-import type { DeliveryZoneInput, MenuItemInput } from '@eight-burgers/contracts';
+import type { DeliveryPricingPatch, MenuItemInput } from '@eight-burgers/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isApiError } from '@/shared/lib/api-error';
 import {
   catalogKeys,
-  createAdminDeliveryZone,
   createAdminMenuItem,
-  deleteAdminDeliveryZone,
   deleteAdminMenuItem,
   deleteUnusedAdminMenuImage,
   fetchCatalog,
-  patchAdminDeliveryZoneEnabled,
-  patchAdminFreeDeliveryThreshold,
+  patchAdminDeliveryPricing,
   patchAdminMenuAvailability,
   resetAdminDeliveryPricing,
   resetAdminMenuCatalog,
-  updateAdminDeliveryZone,
   updateAdminMenuItem,
   uploadAdminMenuImage,
 } from '../api/catalog-api';
@@ -105,35 +101,8 @@ export function useDeliveryPricingMutations() {
   const invalidateCatalog = () => queryClient.invalidateQueries({ queryKey: catalogKeys.all });
   const onError = (error: unknown) => handleAdminMutationError(queryClient, error);
 
-  const setFreeDeliveryThreshold = useMutation({
-    mutationFn: (params: { freeDeliveryMinSubtotalPhp: number | null; expectedVersion?: number }) =>
-      patchAdminFreeDeliveryThreshold(params),
-    onSuccess: invalidateCatalog,
-    onError,
-  });
-
-  const createDeliveryZone = useMutation({
-    mutationFn: (input: DeliveryZoneInput) => createAdminDeliveryZone(input),
-    onSuccess: invalidateCatalog,
-    onError,
-  });
-
-  const updateDeliveryZone = useMutation({
-    mutationFn: (params: { id: string; input: DeliveryZoneInput; expectedVersion?: number }) =>
-      updateAdminDeliveryZone(params),
-    onSuccess: invalidateCatalog,
-    onError,
-  });
-
-  const setDeliveryZoneEnabled = useMutation({
-    mutationFn: (params: { id: string; enabled: boolean; expectedVersion?: number }) =>
-      patchAdminDeliveryZoneEnabled(params),
-    onSuccess: invalidateCatalog,
-    onError,
-  });
-
-  const deleteDeliveryZone = useMutation({
-    mutationFn: (id: string) => deleteAdminDeliveryZone(id),
+  const updateDeliveryPricing = useMutation({
+    mutationFn: (params: DeliveryPricingPatch) => patchAdminDeliveryPricing(params),
     onSuccess: invalidateCatalog,
     onError,
   });
@@ -145,11 +114,7 @@ export function useDeliveryPricingMutations() {
   });
 
   return {
-    setFreeDeliveryThreshold,
-    createDeliveryZone,
-    updateDeliveryZone,
-    setDeliveryZoneEnabled,
-    deleteDeliveryZone,
+    updateDeliveryPricing,
     resetDeliveryPricing,
   };
 }

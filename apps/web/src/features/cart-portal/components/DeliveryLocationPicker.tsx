@@ -1,118 +1,130 @@
-import { useEffect, useId, useRef, useState } from 'react';
-import { formatPhp, isValidCoordinates } from '@/shared/shop/shop-storage';
-import type { DeliveryZone, GeoCoordinates } from '@/shared/shop/types';
+import type { LocationSuggestion } from '@eight-burgers/contracts';
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
+import { ApiError, getApiErrorMessage } from '@/shared/lib/api-error';
+import { isValidCoordinates } from '@/shared/shop/shop-storage';
+import type { GeoCoordinates } from '@/shared/shop/types';
+import { reverseGeocodeDeliveryPin, searchDeliveryAddresses } from '../api/location-api';
 
 export type DeliveryLocationPickerProps = {
-  zones: readonly DeliveryZone[];
-  selectedZoneId: string | null;
+  inputRef?: RefObject<HTMLInputElement | null>;
+  selectedAddress: string | null;
   pin: GeoCoordinates | null;
   outOfRange: boolean;
   distanceKm: number | null;
-  onZoneChange: (zoneId: string) => void;
-  onPinChange: (nextPin: GeoCoordinates, resolvedAddress?: string) => void;
-  onClearPin: () => void;
+  errorText?: string;
+  errorId?: string;
+  onSelectLocation: (nextPin: GeoCoordinates, resolvedAddress?: string | null) => void;
+  onClearLocation: () => void;
 };
 
-type NominatimAddressFields = {
-  house_number?: unknown;
-  road?: unknown;
-  neighbourhood?: unknown;
-  suburb?: unknown;
-  quarter?: unknown;
-  village?: unknown;
-  city?: unknown;
-  town?: unknown;
-  municipality?: unknown;
-};
-
-function readString(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function firstString(values: readonly unknown[]): string | null {
-  for (const value of values) {
-    const parsed = readString(value);
-    if (parsed) return parsed;
-  }
-  return null;
-}
-
-function parseNominatimReverseLabel(raw: unknown): string | null {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
-
-  const candidate = raw as {
-    address?: unknown;
-    display_name?: unknown;
-  };
-
-  const parts: string[] = [];
-  if (
-    typeof candidate.address === 'object' &&
-    candidate.address !== null &&
-    !Array.isArray(candidate.address)
-  ) {
-    const addr = candidate.address as NominatimAddressFields;
-    const road = readString(addr.road);
-    const houseNumber = readString(addr.house_number);
-    const street = road ? (houseNumber ? `${houseNumber} ${road}` : road) : null;
-    const area = firstString([addr.neighbourhood, addr.suburb, addr.quarter, addr.village]);
-    const locality = firstString([addr.city, addr.town, addr.municipality]);
-
-    for (const part of [street, area, locality]) {
-      if (part && !parts.some((existing) => existing.toLowerCase() === part.toLowerCase())) {
-        parts.push(part);
-      }
-    }
-  }
-
-  let resolved = parts.join(', ').trim();
-  if (!resolved) {
-    const displayName = readString(candidate.display_name);
-    if (displayName) {
-      resolved = displayName
-        .split(',')
-        .map((segment) => segment.trim())
-        .filter(Boolean)
-        .slice(0, 3)
-        .join(', ');
-    }
-  }
-
-  if (!resolved) return null;
-  return resolved.slice(0, 250).trim() || null;
-}
+const SEARCH_DEBOUNCE_MS = 250;
 
 export function DeliveryLocationPicker({
-  zones,
-  selectedZoneId,
+  inputRef,
+  selectedAddress,
   pin,
   outOfRange,
   distanceKm,
-  onZoneChange,
-  onPinChange,
-  onClearPin,
+  errorText,
+  errorId,
+  onSelectLocation,
+  onClearLocation,
 }: DeliveryLocationPickerProps) {
   const isMountedRef = useRef(true);
+  const internalInputRef = useRef<HTMLInputElement | null>(null);
+  const resolvedInputRef = inputRef ?? internalInputRef;
+  const searchAbortRef = useRef<AbortController | null>(null);
   const reverseAbortRef = useRef<AbortController | null>(null);
   const locationSeqRef = useRef(0);
+  const prevSelectedAddressRef = useRef<string | null>(selectedAddress);
 
+  const [query, setQuery] = useState(selectedAddress ?? '');
+  const [pendingSearchQuery, setPendingSearchQuery] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([]);
+  const [isOpen, setIsOpen] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const [locating, setLocating] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [lookupError, setLookupError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  const zoneSelectId = useId();
+  const searchInputId = useId();
+  const hintId = useId();
+  const listboxId = useId();
+  const optionIdPrefix = useId();
 
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      searchAbortRef.current?.abort();
       reverseAbortRef.current?.abort();
     };
   }, []);
 
-  const activeZone = zones.find((zone) => zone.id === selectedZoneId) ?? zones[0] ?? null;
+  useEffect(() => {
+    const prev = prevSelectedAddressRef.current;
+    prevSelectedAddressRef.current = selectedAddress;
+    if (selectedAddress && selectedAddress !== prev) {
+      setQuery(selectedAddress);
+    } else if (!selectedAddress && prev && query === prev) {
+      setQuery('');
+    }
+  }, [selectedAddress, query]);
+
+  useEffect(() => {
+    if (!pendingSearchQuery) return;
+
+    const reqSeq = locationSeqRef.current + 1;
+    locationSeqRef.current = reqSeq;
+
+    const timer = window.setTimeout(() => {
+      searchAbortRef.current?.abort();
+      const controller = new AbortController();
+      searchAbortRef.current = controller;
+
+      setSearching(true);
+      setIsOpen(true);
+      setLookupError(null);
+
+      void searchDeliveryAddresses(pendingSearchQuery, controller.signal)
+        .then((results) => {
+          if (!isMountedRef.current || locationSeqRef.current !== reqSeq) return;
+          setSuggestions(results);
+          setHasSearched(true);
+          setActiveIndex(results.length > 0 ? 0 : -1);
+          setIsOpen(true);
+        })
+        .catch((error: unknown) => {
+          if (error instanceof ApiError && error.kind === 'cancelled') return;
+          if (!isMountedRef.current || locationSeqRef.current !== reqSeq) return;
+          setSuggestions([]);
+          setHasSearched(false);
+          setIsOpen(false);
+          setActiveIndex(-1);
+          setLookupError(
+            getApiErrorMessage(
+              error,
+              'Address search is temporarily unavailable. Try again or use your device location.',
+            ),
+          );
+        })
+        .finally(() => {
+          if (searchAbortRef.current === controller) {
+            searchAbortRef.current = null;
+          }
+          if (isMountedRef.current && locationSeqRef.current === reqSeq) {
+            setSearching(false);
+          }
+        });
+    }, SEARCH_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+      searchAbortRef.current?.abort();
+    };
+  }, [pendingSearchQuery]);
 
   async function resolveReverseAddress(nextPin: GeoCoordinates, reqSeq: number) {
     reverseAbortRef.current?.abort();
@@ -120,29 +132,24 @@ export function DeliveryLocationPicker({
     reverseAbortRef.current = controller;
 
     try {
-      const url =
-        `https://nominatim.openstreetmap.org/reverse?format=jsonv2` +
-        `&lat=${encodeURIComponent(String(nextPin.lat))}` +
-        `&lon=${encodeURIComponent(String(nextPin.lng))}` +
-        `&zoom=18&addressdetails=1`;
-      const response = await fetch(url, {
-        signal: controller.signal,
-        credentials: 'omit',
-        referrerPolicy: 'no-referrer',
-        headers: { Accept: 'application/json' },
-      });
-      if (!response.ok) return;
-
-      const rawPayload = (await response.json()) as unknown;
-      const label = parseNominatimReverseLabel(rawPayload);
-      if (label && isMountedRef.current && locationSeqRef.current === reqSeq) {
-        onPinChange(nextPin, label);
+      const label = await reverseGeocodeDeliveryPin(nextPin, controller.signal);
+      if (!isMountedRef.current || locationSeqRef.current !== reqSeq) return;
+      if (label) {
+        setQuery(label);
+        onSelectLocation(nextPin, label);
         setStatusMessage(
           'Using your device location. Add unit, floor, or gate notes below if needed.',
         );
+      } else {
+        setStatusMessage(
+          'Using your device location. Enter your street, building, and rider notes below.',
+        );
       }
     } catch {
-      // Silently preserve the GPS coordinates so the customer can still edit/type manually.
+      if (!isMountedRef.current || locationSeqRef.current !== reqSeq) return;
+      setStatusMessage(
+        'Using your device location. Enter your street, building, and rider notes below.',
+      );
     } finally {
       if (reverseAbortRef.current === controller) {
         reverseAbortRef.current = null;
@@ -150,30 +157,116 @@ export function DeliveryLocationPicker({
     }
   }
 
-  function handleZoneSelectChange(nextZoneId: string) {
+  function handleSelectSuggestion(suggestion: LocationSuggestion) {
     locationSeqRef.current += 1;
+    searchAbortRef.current?.abort();
+    searchAbortRef.current = null;
     reverseAbortRef.current?.abort();
     reverseAbortRef.current = null;
+
+    const fullLabel = suggestion.secondaryLabel
+      ? `${suggestion.label}, ${suggestion.secondaryLabel}`
+      : suggestion.label;
+
+    setPendingSearchQuery(null);
+    setSearching(false);
     setLocating(false);
-    setErrorMessage(null);
-    setStatusMessage(null);
-    onZoneChange(nextZoneId);
+    setIsOpen(false);
+    setHasSearched(false);
+    setSuggestions([]);
+    setActiveIndex(-1);
+    setLookupError(null);
+    setQuery(fullLabel);
+    setStatusMessage('Address selected. Add your building, unit, or rider notes below if needed.');
+    onSelectLocation(suggestion.coordinates, fullLabel);
   }
 
-  function handleClearPinClick() {
+  function handleInputChange(nextValue: string) {
+    setQuery(nextValue);
+    setLookupError(null);
+    setStatusMessage(null);
+    setActiveIndex(-1);
+
+    if (pin) {
+      onClearLocation();
+    }
+
+    const trimmed = nextValue.trim();
+    if (trimmed.length < 2) {
+      locationSeqRef.current += 1;
+      searchAbortRef.current?.abort();
+      searchAbortRef.current = null;
+      setPendingSearchQuery(null);
+      setSearching(false);
+      setSuggestions([]);
+      setHasSearched(false);
+      setIsOpen(false);
+      return;
+    }
+
+    setPendingSearchQuery(trimmed);
+  }
+
+  function handleChangeLocationClick() {
     locationSeqRef.current += 1;
+    searchAbortRef.current?.abort();
+    searchAbortRef.current = null;
     reverseAbortRef.current?.abort();
     reverseAbortRef.current = null;
+
+    setPendingSearchQuery(null);
+    setSearching(false);
     setLocating(false);
-    setErrorMessage(null);
+    setSuggestions([]);
+    setIsOpen(false);
+    setHasSearched(false);
+    setActiveIndex(-1);
+    setLookupError(null);
     setStatusMessage(null);
-    onClearPin();
+    setQuery('');
+    onClearLocation();
+    resolvedInputRef.current?.focus();
+  }
+
+  function handleInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'ArrowDown') {
+      if (suggestions.length > 0) {
+        event.preventDefault();
+        setIsOpen(true);
+        setActiveIndex((prev) => (prev + 1) % suggestions.length);
+      }
+      return;
+    }
+
+    if (event.key === 'ArrowUp') {
+      if (suggestions.length > 0) {
+        event.preventDefault();
+        setIsOpen(true);
+        setActiveIndex((prev) => (prev <= 0 ? suggestions.length - 1 : prev - 1));
+      }
+      return;
+    }
+
+    if (event.key === 'Enter' && isOpen && activeIndex >= 0) {
+      const activeSuggestion = suggestions[activeIndex];
+      if (activeSuggestion) {
+        event.preventDefault();
+        handleSelectSuggestion(activeSuggestion);
+      }
+      return;
+    }
+
+    if (event.key === 'Escape' && isOpen) {
+      event.preventDefault();
+      setIsOpen(false);
+      setActiveIndex(-1);
+    }
   }
 
   function handleUseMyLocation() {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      setErrorMessage(
-        'Location services are unavailable in this browser. Choose your delivery area and enter your address below.',
+      setLookupError(
+        'Location services are unavailable in this browser. Search your street or landmark above.',
       );
       setStatusMessage(null);
       return;
@@ -181,11 +274,18 @@ export function DeliveryLocationPicker({
 
     locationSeqRef.current += 1;
     const reqSeq = locationSeqRef.current;
+    searchAbortRef.current?.abort();
+    searchAbortRef.current = null;
     reverseAbortRef.current?.abort();
     reverseAbortRef.current = null;
 
+    setPendingSearchQuery(null);
+    setSearching(false);
+    setIsOpen(false);
+    setSuggestions([]);
+    setActiveIndex(-1);
     setLocating(true);
-    setErrorMessage(null);
+    setLookupError(null);
     setStatusMessage(null);
 
     navigator.geolocation.getCurrentPosition(
@@ -197,31 +297,40 @@ export function DeliveryLocationPicker({
           lng: Number(position.coords.longitude.toFixed(5)),
         };
         if (!isValidCoordinates(nextPin)) {
-          setErrorMessage('Could not read a valid GPS location. Choose your delivery area below.');
+          setLookupError(
+            'Could not read a valid GPS location. Search your street or landmark instead.',
+          );
           return;
         }
-        onPinChange(nextPin);
-        setStatusMessage(
-          'Using your device location. Review or complete your delivery address below.',
-        );
+        onSelectLocation(nextPin, null);
+        setStatusMessage('Using your device location. Looking up street address…');
         void resolveReverseAddress(nextPin, reqSeq);
       },
       () => {
         if (!isMountedRef.current || locationSeqRef.current !== reqSeq) return;
         setLocating(false);
-        setErrorMessage(
-          'Could not access your device location. Choose your delivery area and enter your address below.',
+        setLookupError(
+          'Could not access your device location. Search your street or landmark above.',
         );
       },
       { enableHighAccuracy: true, timeout: 8000 },
     );
   }
 
+  const activeOptionId =
+    isOpen && activeIndex >= 0 && suggestions[activeIndex]
+      ? `${optionIdPrefix}-${activeIndex}`
+      : undefined;
+
+  const describedByIds = [!pin ? hintId : null, errorText && errorId ? errorId : null].filter(
+    Boolean,
+  );
+
   return (
     <div className="space-y-2.5">
       <div className="flex items-center justify-between gap-2">
-        <label htmlFor={zoneSelectId} className="text-xs font-semibold text-ui-text">
-          Delivery Area
+        <label htmlFor={searchInputId} className="text-xs font-semibold text-ui-text">
+          Delivery Address
         </label>
         <button
           type="button"
@@ -235,44 +344,117 @@ export function DeliveryLocationPicker({
         </button>
       </div>
 
-      <select
-        id={zoneSelectId}
-        name="deliveryZoneId"
-        value={activeZone?.id ?? ''}
-        onChange={(event) => handleZoneSelectChange(event.target.value)}
-        className="w-full rounded-xl border border-ui-border bg-ui-canvas px-3 py-2 text-xs font-medium text-ui-text"
-      >
-        {zones.map((zone) => (
-          <option key={zone.id} value={zone.id}>
-            {zone.name} — {zone.feePhp > 0 ? formatPhp(zone.feePhp) : 'Free'} ({zone.etaMinutes})
-          </option>
-        ))}
-      </select>
+      <div className="relative">
+        <input
+          ref={resolvedInputRef}
+          id={searchInputId}
+          name="deliveryAddressSearch"
+          type="text"
+          role="combobox"
+          autoComplete="street-address"
+          aria-autocomplete="list"
+          aria-expanded={isOpen}
+          aria-controls={listboxId}
+          aria-activedescendant={activeOptionId}
+          aria-invalid={Boolean(errorText)}
+          aria-describedby={describedByIds.length > 0 ? describedByIds.join(' ') : undefined}
+          maxLength={250}
+          value={query}
+          onChange={(event) => handleInputChange(event.target.value)}
+          onKeyDown={handleInputKeyDown}
+          onFocus={() => {
+            if (!pin && (searching || hasSearched || suggestions.length > 0)) {
+              setIsOpen(true);
+            }
+          }}
+          onBlur={() => {
+            setIsOpen(false);
+            setActiveIndex(-1);
+          }}
+          placeholder="Search street, building, or landmark in Metro Manila"
+          className={`w-full rounded-xl border bg-ui-canvas px-3 py-2 text-xs font-medium text-ui-text ${
+            errorText ? 'border-ui-error' : 'border-ui-border'
+          }`}
+        />
 
-      {activeZone && !outOfRange ? (
-        <p className="text-[11px] text-ui-text-muted">Covers: {activeZone.areas}</p>
-      ) : null}
+        {isOpen ? (
+          <div
+            id={listboxId}
+            role="listbox"
+            aria-label="Address suggestions"
+            className="absolute right-0 left-0 z-20 mt-1 max-h-56 overflow-y-auto rounded-xl border border-ui-border bg-ui-surface p-1 shadow-lg"
+          >
+            {searching ? (
+              <p className="px-3 py-2 text-xs text-ui-text-muted">
+                Searching Metro Manila addresses…
+              </p>
+            ) : suggestions.length > 0 ? (
+              suggestions.map((suggestion, index) => {
+                const isActive = index === activeIndex;
+                return (
+                  <button
+                    key={suggestion.id}
+                    id={`${optionIdPrefix}-${index}`}
+                    type="button"
+                    role="option"
+                    aria-selected={isActive}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    onClick={() => handleSelectSuggestion(suggestion)}
+                    className={`flex w-full flex-col rounded-lg px-3 py-2 text-left text-xs transition-colors ${
+                      isActive
+                        ? 'bg-ui-surface-muted text-ui-text'
+                        : 'text-ui-text hover:bg-ui-surface-muted'
+                    }`}
+                  >
+                    <span className="font-semibold">{suggestion.label}</span>
+                    {suggestion.secondaryLabel ? (
+                      <span className="text-[11px] text-ui-text-muted">
+                        {suggestion.secondaryLabel}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })
+            ) : hasSearched ? (
+              <p className="px-3 py-2 text-xs text-ui-text-muted">
+                No matching addresses found. Try a nearby street or landmark, or use your device
+                location.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
 
-      {pin && !outOfRange ? (
+      {!pin ? (
+        <p id={hintId} className="text-[11px] text-ui-text-muted">
+          Search your street or nearest landmark, then add your building or unit below.
+        </p>
+      ) : !outOfRange ? (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-ui-border bg-ui-surface px-3 py-1.5 text-[11px] text-ui-text-muted">
-          <span className="tabular-nums">
-            Using your device location
+          <span className="min-w-0 truncate tabular-nums">
+            <span className="font-semibold text-ui-text">
+              {selectedAddress ?? 'Device location'}
+            </span>
             {distanceKm !== null ? ` (~${distanceKm.toFixed(1)} km from Chino Roces)` : ''}
           </span>
           <button
             type="button"
-            onClick={handleClearPinClick}
-            className="font-semibold text-ui-accent underline hover:opacity-80"
+            onClick={handleChangeLocationClick}
+            className="shrink-0 font-semibold text-ui-accent underline hover:opacity-80"
           >
-            Clear location
+            Change
           </button>
         </div>
       ) : null}
 
-      <div role="alert" aria-atomic="true">
-        {errorMessage ? (
-          <p className="text-xs font-semibold text-ui-error">{errorMessage}</p>
+      <div role="alert" aria-atomic="true" className="space-y-1">
+        {errorText ? (
+          <p id={errorId} className="text-xs font-semibold text-ui-error">
+            {errorText}
+          </p>
         ) : null}
+        {lookupError ? <p className="text-xs font-semibold text-ui-error">{lookupError}</p> : null}
       </div>
 
       <div role="status" aria-live="polite" aria-atomic="true">

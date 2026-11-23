@@ -71,7 +71,6 @@ export const placeOrderRequestSchema = z
     customerName: z.string().trim().min(1, 'Customer name is required.').max(120),
     contactNumber: z.string().trim().max(40).default(''),
     fulfillment: fulfillmentModeSchema,
-    deliveryZoneId: z.string().trim().min(1).max(120).optional(),
     deliveryPin: geoCoordinatesSchema.optional(),
     addressOrNotes: z.string().trim().max(500).default(''),
     paymentMethod: paymentMethodSchema,
@@ -83,6 +82,13 @@ export const placeOrderRequestSchema = z
   })
   .superRefine((value, ctx) => {
     if (value.fulfillment === 'delivery') {
+      if (!value.deliveryPin) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['deliveryPin'],
+          message: 'Select a delivery address from the suggestions or use your device location.',
+        });
+      }
       if (!value.contactNumber.trim()) {
         ctx.addIssue({
           code: 'custom',
@@ -134,7 +140,6 @@ export type OrderCustomerInput = {
   customerName: string;
   contactNumber: string;
   fulfillment: FulfillmentMode;
-  deliveryZoneId?: string;
   deliveryPin?: z.infer<typeof geoCoordinatesSchema>;
   addressOrNotes: string;
   paymentMethod: PaymentMethod;
@@ -146,8 +151,6 @@ export const orderRecordSchema = z.object({
   customerName: z.string(),
   contactNumber: z.string(),
   fulfillment: fulfillmentModeSchema,
-  deliveryZoneId: z.string().optional(),
-  deliveryZoneName: z.string().optional(),
   deliveryEtaMinutes: z.string().optional(),
   deliveryPin: geoCoordinatesSchema.optional(),
   deliveryDistanceKm: z.number().nonnegative().optional(),
@@ -199,7 +202,6 @@ export type PublicOrderLineSummary = z.infer<typeof publicOrderLineSummarySchema
 export const publicOrderTrackerSchema = z.object({
   queueNumber: z.string().trim().min(1).max(20),
   fulfillment: fulfillmentModeSchema,
-  deliveryZoneName: z.string().trim().min(1).max(120).optional(),
   deliveryEtaMinutes: z.string().trim().min(1).max(40).optional(),
   lines: z.array(publicOrderLineSummarySchema).min(1).max(50),
   status: orderStatusSchema,
