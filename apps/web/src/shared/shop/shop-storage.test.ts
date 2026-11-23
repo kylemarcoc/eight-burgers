@@ -1,4 +1,4 @@
-import { DEFAULT_MENU_ITEMS } from '@eight-burgers/contracts';
+import { DEFAULT_MENU_ITEMS } from '@menu-kiosk/contracts';
 import { describe, expect, it } from 'vitest';
 import {
   buildCartLineId,
@@ -23,7 +23,8 @@ describe('shop storage helpers and cart calculations', () => {
           lineId: lineIdA,
           itemId: 'burger-deluxe',
           quantity: 2,
-          addonIds: ['bacon', 'sliced-cheese'],
+          selectedOptionIds: ['bacon', 'sliced-cheese'],
+          itemNote: 'Less sauce',
         },
       ],
       DEFAULT_MENU_ITEMS,
@@ -31,6 +32,7 @@ describe('shop storage helpers and cart calculations', () => {
 
     expect(summary.totalItems).toBe(2);
     expect(summary.subtotalPhp).toBe(376);
+    expect(summary.lines[0]?.itemNote).toBe('Less sauce');
     expect(formatPhp(summary.subtotalPhp)).toBe('₱376');
   });
 
@@ -93,19 +95,24 @@ describe('shop storage helpers and cart calculations', () => {
       customerName: 'Marco',
       contactNumber: '09171234567',
       fulfillment: 'delivery',
+      tableNumber: '',
       deliveryEtaMinutes: '30–40 min',
       deliveryPin: { lat: 14.5869, lng: 121.0614 },
       deliveryDistanceKm: 7.8,
       deliveryFeeWaived: true,
       addressOrNotes: 'Ortigas Center, Pasig',
       paymentMethod: 'gcash',
+      paymentStatus: 'pending_verification',
+      paymentReference: 'GC-778899',
       lines: [
         {
           lineId: 'overload-burger',
           itemId: 'overload-burger',
           name: 'Overload Burger',
           unitPricePhp: 298,
+          selectedOptions: [],
           addonNames: [],
+          itemNote: 'Extra napkins',
           addonsPricePhp: 0,
           quantity: 2,
           lineTotalPhp: 596,
@@ -117,6 +124,8 @@ describe('shop storage helpers and cart calculations', () => {
       status: 'received',
       createdAtIso: '2026-11-21T10:05:00.000Z',
     });
+
+    expect(text).toContain('Note: Extra napkins');
 
     expect(text).toContain('Fulfillment: Delivery (~7.8 km · 30–40 min)');
     expect(text).toContain('Map Pin: https://maps.google.com/?q=14.58690,121.06140');

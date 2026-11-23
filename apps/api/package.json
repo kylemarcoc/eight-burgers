@@ -1,5 +1,5 @@
 {
-  "name": "@eight-burgers/api",
+  "name": "@menu-kiosk/api",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -11,7 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@eight-burgers/contracts": "*",
+    "@menu-kiosk/contracts": "*",
     "@hono/node-server": "^1.14.0",
     "@supabase/supabase-js": "^2.49.0",
     "hono": "^4.7.0",

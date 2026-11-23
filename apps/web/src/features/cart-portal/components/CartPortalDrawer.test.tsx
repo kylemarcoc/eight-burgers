@@ -1,7 +1,9 @@
-import { DEFAULT_DELIVERY_PRICING, DEFAULT_MENU_ITEMS } from '@eight-burgers/contracts';
+import { DEFAULT_DELIVERY_PRICING, DEFAULT_MENU_ITEMS } from '@menu-kiosk/contracts';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  DINE_IN_TABLE_STORAGE_KEY,
+  RECEIPT_SESSION_STORAGE_KEY,
   resetCartStore,
   useCartActions,
   useCartOpen,
@@ -35,6 +37,7 @@ const ORIGINAL_GEOLOCATION_DESCRIPTOR = Object.getOwnPropertyDescriptor(navigato
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  window.sessionStorage.clear();
   resetCartStore();
   document.body.style.overflow = '';
   if (ORIGINAL_GEOLOCATION_DESCRIPTOR) {
@@ -134,7 +137,7 @@ describe('CartPortalDrawer', () => {
     const locationInput = await within(dialog).findByRole('combobox', {
       name: /delivery address/i,
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: /buy order/i }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /place order/i }));
 
     expect(nameInput.getAttribute('aria-invalid')).toBe('true');
     const nameErrorId = nameInput.getAttribute('aria-describedby');
@@ -149,10 +152,10 @@ describe('CartPortalDrawer', () => {
 
     fireEvent.change(nameInput, { target: { value: 'Marco' } });
     fireEvent.change(contactInput, { target: { value: '09171234567' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: /buy order/i }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /place order/i }));
     expect(document.activeElement).toBe(locationInput);
 
-    fireEvent.click(within(dialog).getByRole('radio', { name: /kiosk pickup/i }));
+    fireEvent.click(within(dialog).getByRole('radio', { name: /pickup/i }));
     expect(within(dialog).queryByText(/select a delivery address/i)).toBeNull();
     expect((nameInput as HTMLInputElement).value).toBe('Marco');
   });
@@ -211,7 +214,7 @@ describe('CartPortalDrawer', () => {
     fireEvent.change(within(dialog).getByLabelText(/payment method/i), {
       target: { value: 'gcash' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: /buy order · ₱183/i }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /place order · ₱183/i }));
 
     expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
     expect(within(dialog).getByText('#8B-101')).toBeTruthy();
@@ -219,7 +222,8 @@ describe('CartPortalDrawer', () => {
       within(dialog).getByText(/unit 402 — chino roces avenue, san antonio, makati/i),
     ).toBeTruthy();
     expect(within(dialog).queryByText(/^zone:/i)).toBeNull();
-    expect(within(dialog).getByText(/confirm gcash payment details/i)).toBeTruthy();
+    expect(within(dialog).getByText(/^gcash payment details$/i)).toBeTruthy();
+    expect(within(dialog).getByLabelText(/submit payment reference/i)).toBeTruthy();
     const mapLink = within(dialog).getByRole('link', { name: /open in google maps/i });
     expect(mapLink.getAttribute('href')).toContain('https://maps.google.com/?q=14.56080,121.01240');
 
@@ -275,7 +279,7 @@ describe('CartPortalDrawer', () => {
     await waitFor(() => {
       expect(within(dialog).getByText('Device location')).toBeTruthy();
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: /buy order · ₱352/i }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /place order · ₱352/i }));
     expect(document.activeElement).toBe(
       within(dialog).getByLabelText(/street, building & rider notes/i),
     );
@@ -285,10 +289,10 @@ describe('CartPortalDrawer', () => {
     const locationInput = within(dialog).getByRole('combobox', { name: /delivery address/i });
     fireEvent.change(locationInput, { target: { value: 'Bonifacio' } });
     fireEvent.click(await within(dialog).findByRole('option', { name: /bonifacio high street/i }));
-    expect(within(dialog).getByRole('button', { name: /buy order · ₱388/i })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: /place order · ₱388/i })).toBeTruthy();
     expect(within(dialog).getByText(/estimated delivery · 25–35 min/i)).toBeTruthy();
     expect(
-      within(dialog).getByText(/~5\.5 km from chino roces · ₱35 base \+ ₱10\/km/i),
+      within(dialog).getByText(/~5\.5 km from chino roces avenue, makati · ₱35 base \+ ₱10\/km/i),
     ).toBeTruthy();
 
     // Search out-of-range Tagaytay and recover via "Search another address"
@@ -296,7 +300,7 @@ describe('CartPortalDrawer', () => {
     fireEvent.click(await within(dialog).findByRole('option', { name: /tagaytay rotonda/i }));
     expect(await within(dialog).findByText('Outside delivery area')).toBeTruthy();
     expect(
-      (within(dialog).getByRole('button', { name: /buy order/i }) as HTMLButtonElement).disabled,
+      (within(dialog).getByRole('button', { name: /place order/i }) as HTMLButtonElement).disabled,
     ).toBe(true);
 
     fireEvent.click(within(dialog).getByRole('button', { name: /search another address/i }));
@@ -306,17 +310,17 @@ describe('CartPortalDrawer', () => {
     // Search Filinvest Alabang (21.2 km -> ₱247 fee -> ₱545 total) then unlock free delivery above ₱500
     fireEvent.change(locationInput, { target: { value: 'Alabang' } });
     fireEvent.click(await within(dialog).findByRole('option', { name: /filinvest city alabang/i }));
-    expect(within(dialog).getByRole('button', { name: /buy order · ₱545/i })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: /place order · ₱545/i })).toBeTruthy();
 
     fireEvent.click(
       within(dialog).getByRole('button', { name: /increase quantity of overload burger/i }),
     );
     expect(within(dialog).getByText(/free delivery unlocked/i)).toBeTruthy();
     expect(within(dialog).getByText('₱247')).toBeTruthy();
-    expect(within(dialog).getByRole('button', { name: /buy order · ₱596/i })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: /place order · ₱596/i })).toBeTruthy();
 
     // Submit using selectedAddress without requiring duplicate manual address entry
-    fireEvent.click(within(dialog).getByRole('button', { name: /buy order · ₱596/i }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /place order · ₱596/i }));
 
     expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
     expect(within(dialog).getByText(/filinvest city alabang, alabang, muntinlupa/i)).toBeTruthy();
@@ -324,7 +328,7 @@ describe('CartPortalDrawer', () => {
     expect(within(dialog).getByText('Free (min. met)')).toBeTruthy();
   });
 
-  it('disables delivery option when delivery is paused even above free-delivery subtotal and allows pickup checkout', async () => {
+  it('hides disabled fulfillment modes when delivery is disabled and allows pickup checkout', async () => {
     installMockShopApi({
       initialDeliveryPricing: {
         ...DEFAULT_DELIVERY_PRICING,
@@ -343,17 +347,11 @@ describe('CartPortalDrawer', () => {
 
     const dialog = screen.getByRole('dialog', { name: /your order cart/i });
     await within(dialog).findByText('Overload Burger');
-    const deliveryRadio = within(dialog).getByRole('radio', { name: /delivery/i });
-    expect((deliveryRadio as HTMLInputElement).disabled).toBe(true);
-    const deliveryOptionLabel = deliveryRadio.closest('label');
-    expect(deliveryOptionLabel).toBeTruthy();
-    if (deliveryOptionLabel) {
-      expect(within(deliveryOptionLabel).getByText('Paused')).toBeTruthy();
-      expect(within(deliveryOptionLabel).queryByText('Free')).toBeNull();
-    }
+    expect(within(dialog).queryByRole('radio', { name: /delivery/i })).toBeNull();
+    expect(within(dialog).getByRole('radio', { name: /pickup/i })).toBeTruthy();
 
     fireEvent.change(within(dialog).getByLabelText(/your name/i), { target: { value: 'Marco' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: /buy order · ₱596/i }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /place order · ₱596/i }));
     expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
     expect(within(dialog).getByText('Chino Roces Pickup')).toBeTruthy();
   });
@@ -364,8 +362,20 @@ describe('CartPortalDrawer', () => {
     });
     useCartStore.setState({
       cart: [
-        { lineId: 'chicano-burger', itemId: 'chicano-burger', quantity: 1, addonIds: [] },
-        { lineId: 'burger-deluxe', itemId: 'burger-deluxe', quantity: 1, addonIds: [] },
+        {
+          lineId: 'chicano-burger',
+          itemId: 'chicano-burger',
+          quantity: 1,
+          selectedOptionIds: [],
+          itemNote: '',
+        },
+        {
+          lineId: 'burger-deluxe',
+          itemId: 'burger-deluxe',
+          quantity: 1,
+          selectedOptionIds: [],
+          itemNote: '',
+        },
       ],
       isCartOpen: true,
     });
@@ -385,7 +395,7 @@ describe('CartPortalDrawer', () => {
     ).toBeTruthy();
     expect(useCartStore.getState().cart.map((line) => line.itemId)).toEqual(['burger-deluxe']);
     expect(
-      (within(dialog).getByRole('button', { name: /buy order/i }) as HTMLButtonElement).disabled,
+      (within(dialog).getByRole('button', { name: /place order/i }) as HTMLButtonElement).disabled,
     ).toBe(false);
   });
 
@@ -397,7 +407,15 @@ describe('CartPortalDrawer', () => {
       }),
     );
     useCartStore.setState({
-      cart: [{ lineId: 'burger-deluxe', itemId: 'burger-deluxe', quantity: 2, addonIds: [] }],
+      cart: [
+        {
+          lineId: 'burger-deluxe',
+          itemId: 'burger-deluxe',
+          quantity: 2,
+          selectedOptionIds: [],
+          itemNote: '',
+        },
+      ],
       isCartOpen: true,
     });
 
@@ -418,7 +436,15 @@ describe('CartPortalDrawer', () => {
   it('disables the quantity increase button at the 50-item cap', async () => {
     installMockShopApi();
     useCartStore.setState({
-      cart: [{ lineId: 'burger-deluxe', itemId: 'burger-deluxe', quantity: 50, addonIds: [] }],
+      cart: [
+        {
+          lineId: 'burger-deluxe',
+          itemId: 'burger-deluxe',
+          quantity: 50,
+          selectedOptionIds: [],
+          itemNote: '',
+        },
+      ],
       isCartOpen: true,
     });
 
@@ -453,7 +479,7 @@ describe('CartPortalDrawer', () => {
     fireEvent.change(within(dialog).getByLabelText(/your name/i), {
       target: { value: 'Marco' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: /buy order · ₱148/i }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /place order · ₱148/i }));
 
     expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
     const progressList = within(dialog).getByRole('list', { name: /live kitchen progress/i });
@@ -480,16 +506,21 @@ describe('CartPortalDrawer', () => {
           customerName: 'Carla',
           contactNumber: '09171234567',
           fulfillment: 'delivery',
+          tableNumber: '',
           deliveryEtaMinutes: '20–30 min',
           addressOrNotes: 'Ayala Ave',
           paymentMethod: 'gcash',
+          paymentStatus: 'unpaid',
+          paymentReference: '',
           lines: [
             {
               lineId: 'burger-deluxe',
               itemId: 'burger-deluxe',
               name: 'Burger Deluxe',
               unitPricePhp: 148,
+              selectedOptions: [],
               addonNames: [],
+              itemNote: 'Secret private note',
               addonsPricePhp: 0,
               quantity: 1,
               lineTotalPhp: 148,
@@ -525,6 +556,7 @@ describe('CartPortalDrawer', () => {
     expect(within(dialog).queryByText(/^zone:/i)).toBeNull();
     expect(within(dialog).queryByText('Carla')).toBeNull();
     expect(within(dialog).queryByText('Ayala Ave')).toBeNull();
+    expect(within(dialog).queryByText(/secret private note/i)).toBeNull();
 
     fireEvent.click(within(dialog).getByRole('button', { name: /^cancel order$/i }));
     const verifyInput = within(dialog).getByLabelText(/confirm mobile number on order/i);
@@ -593,14 +625,14 @@ describe('CartPortalDrawer', () => {
     const locationInput = within(dialog).getByRole('combobox', { name: /delivery address/i });
     fireEvent.change(locationInput, { target: { value: 'Alabang' } });
     fireEvent.click(await within(dialog).findByRole('option', { name: /filinvest city alabang/i }));
-    expect(within(dialog).getByRole('button', { name: /buy order · ₱545/i })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: /place order · ₱545/i })).toBeTruthy();
 
     // Editing the input clears the locked pin immediately so stale coordinates cannot be billed
     fireEvent.change(locationInput, { target: { value: 'Alabang Town' } });
     expect(within(dialog).getByText('Enter address')).toBeTruthy();
-    expect(within(dialog).getByRole('button', { name: /buy order · ₱298/i })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: /place order · ₱298/i })).toBeTruthy();
 
-    fireEvent.click(within(dialog).getByRole('button', { name: /buy order · ₱298/i }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /place order · ₱298/i }));
     expect(
       within(dialog).getByText(
         /select a delivery address from the suggestions or use your device location/i,
@@ -642,7 +674,7 @@ describe('CartPortalDrawer', () => {
       target: { value: longNotes },
     });
 
-    fireEvent.click(within(dialog).getByRole('button', { name: /buy order · ₱200/i }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /place order · ₱200/i }));
     expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
 
     const orderPost = spy.mock.calls.find(
@@ -699,24 +731,25 @@ describe('CartPortalDrawer', () => {
     fireEvent.change(locationInput, { target: { value: 'Ayala' } });
     fireEvent.click(await within(dialog).findByRole('option', { name: /ayala triangle gardens/i }));
     const buyDeliveryBtn = within(dialog).getByRole('button', {
-      name: /buy order · ₱200/i,
+      name: /place order · ₱200/i,
     }) as HTMLButtonElement;
     expect(buyDeliveryBtn.disabled).toBe(false);
 
     // Owner pauses delivery while customer already has Delivery selected
     state.deliveryPricing.deliveryEnabled = false;
+    state.store.deliveryEnabled = false;
     state.deliveryPricing.version = (state.deliveryPricing.version ?? 1) + 1;
 
     fireEvent.click(buyDeliveryBtn);
 
     expect(
       await within(dialog).findByText(
-        /delivery is currently paused\. switch to chino roces pickup to continue\./i,
+        /delivery is currently paused\. switch to pickup to continue\./i,
       ),
     ).toBeTruthy();
     expect(
       await within(dialog).findByText(
-        /delivery is temporarily paused\. switch to kiosk pickup to place your order\./i,
+        /delivery is temporarily paused\. switch to chino roces pickup to place your order\./i,
       ),
     ).toBeTruthy();
 
@@ -726,7 +759,7 @@ describe('CartPortalDrawer', () => {
     expect(within(dialog).getAllByText('Paused')).toHaveLength(2);
     expect(within(dialog).queryByText('Enter address')).toBeNull();
     expect(
-      (within(dialog).getByRole('button', { name: /buy order/i }) as HTMLButtonElement).disabled,
+      (within(dialog).getByRole('button', { name: /place order/i }) as HTMLButtonElement).disabled,
     ).toBe(true);
     expect(nameInput.value).toBe('Marco');
     expect(mobileInput.value).toBe('09171234567');
@@ -734,13 +767,256 @@ describe('CartPortalDrawer', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /switch to chino roces pickup/i }));
 
     expect(
-      (within(dialog).getByRole('radio', { name: /kiosk pickup/i }) as HTMLInputElement).checked,
+      (within(dialog).getByRole('radio', { name: /pickup/i }) as HTMLInputElement).checked,
     ).toBe(true);
     expect(within(dialog).queryByText(/delivery is currently paused\./i)).toBeNull();
 
-    fireEvent.click(within(dialog).getByRole('button', { name: /buy order · ₱148/i }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /place order · ₱148/i }));
     expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
     expect(within(dialog).getByText('#8B-101')).toBeTruthy();
     expect(within(dialog).getByText('Chino Roces Pickup')).toBeTruthy();
+  });
+
+  it('keeps bag editing active while store is paused and disables only Place Order', async () => {
+    installMockShopApi({
+      initialStore: {
+        acceptingOrders: false,
+        closedNotice: 'Kitchen is catching up — reopening at 6 PM.',
+      },
+    });
+
+    render(
+      <TestQueryWrapper>
+        <CartDrawerTestHarness />
+      </TestQueryWrapper>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
+
+    const dialog = screen.getByRole('dialog', { name: /your order cart/i });
+    await within(dialog).findByText('Burger Deluxe');
+    expect(within(dialog).getByText('Ordering is currently paused')).toBeTruthy();
+    expect(within(dialog).getByText('Kitchen is catching up — reopening at 6 PM.')).toBeTruthy();
+
+    // Quantity increase remains active while paused
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: /increase quantity of burger deluxe/i }),
+    );
+    const placeOrderBtn = within(dialog).getByRole('button', {
+      name: /place order · ₱296/i,
+    }) as HTMLButtonElement;
+    expect(placeOrderBtn.disabled).toBe(true);
+  });
+
+  it('keeps cart lines with sold-out options visible with inline Edit options repair and blocks checkout until resolved', async () => {
+    installMockShopApi({
+      initialOptionGroups: [
+        {
+          id: 'add-ons',
+          name: 'Add-ons',
+          description: '',
+          selectionMode: 'multi',
+          required: false,
+          minSelect: 0,
+          maxSelect: null,
+          sortOrder: 1,
+          active: true,
+          choices: [
+            {
+              id: 'bacon',
+              groupId: 'add-ons',
+              name: 'Crispy Bacon',
+              priceDeltaPhp: 20,
+              available: false,
+              isDefault: false,
+              sortOrder: 1,
+            },
+            {
+              id: 'sliced-cheese',
+              groupId: 'add-ons',
+              name: 'Sliced Cheese',
+              priceDeltaPhp: 20,
+              available: true,
+              isDefault: false,
+              sortOrder: 2,
+            },
+          ],
+        },
+      ],
+    });
+
+    useCartStore.setState({
+      cart: [
+        {
+          lineId: 'burger-deluxe__bacon',
+          itemId: 'burger-deluxe',
+          quantity: 1,
+          selectedOptionIds: ['bacon'],
+          itemNote: 'Well done',
+        },
+      ],
+      isCartOpen: true,
+    });
+
+    render(
+      <TestQueryWrapper>
+        <CartPortalDrawer />
+      </TestQueryWrapper>,
+    );
+
+    const dialog = screen.getByRole('dialog', { name: /your order cart/i });
+    expect(await within(dialog).findByText('Options need attention')).toBeTruthy();
+    expect(within(dialog).getByText(/"crispy bacon" is currently sold out\./i)).toBeTruthy();
+    expect(within(dialog).getByText('Note: Well done')).toBeTruthy();
+    expect(
+      (within(dialog).getByRole('button', { name: /place order/i }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    // Open inline Edit options repair modal prefilled
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: /edit options for burger deluxe/i }),
+    );
+    const customizer = screen.getByRole('dialog', { name: 'Burger Deluxe' });
+    fireEvent.click(within(customizer).getByRole('button', { name: /clear unavailable/i }));
+    fireEvent.click(within(customizer).getByLabelText(/sliced cheese/i));
+    fireEvent.click(within(customizer).getByRole('button', { name: /update item · ₱168/i }));
+
+    expect(screen.queryByRole('dialog', { name: 'Burger Deluxe' })).toBeNull();
+    expect(within(dialog).queryByText('Options need attention')).toBeNull();
+    expect(within(dialog).getByText('+Sliced Cheese')).toBeTruthy();
+    expect(within(dialog).getByText('Note: Well done')).toBeTruthy();
+    expect(
+      (within(dialog).getByRole('button', { name: /place order · ₱168/i }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+
+  it('persists dine-in table QR deep-link and opaque receipt session across reload, submits/updates payment ref, and blocks self-cancel once pending review', async () => {
+    const { state } = installMockShopApi({
+      initialStore: {
+        dineInEnabled: true,
+        dineInTableRequired: true,
+        paymentMethods: {
+          cash: {
+            enabled: true,
+            label: 'Cash',
+            accountName: '',
+            accountNumber: '',
+            instructions: '',
+            qrImageUrl: '',
+          },
+          gcash: {
+            enabled: true,
+            label: 'GCash Instant',
+            accountName: '8Burgers OPC',
+            accountNumber: '0917 555 1234',
+            instructions: 'Scan QR or send exact amount.',
+            qrImageUrl: '/storage/v1/object/public/menu-images/payment-qr/test.webp',
+          },
+          maya: {
+            enabled: false,
+            label: 'Maya',
+            accountName: '',
+            accountNumber: '',
+            instructions: '',
+            qrImageUrl: '',
+          },
+          bank_transfer: {
+            enabled: false,
+            label: 'Bank Transfer',
+            accountName: '',
+            accountNumber: '',
+            instructions: '',
+            qrImageUrl: '',
+          },
+        },
+      },
+    });
+
+    window.sessionStorage.setItem(DINE_IN_TABLE_STORAGE_KEY, '7');
+    useCartStore.getState().actions.rehydrateSessionStorage();
+
+    const firstRender = render(
+      <TestQueryWrapper>
+        <CartDrawerTestHarness />
+      </TestQueryWrapper>,
+    );
+
+    // Open cart drawer -> Dine-in preselected, Table 7 prefilled, disabled payment methods hidden
+    fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
+
+    const dialog = screen.getByRole('dialog', { name: /your order cart/i });
+    await within(dialog).findByText('Burger Deluxe');
+    expect(
+      (within(dialog).getByRole('radio', { name: /dine-in/i }) as HTMLInputElement).checked,
+    ).toBe(true);
+    expect((within(dialog).getByLabelText(/table number/i) as HTMLInputElement).value).toBe('7');
+
+    const paymentSelect = within(dialog).getByLabelText(/payment method/i) as HTMLSelectElement;
+    const optionValues = Array.from(paymentSelect.options).map((o) => o.value);
+    expect(optionValues).toEqual(['cash', 'gcash']);
+
+    fireEvent.change(paymentSelect, { target: { value: 'gcash' } });
+    expect(within(dialog).getByText('0917 555 1234')).toBeTruthy();
+    expect(within(dialog).getByAltText('GCash Instant QR code')).toBeTruthy();
+
+    fireEvent.change(within(dialog).getByLabelText(/your name/i), { target: { value: 'Bianca' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /place order · ₱148/i }));
+
+    expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
+    expect(within(dialog).getByText('Dine-in · Table 7')).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: /^cancel order$/i })).toBeTruthy();
+
+    // Verify opaque sessionStorage receipt token has zero PII
+    const storedReceipt = window.sessionStorage.getItem(RECEIPT_SESSION_STORAGE_KEY) ?? '';
+    expect(storedReceipt).toContain('#8B-101');
+    expect(storedReceipt).toContain('receipt-token-101');
+    expect(storedReceipt).not.toContain('Bianca');
+
+    // Simulate mobile browser tab reload (in-memory lastPlacedOrder cleared, sessionStorage remains)
+    firstRender.unmount();
+    resetCartStore();
+    useCartStore.getState().actions.rehydrateSessionStorage();
+    useCartStore.getState().actions.setCartOpen(true);
+
+    render(
+      <TestQueryWrapper>
+        <CartPortalDrawer />
+      </TestQueryWrapper>,
+    );
+
+    const reloadedDialog = screen.getByRole('dialog', { name: /your order cart/i });
+    expect(await within(reloadedDialog).findByText('Order Confirmed')).toBeTruthy();
+    expect(within(reloadedDialog).getByText('Dine-in · Table 7')).toBeTruthy();
+
+    // Submit payment reference post-checkout -> status becomes pending_verification and self-cancel is blocked
+    const refInput = within(reloadedDialog).getByLabelText(/submit payment reference/i);
+    fireEvent.change(refInput, { target: { value: 'GC-1111' } });
+    fireEvent.click(within(reloadedDialog).getByRole('button', { name: /submit ref/i }));
+
+    expect(
+      await within(reloadedDialog).findByText(/payment reference submitted for cashier review/i),
+    ).toBeTruthy();
+    expect(within(reloadedDialog).getByText('Pending review')).toBeTruthy();
+    expect(within(reloadedDialog).queryByRole('button', { name: /^cancel order$/i })).toBeNull();
+    expect(
+      within(reloadedDialog).getByText(
+        /online cancellation is unavailable once a payment reference/i,
+      ),
+    ).toBeTruthy();
+
+    // Correct typo in payment reference while still pending_verification
+    const updateRefInput = within(reloadedDialog).getByLabelText(/update payment reference/i);
+    fireEvent.change(updateRefInput, { target: { value: 'GC-9999' } });
+    fireEvent.click(within(reloadedDialog).getByRole('button', { name: /update ref/i }));
+
+    await waitFor(() => {
+      expect(state.orders[0]?.paymentReference).toBe('GC-9999');
+    });
+    expect(
+      await within(reloadedDialog).findByText(/payment reference updated for cashier review/i),
+    ).toBeTruthy();
   });
 });

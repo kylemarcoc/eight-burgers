@@ -3,7 +3,7 @@ import {
   ADMIN_ROLE_VALUES,
   type AdminRole,
   type AdminTeamMember,
-} from '@eight-burgers/contracts';
+} from '@menu-kiosk/contracts';
 import { useId, useMemo, useRef, useState, type SubmitEvent } from 'react';
 import { getApiErrorMessage } from '@/shared/lib/api-error';
 import { useAdminTeamMutations, useAdminTeamQuery } from '../hooks/useAdminTeam';
@@ -22,7 +22,7 @@ const ROLE_DESCRIPTIONS: Record<AdminRole, string> = {
   cashier:
     'Can manage Customer Orders and mark menu items In Stock / Sold Out. Cannot change prices, delivery fees, or team accounts.',
   staff:
-    'Can update Customer Orders (Received, Grilling, Ready, Completed, Cancelled) and toggle Menu Stock. Cannot edit catalog prices or delivery settings.',
+    'Can update Customer Orders (Received, Preparing, Ready, Completed, Cancelled) and toggle Menu Stock. Cannot edit catalog prices or delivery settings.',
   owner:
     'Full access to Menu prices and photos, Delivery pricing and pause controls, Customer Orders, and Team & Roles.',
 };
@@ -182,7 +182,7 @@ export function AdminTeamManager({ currentUserId }: AdminTeamManagerProps) {
             <h1 className="text-2xl font-bold tracking-tight text-ui-text">Team & Roles</h1>
             <p className="text-sm text-ui-text-muted">
               Register Cashier and Staff accounts, adjust role permissions, or disable logins for
-              the Chino Roces Staff Portal.
+              the Staff Portal.
             </p>
           </div>
           {teamQuery.isSuccess ? (
@@ -247,7 +247,7 @@ export function AdminTeamManager({ currentUserId }: AdminTeamManagerProps) {
                     setFormErrors((prev) => ({ ...prev, email: undefined }));
                   }
                 }}
-                placeholder="cashier2@eightburgers.local"
+                placeholder="cashier@yourshop.com"
                 aria-invalid={Boolean(formErrors.email)}
                 aria-describedby={formErrors.email ? emailErrorId : undefined}
                 className="mt-1 w-full rounded-xl border border-ui-border bg-ui-canvas px-3 py-2 text-sm text-ui-text"

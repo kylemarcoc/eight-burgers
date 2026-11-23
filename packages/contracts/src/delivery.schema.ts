@@ -12,6 +12,7 @@ export const deliveryPricingConfigSchema = z.object({
   perKmRatePhp: z.number().int().min(0).max(1000),
   maxDistanceKm: z.number().finite().min(0.1).max(200),
   freeDeliveryMinSubtotalPhp: z.number().int().positive().nullable(),
+  originCoords: geoCoordinatesSchema.nullable(),
   updatedAt: z.string().optional(),
   version: z.number().int().positive().optional(),
 });
@@ -91,4 +92,5 @@ export const DEFAULT_DELIVERY_PRICING: DeliveryPricingConfig = {
   perKmRatePhp: DEFAULT_DELIVERY_PER_KM_RATE_PHP,
   maxDistanceKm: DEFAULT_DELIVERY_MAX_DISTANCE_KM,
   freeDeliveryMinSubtotalPhp: DEFAULT_FREE_DELIVERY_MIN_SUBTOTAL_PHP,
+  originCoords: STORE_ORIGIN_COORDS,
 };

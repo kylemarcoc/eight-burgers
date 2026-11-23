@@ -3,8 +3,10 @@ import {
   MENU_IMAGE_MAX_UPLOAD_BYTES,
   getAdminPermissions,
   type AdminRole,
+  type MenuItem,
+  type MenuItemInput,
   type UploadedMenuImage,
-} from '@eight-burgers/contracts';
+} from '@menu-kiosk/contracts';
 import {
   useCallback,
   useId,
@@ -16,11 +18,11 @@ import {
 } from 'react';
 import { FoodImage } from '@/shared/components/FoodImage';
 import { getApiErrorMessage, isApiError } from '@/shared/lib/api-error';
-import { IMAGE_PRESETS, MENU_CATEGORIES } from '@/shared/shop/eight-burgers-seed';
 import { formatPhp, isSafeImageUrl } from '@/shared/shop/shop-storage';
-import type { MenuCategory, MenuItem, MenuItemInput } from '@/shared/shop/types';
 import { useCatalogQuery, useMenuMutations } from '../hooks/useCatalog';
+import { AdminCategoriesManager } from './AdminCategoriesManager';
 import { AdminDeliverySettings } from './AdminDeliverySettings';
+import { AdminOptionGroupsManager } from './AdminOptionGroupsManager';
 
 type StatusBanner = {
   tone: 'success' | 'error';
@@ -29,50 +31,49 @@ type StatusBanner = {
 
 type FormState = {
   name: string;
-  category: MenuCategory;
+  category: string;
   pricePhp: string;
-  pattySpec: string;
+  specLabel: string;
   description: string;
   imageUrl: string;
   available: boolean;
   featured: boolean;
-  allowAddons: boolean;
+  optionGroupIds: string[];
 };
 
 type FormFieldErrors = {
   name?: string;
+  category?: string;
   pricePhp?: string;
   description?: string;
   imageUrl?: string;
 };
 
-const EMPTY_FORM: FormState = {
-  name: '',
-  category: 'classic-burgers',
-  pricePhp: '158',
-  pattySpec: '100g Pure Beef',
-  description: '',
-  imageUrl: IMAGE_PRESETS[0]?.url ?? '',
-  available: true,
-  featured: false,
-  allowAddons: true,
-};
-
-const CATEGORY_LABELS = new Map<MenuCategory, string>(
-  MENU_CATEGORIES.map((category) => [category.id, category.label]),
-);
+function createEmptyForm(defaultCategoryId = ''): FormState {
+  return {
+    name: '',
+    category: defaultCategoryId,
+    pricePhp: '150',
+    specLabel: '',
+    description: '',
+    imageUrl: '',
+    available: true,
+    featured: false,
+    optionGroupIds: [],
+  };
+}
 
 function itemToFormState(item: MenuItem): FormState {
   return {
     name: item.name,
     category: item.category,
     pricePhp: String(item.pricePhp),
-    pattySpec: item.pattySpec,
+    specLabel: item.specLabel,
     description: item.description,
     imageUrl: item.imageUrl,
     available: item.available,
     featured: item.featured,
-    allowAddons: item.allowAddons,
+    optionGroupIds: [...item.optionGroupIds],
   };
 }
 
@@ -100,16 +101,36 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
     deleteUnusedMenuImage,
   } = useMenuMutations();
 
+  const categories = useMemo(
+    () =>
+      [...(catalogQuery.data?.categories ?? [])].sort(
+        (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name),
+      ),
+    [catalogQuery.data?.categories],
+  );
+  const optionGroups = useMemo(
+    () =>
+      [...(catalogQuery.data?.optionGroups ?? [])].sort(
+        (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name),
+      ),
+    [catalogQuery.data?.optionGroups],
+  );
   const menu = useMemo(() => catalogQuery.data?.menu ?? [], [catalogQuery.data?.menu]);
+
+  const categoryLabels = useMemo(
+    () => new Map<string, string>(categories.map((category) => [category.id, category.name])),
+    [categories],
+  );
+  const firstCategoryId = categories[0]?.id ?? '';
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingVersion, setEditingVersion] = useState<number | undefined>(undefined);
   const [editConflict, setEditConflict] = useState(false);
-  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [form, setForm] = useState<FormState>(() => createEmptyForm(firstCategoryId));
   const [formErrors, setFormErrors] = useState<FormFieldErrors>({});
   const [statusBanner, setStatusBanner] = useState<StatusBanner | null>(null);
   const [inventorySearch, setInventorySearch] = useState('');
-  const [inventoryCategory, setInventoryCategory] = useState<'all' | MenuCategory>('all');
+  const [inventoryCategory, setInventoryCategory] = useState<string>('all');
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [pendingItemIds, setPendingItemIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -119,6 +140,9 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
     'sizeBytes' | 'width' | 'height'
   > | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const effectiveFormCategory =
+    form.category && categoryLabels.has(form.category) ? form.category : firstCategoryId;
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cleanupPendingUpload = useCallback(
@@ -149,11 +173,13 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
   const isEditingMissing = Boolean(editingId && catalogQuery.isSuccess && !editingItem);
 
   const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const categorySelectRef = useRef<HTMLSelectElement | null>(null);
   const priceInputRef = useRef<HTMLInputElement | null>(null);
   const descriptionInputRef = useRef<HTMLTextAreaElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
 
   const nameErrorId = useId();
+  const categoryErrorId = useId();
   const priceErrorId = useId();
   const descriptionErrorId = useId();
   const imageErrorId = useId();
@@ -175,7 +201,7 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
       return (
         item.name.toLowerCase().includes(q) ||
         item.description.toLowerCase().includes(q) ||
-        item.pattySpec.toLowerCase().includes(q)
+        item.specLabel.toLowerCase().includes(q)
       );
     });
   }, [menu, inventorySearch, inventoryCategory]);
@@ -203,8 +229,17 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
     setEditingId(null);
     setEditingVersion(undefined);
     setEditConflict(false);
-    setForm(EMPTY_FORM);
+    setForm(createEmptyForm(firstCategoryId));
     setFormErrors({});
+  }
+
+  function toggleFormOptionGroup(groupId: string) {
+    setForm((prev) => ({
+      ...prev,
+      optionGroupIds: prev.optionGroupIds.includes(groupId)
+        ? prev.optionGroupIds.filter((id) => id !== groupId)
+        : [...prev.optionGroupIds, groupId],
+    }));
   }
 
   async function handleImageFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -271,12 +306,16 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
     const parsedPrice = Number(form.pricePhp);
     const trimmedDescription = form.description.trim();
     const trimmedImageUrl = form.imageUrl.trim();
+    const chosenCategory = effectiveFormCategory;
 
     const nextErrors: FormFieldErrors = {};
     if (!trimmedName) {
       nextErrors.name = 'Enter an item name before saving.';
     } else if (trimmedName.length > 120) {
       nextErrors.name = 'Item name must be 120 characters or fewer.';
+    }
+    if (!chosenCategory) {
+      nextErrors.category = 'Create at least one category before saving menu items.';
     }
     if (!Number.isFinite(parsedPrice) || parsedPrice <= 0 || parsedPrice > 100000) {
       nextErrors.pricePhp = 'Enter a valid price between ₱1 and ₱100,000.';
@@ -290,10 +329,18 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
       nextErrors.imageUrl = 'Enter a valid https:// image URL (max 500 chars), or leave blank.';
     }
 
-    if (nextErrors.name || nextErrors.pricePhp || nextErrors.description || nextErrors.imageUrl) {
+    if (
+      nextErrors.name ||
+      nextErrors.category ||
+      nextErrors.pricePhp ||
+      nextErrors.description ||
+      nextErrors.imageUrl
+    ) {
       setFormErrors(nextErrors);
       if (nextErrors.name) {
         nameInputRef.current?.focus();
+      } else if (nextErrors.category) {
+        categorySelectRef.current?.focus();
       } else if (nextErrors.pricePhp) {
         priceInputRef.current?.focus();
       } else if (nextErrors.description) {
@@ -306,14 +353,14 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
 
     const payload: MenuItemInput = {
       name: trimmedName,
-      category: form.category,
+      category: chosenCategory,
       pricePhp: Math.round(parsedPrice),
-      pattySpec: form.pattySpec.trim().slice(0, 80) || '100g Pure Beef',
+      specLabel: form.specLabel.trim().slice(0, 80) || 'Regular',
       description: trimmedDescription,
       imageUrl: trimmedImageUrl,
       available: form.available,
       featured: form.featured,
-      allowAddons: form.allowAddons,
+      optionGroupIds: form.optionGroupIds,
     };
 
     try {
@@ -338,7 +385,7 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
       setUploadedImageMeta(null);
       setUploadError(null);
       setFormErrors({});
-      setForm(EMPTY_FORM);
+      setForm(createEmptyForm(firstCategoryId));
     } catch (error) {
       if (editingId && isApiError(error) && error.status === 409) {
         setEditConflict(true);
@@ -359,8 +406,8 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
           </h1>
           <p className="mt-1 text-sm text-ui-text-muted">
             {canManageCatalog
-              ? 'Add new burgers, paste updated Foodpanda or Facebook photo URLs, toggle sold-out items, and configure distance-based delivery pricing. Changes sync live to the database.'
-              : 'Toggle In Stock or Sold Out availability on menu items in real time. Adding, editing, or removing listings and delivery settings requires an Owner account.'}
+              ? 'Add menu items, organize categories and option groups, upload item photos, toggle sold-out items, and configure distance-based delivery pricing.'
+              : 'Toggle In Stock or Sold Out availability on menu items and modifier choices in real time. Editing listings and settings requires an Owner account.'}
           </p>
         </div>
 
@@ -378,11 +425,20 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                         cancelEditing();
                         setConfirmReset(false);
                         setConfirmDeleteId(null);
-                        showStatus('Restored the default 8Burgers Chino Roces menu.');
+                        showStatus('Restored the default catalog menu.');
                       })
                       .catch((error: unknown) => {
+                        setConfirmReset(false);
                         showStatus(
-                          getApiErrorMessage(error, 'Unable to restore default menu right now.'),
+                          isApiError(error) && error.code === 'DEMO_RESET_DISABLED'
+                            ? getApiErrorMessage(
+                                error,
+                                'Demo catalog reset is disabled in this environment.',
+                              )
+                            : getApiErrorMessage(
+                                error,
+                                'Unable to restore default menu right now.',
+                              ),
                           'error',
                         );
                       });
@@ -541,7 +597,7 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                       setFormErrors((prev) => ({ ...prev, name: undefined }));
                     }
                   }}
-                  placeholder="e.g. Chino Roces Double Smash"
+                  placeholder="e.g. Signature House Special"
                   className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text ${
                     formErrors.name ? 'border-ui-error' : 'border-ui-border'
                   }`}
@@ -566,22 +622,44 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                     Category
                   </label>
                   <select
+                    ref={categorySelectRef}
                     id="admin-item-category"
-                    value={form.category}
-                    onChange={(event) =>
+                    disabled={categories.length === 0}
+                    value={effectiveFormCategory}
+                    aria-invalid={Boolean(formErrors.category)}
+                    aria-describedby={formErrors.category ? categoryErrorId : undefined}
+                    onChange={(event) => {
                       setForm((prev) => ({
                         ...prev,
-                        category: event.target.value as MenuCategory,
-                      }))
-                    }
-                    className="mt-1 w-full rounded-xl border border-ui-border bg-ui-canvas px-3 py-2 text-sm text-ui-text"
+                        category: event.target.value,
+                      }));
+                      if (formErrors.category) {
+                        setFormErrors((prev) => ({ ...prev, category: undefined }));
+                      }
+                    }}
+                    className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text disabled:opacity-50 ${
+                      formErrors.category ? 'border-ui-error' : 'border-ui-border'
+                    }`}
                   >
-                    {MENU_CATEGORIES.map((category) => (
-                      <option key={category.id} value={category.id}>
-                        {category.label}
-                      </option>
-                    ))}
+                    {categories.length === 0 ? (
+                      <option value="">No categories yet</option>
+                    ) : (
+                      categories.map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {category.name}
+                        </option>
+                      ))
+                    )}
                   </select>
+                  {formErrors.category ? (
+                    <p
+                      id={categoryErrorId}
+                      role="alert"
+                      className="mt-1 text-xs font-semibold text-ui-error"
+                    >
+                      {formErrors.category}
+                    </p>
+                  ) : null}
                 </div>
 
                 <div>
@@ -630,17 +708,17 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                   htmlFor="admin-item-spec"
                   className="block text-xs font-semibold text-ui-text"
                 >
-                  Patty / Portion Spec
+                  Portion / Spec Label
                 </label>
                 <input
                   id="admin-item-spec"
                   type="text"
                   maxLength={80}
-                  value={form.pattySpec}
+                  value={form.specLabel}
                   onChange={(event) =>
-                    setForm((prev) => ({ ...prev, pattySpec: event.target.value }))
+                    setForm((prev) => ({ ...prev, specLabel: event.target.value }))
                   }
-                  placeholder="e.g. 100g Pure Beef"
+                  placeholder="e.g. Regular, 16oz, 100g"
                   className="mt-1 w-full rounded-xl border border-ui-border bg-ui-canvas px-3 py-2 text-sm text-ui-text"
                 />
               </div>
@@ -667,7 +745,7 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                       setFormErrors((prev) => ({ ...prev, description: undefined }));
                     }
                   }}
-                  placeholder="Describe patty, cheeses, veggies, and sauces..."
+                  placeholder="Describe ingredients, serving notes, or highlights..."
                   className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text ${
                     formErrors.description ? 'border-ui-error' : 'border-ui-border'
                   }`}
@@ -740,7 +818,7 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                       setFormErrors((prev) => ({ ...prev, imageUrl: undefined }));
                     }
                   }}
-                  placeholder="https://images.deliveryhero.io/..."
+                  placeholder="https://example.com/menu-photo.webp"
                   className={`w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text ${
                     formErrors.imageUrl ? 'border-ui-error' : 'border-ui-border'
                   }`}
@@ -751,33 +829,11 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                   </p>
                 ) : null}
 
-                <div className="flex flex-wrap gap-1.5">
-                  {IMAGE_PRESETS.slice(0, 4).map((preset) => (
-                    <button
-                      key={preset.label}
-                      type="button"
-                      onClick={() => {
-                        if (pendingUploadedUrl && pendingUploadedUrl !== preset.url) {
-                          cleanupPendingUpload(pendingUploadedUrl);
-                          setPendingUploadedUrl(null);
-                          setUploadedImageMeta(null);
-                        }
-                        setForm((prev) => ({ ...prev, imageUrl: preset.url }));
-                        setFormErrors((prev) => ({ ...prev, imageUrl: undefined }));
-                      }}
-                      className="rounded-md border border-ui-border bg-ui-surface-muted px-2 py-1 text-xs text-ui-text-muted hover:text-ui-text"
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                </div>
-
                 <div className="overflow-hidden rounded-xl border border-ui-border bg-ui-surface-muted">
                   <div className="aspect-[16/9] w-full">
                     <FoodImage
                       src={form.imageUrl}
                       alt={form.name || 'Menu item preview'}
-                      category={form.category}
                       badgeText={form.name || 'Preview'}
                       className="h-full w-full"
                     />
@@ -785,7 +841,41 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-2 rounded-xl border border-ui-border bg-ui-surface-muted p-3 text-xs text-ui-text sm:grid-cols-3">
+              {optionGroups.length > 0 ? (
+                <fieldset className="space-y-2 rounded-xl border border-ui-border bg-ui-surface-muted p-3">
+                  <legend className="text-xs font-semibold text-ui-text">
+                    Attached option groups
+                  </legend>
+                  <div className="flex flex-wrap gap-2">
+                    {optionGroups.map((group) => {
+                      const checked = form.optionGroupIds.includes(group.id);
+                      return (
+                        <label
+                          key={group.id}
+                          className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs ${
+                            checked
+                              ? 'border-ui-accent bg-ui-surface font-semibold text-ui-text'
+                              : 'border-ui-border bg-ui-canvas text-ui-text-muted'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleFormOptionGroup(group.id)}
+                            className="accent-ui-accent h-3.5 w-3.5 rounded"
+                          />
+                          <span>{group.name}</span>
+                          {!group.active ? (
+                            <span className="text-[10px] text-ui-error">(Paused)</span>
+                          ) : null}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </fieldset>
+              ) : null}
+
+              <div className="grid grid-cols-2 gap-2 rounded-xl border border-ui-border bg-ui-surface-muted p-3 text-xs text-ui-text">
                 <label className="flex cursor-pointer items-center gap-2">
                   <input
                     type="checkbox"
@@ -808,22 +898,11 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                   />
                   <span>Featured</span>
                 </label>
-                <label className="flex cursor-pointer items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={form.allowAddons}
-                    onChange={(event) =>
-                      setForm((prev) => ({ ...prev, allowAddons: event.target.checked }))
-                    }
-                    className="accent-ui-accent h-4 w-4 rounded"
-                  />
-                  <span>Allow add-ons</span>
-                </label>
               </div>
 
               <button
                 type="submit"
-                disabled={isSavingItem}
+                disabled={isSavingItem || categories.length === 0}
                 className="w-full rounded-xl bg-ui-accent px-4 py-2.5 text-sm font-semibold text-ui-on-accent hover:bg-ui-accent-hover disabled:opacity-60"
               >
                 {isSavingItem ? 'Saving…' : editingId ? 'Save Listing Changes' : 'Add Item to Menu'}
@@ -852,15 +931,13 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
               <select
                 aria-label="Filter listings by category"
                 value={inventoryCategory}
-                onChange={(event) =>
-                  setInventoryCategory(event.target.value as 'all' | MenuCategory)
-                }
+                onChange={(event) => setInventoryCategory(event.target.value)}
                 className="rounded-xl border border-ui-border bg-ui-surface px-3 py-1.5 text-sm text-ui-text"
               >
                 <option value="all">All categories</option>
-                {MENU_CATEGORIES.map((category) => (
+                {categories.map((category) => (
                   <option key={category.id} value={category.id}>
-                    {category.label}
+                    {category.name}
                   </option>
                 ))}
               </select>
@@ -923,7 +1000,6 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                         <FoodImage
                           src={item.imageUrl}
                           alt={item.name}
-                          category={item.category}
                           badgeText={item.name}
                           className="h-full w-full"
                         />
@@ -934,7 +1010,7 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                             {item.name}
                           </h3>
                           <span className="rounded-md bg-ui-surface-muted px-2 py-0.5 text-xs text-ui-text-muted">
-                            {CATEGORY_LABELS.get(item.category) ?? item.category}
+                            {categoryLabels.get(item.category) ?? item.category}
                           </span>
                           {isEditingItem ? (
                             <span className="rounded-md bg-ui-accent px-2 py-0.5 text-xs font-semibold text-ui-on-accent">
@@ -943,7 +1019,7 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                           ) : null}
                         </div>
                         <p className="mt-0.5 text-xs text-ui-text-muted">
-                          {item.pattySpec} ·{' '}
+                          {item.specLabel} ·{' '}
                           <span className="font-bold text-ui-accent tabular-nums">
                             {formatPhp(item.pricePhp)}
                           </span>
@@ -1062,6 +1138,8 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
         </section>
       </div>
 
+      {canManageCatalog ? <AdminCategoriesManager onStatusMessage={showStatus} /> : null}
+      <AdminOptionGroupsManager role={role} onStatusMessage={showStatus} />
       {canManageDelivery ? <AdminDeliverySettings onStatusMessage={showStatus} /> : null}
     </div>
   );

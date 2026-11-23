@@ -1,4 +1,4 @@
-import type { AdminLoginRequest } from '@eight-burgers/contracts';
+import type { AdminLoginRequest } from '@menu-kiosk/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { adminAuthKeys, fetchAdminSession, loginAdmin, logoutAdmin } from '../api/auth-api';
 

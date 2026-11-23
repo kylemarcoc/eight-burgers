@@ -2,8 +2,8 @@ import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { ApiConfig } from '../config/env';
 
-export const ACCESS_TOKEN_COOKIE = 'eb_access_token';
-export const REFRESH_TOKEN_COOKIE = 'eb_refresh_token';
+export const ACCESS_TOKEN_COOKIE = 'mk_access_token';
+export const REFRESH_TOKEN_COOKIE = 'mk_refresh_token';
 
 const COOKIE_PATH = '/api';
 const REFRESH_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;

@@ -1,19 +1,22 @@
 import { useId, useRef, useState, type SubmitEvent } from 'react';
 import { getApiErrorMessage, isApiError } from '@/shared/lib/api-error';
 import {
+  calculateDeliveryQuote,
   estimateDeliveryEtaMinutes,
   estimateDeliveryFeePhp,
   formatPhp,
+  isValidCoordinates,
 } from '@/shared/shop/shop-storage';
 import type { DeliveryPricingConfig, DeliveryPricingPatch } from '@/shared/shop/types';
 import { useCatalogQuery, useDeliveryPricingMutations } from '../hooks/useCatalog';
 
 const EMPTY_PRICING: DeliveryPricingConfig = {
-  deliveryEnabled: true,
+  deliveryEnabled: false,
   baseFeePhp: 35,
   perKmRatePhp: 10,
   maxDistanceKm: 25,
   freeDeliveryMinSubtotalPhp: 500,
+  originCoords: null,
 };
 
 const PREVIEW_DISTANCES_KM = [1, 3, 5, 10, 15, 20] as const;
@@ -52,6 +55,7 @@ function getPricingSignature(pricing: DeliveryPricingConfig): string {
     pricing.perKmRatePhp,
     pricing.maxDistanceKm,
     pricing.freeDeliveryMinSubtotalPhp,
+    pricing.originCoords,
     pricing.version ?? null,
   ]);
 }
@@ -63,6 +67,7 @@ export type AdminDeliverySettingsProps = {
 export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettingsProps) {
   const catalogQuery = useCatalogQuery();
   const deliveryPricing = catalogQuery.data?.deliveryPricing ?? EMPTY_PRICING;
+  const hasOriginPin = isValidCoordinates(deliveryPricing.originCoords);
   const { updateDeliveryPricing, resetDeliveryPricing } = useDeliveryPricingMutations();
 
   const [form, setForm] = useState<PricingFormState>(() => pricingToFormState(deliveryPricing));
@@ -110,6 +115,14 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
 
   async function handlePricingSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (form.deliveryEnabled && !hasOriginPin) {
+      onStatusMessage(
+        'Set your shop location pin in Store Settings before enabling delivery.',
+        'error',
+      );
+      return;
+    }
 
     const parsedBase = Number(form.baseFeePhp);
     const parsedRate = Number(form.perKmRatePhp);
@@ -194,7 +207,7 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
       onStatusMessage(
         updated.deliveryEnabled
           ? `Saved delivery pricing: ${formatPhp(updated.baseFeePhp)} base + ${formatPhp(updated.perKmRatePhp)}/km up to ${updated.maxDistanceKm} km (${thresholdSummary}).`
-          : 'Delivery paused. Only Kiosk Pickup orders will be accepted.',
+          : 'Delivery paused. Only pickup orders will be accepted.',
       );
     } catch (error) {
       if (isApiError(error) && error.status === 409) {
@@ -219,6 +232,25 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
     previewRate >= 0 &&
     previewMaxDist >= 0.1;
 
+  const previewQuote = calculateDeliveryQuote({
+    fulfillment: 'delivery',
+    subtotalPhp: 0,
+    deliveryPricing: {
+      ...deliveryPricing,
+      deliveryEnabled: form.deliveryEnabled,
+      baseFeePhp: isPreviewValid ? Math.round(previewBase) : deliveryPricing.baseFeePhp,
+      perKmRatePhp: isPreviewValid ? Math.round(previewRate) : deliveryPricing.perKmRatePhp,
+      maxDistanceKm: isPreviewValid
+        ? Math.round(previewMaxDist * 10) / 10
+        : deliveryPricing.maxDistanceKm,
+      freeDeliveryMinSubtotalPhp:
+        form.thresholdEnabled && Number.isFinite(previewThreshold) && previewThreshold > 0
+          ? Math.round(previewThreshold)
+          : null,
+    },
+    storeOrigin: deliveryPricing.originCoords,
+  });
+
   return (
     <section aria-labelledby="delivery-pricing-heading" className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -229,12 +261,16 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
             </h2>
             <span
               className={`rounded-md px-2 py-0.5 text-xs font-semibold ${
-                deliveryPricing.deliveryEnabled
+                deliveryPricing.deliveryEnabled && hasOriginPin
                   ? 'bg-ui-surface-muted text-ui-accent'
                   : 'border border-ui-error/40 bg-ui-error/10 text-ui-error'
               }`}
             >
-              {deliveryPricing.deliveryEnabled ? 'Accepting delivery' : 'Paused'}
+              {!hasOriginPin
+                ? 'Origin pin required'
+                : deliveryPricing.deliveryEnabled
+                  ? 'Accepting delivery'
+                  : 'Paused'}
             </span>
           </div>
           <p className="mt-0.5 text-xs text-ui-text-muted">
@@ -262,8 +298,11 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
                     onStatusMessage('Restored default distance-formula delivery pricing.');
                   })
                   .catch((error: unknown) => {
+                    setConfirmReset(false);
                     onStatusMessage(
-                      getApiErrorMessage(error, 'Failed to restore default delivery pricing.'),
+                      isApiError(error) && error.code === 'DEMO_RESET_DISABLED'
+                        ? getApiErrorMessage(error, 'Demo reset is disabled in this environment.')
+                        : getApiErrorMessage(error, 'Failed to restore default delivery pricing.'),
                       'error',
                     );
                   });
@@ -315,10 +354,27 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
             </div>
           ) : null}
 
-          <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-ui-border bg-ui-surface-muted px-3 py-2.5 text-sm font-semibold text-ui-text">
+          {!hasOriginPin ? (
+            <p
+              role="alert"
+              className="rounded-xl border border-ui-error/40 bg-ui-surface-muted px-3 py-2 text-xs font-medium text-ui-error"
+            >
+              Shop location pin is not configured yet. Set your shop location pin in Store Settings
+              before enabling delivery.
+            </p>
+          ) : null}
+
+          <label
+            className={`flex items-center gap-2 rounded-xl border border-ui-border bg-ui-surface-muted px-3 py-2.5 text-sm font-semibold text-ui-text ${
+              !hasOriginPin && !form.deliveryEnabled
+                ? 'cursor-not-allowed opacity-60'
+                : 'cursor-pointer'
+            }`}
+          >
             <input
               id="admin-delivery-enabled"
               type="checkbox"
+              disabled={!hasOriginPin && !form.deliveryEnabled}
               checked={form.deliveryEnabled}
               onChange={(event) => {
                 setForm((prev) => ({ ...prev, deliveryEnabled: event.target.checked }));
@@ -553,11 +609,18 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
                 ? `${formatPhp(Math.round(previewBase))} base + ${formatPhp(Math.round(previewRate))}/km · up to ${Math.round(previewMaxDist * 10) / 10} km`
                 : 'Enter valid numbers to preview delivery distance rates.'}
             </p>
+            <p className="mt-1 text-[11px] text-ui-text-muted tabular-nums">
+              {deliveryPricing.originCoords
+                ? `Origin pin: ${deliveryPricing.originCoords.lat.toFixed(4)}, ${deliveryPricing.originCoords.lng.toFixed(4)}`
+                : 'Origin pin: not configured'}
+            </p>
           </div>
 
-          {!form.deliveryEnabled ? (
+          {!previewQuote.available ? (
             <p className="rounded-xl border border-ui-error/40 bg-ui-error/10 px-3 py-2 text-xs text-ui-error">
-              Delivery orders are currently paused in this configuration.
+              {!hasOriginPin
+                ? 'Set a shop location pin in Store Settings before delivery quotes can activate.'
+                : 'Delivery orders are currently paused in this configuration.'}
             </p>
           ) : null}
 

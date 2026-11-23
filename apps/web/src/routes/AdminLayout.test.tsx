@@ -6,6 +6,7 @@ import { TestQueryWrapper } from '@/shared/test/TestQueryWrapper';
 import { AdminLayout } from './AdminLayout';
 import { AdminOrdersPage } from './AdminOrdersPage';
 import { AdminPage } from './AdminPage';
+import { AdminSettingsPage } from './AdminSettingsPage';
 import { AdminTeamPage } from './AdminTeamPage';
 
 afterEach(() => {
@@ -21,6 +22,7 @@ function renderAdminRoutes(initialPath: string) {
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<AdminPage />} />
             <Route path="orders" element={<AdminOrdersPage />} />
+            <Route path="settings" element={<AdminSettingsPage />} />
             <Route path="team" element={<AdminTeamPage />} />
           </Route>
         </Routes>
@@ -30,7 +32,7 @@ function renderAdminRoutes(initialPath: string) {
 }
 
 describe('AdminLayout routes', () => {
-  it('enforces auth across /admin and /admin/orders, switches tabs without re-auth, and signs out', async () => {
+  it('enforces auth across admin routes, switches tabs including Store Settings without re-auth, and signs out', async () => {
     installMockShopApi({ authenticated: false });
     renderAdminRoutes('/admin/orders');
 
@@ -56,6 +58,11 @@ describe('AdminLayout routes', () => {
       await screen.findByRole('heading', { level: 1, name: /menu & delivery manager/i }),
     ).toBeTruthy();
 
+    fireEvent.click(screen.getByRole('link', { name: /store settings/i }));
+    expect(
+      await screen.findByRole('heading', { level: 1, name: /^store settings$/i }),
+    ).toBeTruthy();
+
     fireEvent.click(screen.getByRole('link', { name: /customer orders/i }));
     expect(
       await screen.findByRole('heading', { level: 1, name: /^customer orders$/i }),
@@ -70,10 +77,10 @@ describe('AdminLayout routes', () => {
     ).toBeTruthy();
   });
 
-  it('shows Cashier and Staff role badges, Menu Stock tab, and hides owner-only catalog/delivery/team controls', async () => {
+  it('shows Cashier and Staff role badges, hides owner-only tabs, and shows ordering toggle only to Cashier on Orders', async () => {
     for (const account of [
-      { email: 'cashier@eightburgers.local', label: 'Cashier' },
-      { email: 'staff@eightburgers.local', label: 'Staff' },
+      { email: 'cashier@eightburgers.local', label: 'Cashier', canPause: true },
+      { email: 'staff@eightburgers.local', label: 'Staff', canPause: false },
     ]) {
       installMockShopApi({ authenticated: false });
       renderAdminRoutes('/admin');
@@ -95,6 +102,7 @@ describe('AdminLayout routes', () => {
       ).toBeTruthy();
       expect(screen.getByText(account.label)).toBeTruthy();
       expect(screen.getByRole('link', { name: /^menu stock$/i })).toBeTruthy();
+      expect(screen.queryByRole('link', { name: /store settings/i })).toBeNull();
       expect(screen.queryByRole('link', { name: /team & roles/i })).toBeNull();
       expect(screen.queryByRole('button', { name: /add item to menu/i })).toBeNull();
       expect(screen.queryByRole('button', { name: /restore default menu/i })).toBeNull();
@@ -105,18 +113,74 @@ describe('AdminLayout routes', () => {
         await screen.findByRole('heading', { level: 1, name: /^customer orders$/i }),
       ).toBeTruthy();
 
+      if (account.canPause) {
+        expect(screen.getByRole('button', { name: /pause orders/i })).toBeTruthy();
+      } else {
+        expect(screen.queryByRole('button', { name: /pause orders/i })).toBeNull();
+      }
+
       cleanup();
       vi.restoreAllMocks();
     }
   });
 
-  it('blocks non-owners who navigate directly to /admin/team with an Owner access notice', async () => {
-    installMockShopApi({ authenticated: true, role: 'cashier' });
-    renderAdminRoutes('/admin/team');
+  it('blocks non-owners who navigate directly to /admin/team or /admin/settings with an Owner access notice', async () => {
+    for (const path of ['/admin/team', '/admin/settings']) {
+      installMockShopApi({ authenticated: true, role: 'cashier' });
+      renderAdminRoutes(path);
+
+      expect(
+        await screen.findByRole('heading', { level: 1, name: /owner access required/i }),
+      ).toBeTruthy();
+      expect(screen.getByRole('link', { name: /go to menu stock/i })).toBeTruthy();
+
+      cleanup();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('shows ShopSetupChecklist on /admin for Owner on a fresh shop and hides it for Cashier and Staff', async () => {
+    installMockShopApi({
+      authenticated: true,
+      role: 'owner',
+      initialStore: {
+        storeName: 'Your Shop',
+        address: '',
+        originCoords: null,
+        deliveryEnabled: false,
+      },
+      initialCategories: [],
+      initialMenu: [],
+    });
+    renderAdminRoutes('/admin');
 
     expect(
-      await screen.findByRole('heading', { level: 1, name: /owner access required/i }),
+      await screen.findByRole('heading', { level: 2, name: /finish setting up your shop/i }),
     ).toBeTruthy();
-    expect(screen.getByRole('link', { name: /go to menu stock/i })).toBeTruthy();
+
+    cleanup();
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+
+    installMockShopApi({
+      authenticated: true,
+      role: 'cashier',
+      initialStore: {
+        storeName: 'Your Shop',
+        address: '',
+        originCoords: null,
+        deliveryEnabled: false,
+      },
+      initialCategories: [],
+      initialMenu: [],
+    });
+    renderAdminRoutes('/admin');
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: /menu stock manager/i }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole('heading', { level: 2, name: /finish setting up your shop/i }),
+    ).toBeNull();
   });
 });

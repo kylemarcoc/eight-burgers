@@ -3,7 +3,7 @@ import {
   deleteMenuImageRequestSchema,
   menuAvailabilityPatchSchema,
   menuItemInputSchema,
-} from '@eight-burgers/contracts';
+} from '@menu-kiosk/contracts';
 import { Hono } from 'hono';
 import { MenuImageOptimizationError, optimizeMenuImageToWebp } from '../lib/image-optimizer';
 import { problemResponse, zodFieldErrors } from '../lib/problem';
@@ -11,7 +11,7 @@ import { createRequireAdminRolesMiddleware } from '../middleware/require-admin';
 import type { ApiDeps, ApiEnv } from '../types';
 
 export function createAdminMenuRoutes(
-  deps: Pick<ApiDeps, 'gateway' | 'optimizeMenuImage'>,
+  deps: Pick<ApiDeps, 'config' | 'gateway' | 'optimizeMenuImage'>,
 ): Hono<ApiEnv> {
   const app = new Hono<ApiEnv>();
   const optimizeImage = deps.optimizeMenuImage ?? optimizeMenuImageToWebp;
@@ -67,7 +67,7 @@ export function createAdminMenuRoutes(
     const inputBuffer = new Uint8Array(await uploadedFile.arrayBuffer());
     let optimized;
     try {
-      optimized = await optimizeImage(inputBuffer);
+      optimized = await optimizeImage(inputBuffer, 'item');
     } catch (error) {
       if (error instanceof MenuImageOptimizationError) {
         return problemResponse(c, {
@@ -156,8 +156,24 @@ export function createAdminMenuRoutes(
     }
 
     const { expectedVersion: _ignored, ...input } = parsed.data;
-    const created = await deps.gateway.createMenuItem(accessToken, input);
-    return c.json({ data: created }, 201);
+    const result = await deps.gateway.createMenuItem(accessToken, input);
+    if (result.status === 'conflict_slug') {
+      return problemResponse(c, {
+        status: 409,
+        code: 'CONFLICT',
+        title: 'Conflict',
+        detail: 'A menu item with that identifier already exists. Please try saving again.',
+      });
+    }
+    if (result.status === 'invalid_reference') {
+      return problemResponse(c, {
+        status: 400,
+        code: 'VALIDATION_ERROR',
+        title: 'Validation Failed',
+        detail: result.detail,
+      });
+    }
+    return c.json({ data: result.data }, 201);
   });
 
   app.put('/menu-items/:id', requireOwner, async (c) => {
@@ -202,6 +218,14 @@ export function createAdminMenuRoutes(
         code: 'CONFLICT',
         title: 'Conflict',
         detail: 'This menu item was updated on another device. Refresh and try again.',
+      });
+    }
+    if (result.status === 'invalid_reference') {
+      return problemResponse(c, {
+        status: 400,
+        code: 'VALIDATION_ERROR',
+        title: 'Validation Failed',
+        detail: result.detail,
       });
     }
 
@@ -276,6 +300,14 @@ export function createAdminMenuRoutes(
   });
 
   app.post('/menu-items/reset', requireOwner, async (c) => {
+    if (!deps.config.enableDemoReset) {
+      return problemResponse(c, {
+        status: 403,
+        code: 'DEMO_RESET_DISABLED',
+        title: 'Forbidden',
+        detail: 'Demo catalog reset is disabled in this environment.',
+      });
+    }
     const accessToken = c.get('adminAccessToken') ?? '';
     const items = await deps.gateway.resetMenuCatalog(accessToken);
     return c.json({ data: items }, 200);

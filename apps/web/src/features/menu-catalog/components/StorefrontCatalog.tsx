@@ -1,44 +1,80 @@
+import {
+  DEFAULT_STORE_PROFILE,
+  getActiveItemOptionGroups,
+  getDefaultSelectedOptionIds,
+  getMenuItemDisplayPrice,
+  isMenuItemOrderable,
+  validateItemOptionSelections,
+  type MenuItem,
+} from '@menu-kiosk/contracts';
 import { useCallback, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { FoodImage } from '@/shared/components/FoodImage';
 import { getApiErrorMessage } from '@/shared/lib/api-error';
-import { MENU_ADDONS, MENU_CATEGORIES, STORE_METADATA } from '@/shared/shop/eight-burgers-seed';
 import { calculateCartDetails, formatPhp } from '@/shared/shop/shop-storage';
-import type { MenuAddonId, MenuCategory } from '@/shared/shop/types';
-import { useCartActions, useCartLines } from '@/shared/store/useCartStore';
+import { useCartActions, useCartLines, useDineInTable } from '@/shared/store/useCartStore';
 import { useCatalogQuery } from '../hooks/useCatalog';
+import { ItemCustomizerModal } from './ItemCustomizerModal';
 import { MenuCard } from './MenuCard';
-
-type CategoryFilter = 'all' | MenuCategory;
-
-const CATEGORY_TABS: readonly { id: CategoryFilter; label: string }[] = [
-  { id: 'all', label: 'All menu' },
-  ...MENU_CATEGORIES,
-];
 
 export function StorefrontCatalog() {
   const catalogQuery = useCatalogQuery();
+  const store = catalogQuery.data?.store ?? DEFAULT_STORE_PROFILE;
+  const isOrderingPaused = catalogQuery.isSuccess && !store.acceptingOrders;
   const menu = useMemo(() => catalogQuery.data?.menu ?? [], [catalogQuery.data?.menu]);
-  const addons = useMemo(
-    () => catalogQuery.data?.addons ?? MENU_ADDONS,
-    [catalogQuery.data?.addons],
+  const categories = useMemo(
+    () =>
+      [...(catalogQuery.data?.categories ?? [])]
+        .filter((category) => category.active)
+        .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)),
+    [catalogQuery.data?.categories],
   );
+  const optionGroups = useMemo(
+    () => catalogQuery.data?.optionGroups ?? [],
+    [catalogQuery.data?.optionGroups],
+  );
+
   const cartLines = useCartLines();
-  const { addToCart, setCartOpen } = useCartActions();
+  const dineInTable = useDineInTable();
+  const { addToCart, clearDineInTable, setCartOpen } = useCartActions();
 
   const cartSummary = useMemo(
-    () => calculateCartDetails(cartLines, menu, addons),
-    [cartLines, menu, addons],
+    () => calculateCartDetails(cartLines, menu, optionGroups),
+    [cartLines, menu, optionGroups],
   );
 
-  const [selectedCategory, setSelectedCategory] = useState<CategoryFilter>('all');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [availableOnly, setAvailableOnly] = useState(false);
   const [heroAnnouncement, setHeroAnnouncement] = useState('');
+  const [customizingItem, setCustomizingItem] = useState<MenuItem | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const tabRefs = useRef<Partial<Record<CategoryFilter, HTMLButtonElement | null>>>({});
+  const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const tabPanelId = useId();
   const tabIdPrefix = useId();
+
+  const activeCategoryIds = useMemo(
+    () => new Set(categories.map((category) => category.id)),
+    [categories],
+  );
+
+  const effectiveSelectedCategory =
+    selectedCategory !== 'all' && !activeCategoryIds.has(selectedCategory)
+      ? 'all'
+      : selectedCategory;
+
+  const categoryTabs = useMemo(
+    () => [
+      { id: 'all', label: 'All menu' },
+      ...categories.map((category) => ({ id: category.id, label: category.name })),
+    ],
+    [categories],
+  );
+
+  const visibleMenu = useMemo(() => {
+    if (categories.length === 0) return menu;
+    return menu.filter((item) => activeCategoryIds.has(item.category));
+  }, [menu, categories.length, activeCategoryIds]);
 
   const itemQuantitiesInCart = useMemo(() => {
     const counts = new Map<string, number>();
@@ -49,111 +85,192 @@ export function StorefrontCatalog() {
   }, [cartSummary.lines]);
 
   const categoryCounts = useMemo(() => {
-    const counts = new Map<CategoryFilter, number>([['all', menu.length]]);
-    for (const category of MENU_CATEGORIES) {
+    const counts = new Map<string, number>([['all', visibleMenu.length]]);
+    for (const category of categories) {
       counts.set(category.id, 0);
     }
-    for (const item of menu) {
+    for (const item of visibleMenu) {
       counts.set(item.category, (counts.get(item.category) ?? 0) + 1);
     }
     return counts;
-  }, [menu]);
+  }, [visibleMenu, categories]);
 
   const priceRangeLabel = useMemo(() => {
-    if (menu.length === 0) return '—';
+    if (visibleMenu.length === 0) return '—';
     let min = Number.POSITIVE_INFINITY;
     let max = Number.NEGATIVE_INFINITY;
-    for (const item of menu) {
-      if (item.pricePhp < min) min = item.pricePhp;
-      if (item.pricePhp > max) max = item.pricePhp;
+    for (const item of visibleMenu) {
+      const display = getMenuItemDisplayPrice(item, optionGroups);
+      if (display.pricePhp < min) min = display.pricePhp;
+      if (display.pricePhp > max) max = display.pricePhp;
     }
     if (min === max) return formatPhp(min);
     return `${formatPhp(min)} – ${formatPhp(max)}`;
-  }, [menu]);
+  }, [visibleMenu, optionGroups]);
 
   const filteredItems = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
-    return menu.filter((item) => {
-      if (selectedCategory !== 'all' && item.category !== selectedCategory) return false;
-      if (availableOnly && !item.available) return false;
+    return visibleMenu.filter((item) => {
+      if (effectiveSelectedCategory !== 'all' && item.category !== effectiveSelectedCategory) {
+        return false;
+      }
+      if (availableOnly && !isMenuItemOrderable(item, optionGroups)) return false;
       if (!normalizedQuery) return true;
       return (
         item.name.toLowerCase().includes(normalizedQuery) ||
         item.description.toLowerCase().includes(normalizedQuery) ||
-        item.pattySpec.toLowerCase().includes(normalizedQuery)
+        item.specLabel.toLowerCase().includes(normalizedQuery)
       );
     });
-  }, [menu, selectedCategory, availableOnly, searchQuery]);
+  }, [visibleMenu, effectiveSelectedCategory, availableOnly, searchQuery, optionGroups]);
 
   const featuredHighlights = useMemo(
-    () => menu.filter((item) => item.featured).slice(0, 3),
-    [menu],
+    () => visibleMenu.filter((item) => item.featured).slice(0, 3),
+    [visibleMenu],
   );
 
-  const handleAddToCart = useCallback(
-    (itemId: string, addonIds: MenuAddonId[]) => {
+  const handleDirectAddToCart = useCallback(
+    (itemId: string) => {
       const targetItem = menu.find((item) => item.id === itemId);
       if (!targetItem) return;
-      addToCart(targetItem, { addonIds });
+      addToCart(targetItem, { selectedOptionIds: [], itemNote: '' });
     },
     [addToCart, menu],
+  );
+
+  const handleQuickAddFeatured = useCallback(
+    (item: MenuItem) => {
+      if (!isMenuItemOrderable(item, optionGroups)) return;
+      const activeGroups = getActiveItemOptionGroups(item, optionGroups);
+      const hasRequired = activeGroups.some((group) => group.required || group.minSelect > 0);
+      if (hasRequired) {
+        setCustomizingItem(item);
+        return;
+      }
+      const defaults = getDefaultSelectedOptionIds(item, optionGroups);
+      const validation = validateItemOptionSelections(item, defaults, optionGroups);
+      if (!validation.valid) {
+        setCustomizingItem(item);
+        return;
+      }
+      addToCart(item, { selectedOptionIds: defaults, itemNote: '' });
+      setHeroAnnouncement(`Added ${item.name} to cart.`);
+    },
+    [addToCart, optionGroups],
   );
 
   function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, currentIndex: number) {
     let targetIndex: number | null = null;
     if (event.key === 'ArrowRight') {
-      targetIndex = (currentIndex + 1) % CATEGORY_TABS.length;
+      targetIndex = (currentIndex + 1) % categoryTabs.length;
     } else if (event.key === 'ArrowLeft') {
-      targetIndex = (currentIndex - 1 + CATEGORY_TABS.length) % CATEGORY_TABS.length;
+      targetIndex = (currentIndex - 1 + categoryTabs.length) % categoryTabs.length;
     } else if (event.key === 'Home') {
       targetIndex = 0;
     } else if (event.key === 'End') {
-      targetIndex = CATEGORY_TABS.length - 1;
+      targetIndex = categoryTabs.length - 1;
     }
 
     if (targetIndex === null) return;
     event.preventDefault();
-    const targetTab = CATEGORY_TABS[targetIndex];
+    const targetTab = categoryTabs[targetIndex];
     if (!targetTab) return;
     setSelectedCategory(targetTab.id);
     tabRefs.current[targetTab.id]?.focus();
   }
 
   const hasActiveFilter =
-    selectedCategory !== 'all' || searchQuery.trim().length > 0 || availableOnly;
+    effectiveSelectedCategory !== 'all' || searchQuery.trim().length > 0 || availableOnly;
+  const heroTitle = store.heroHeadline || store.storeName;
+  const hasHeroImage = Boolean(store.heroImageUrl.trim());
+  const pickupLabel = store.pickupSpotLabel || 'Counter Pickup';
+  const menuSubtitle = store.landmark || store.address;
+
+  const showDineInBanner = Boolean(dineInTable && (!catalogQuery.isSuccess || store.dineInEnabled));
 
   return (
     <div className="space-y-8 pb-24">
+      {showDineInBanner ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-ui-accent/40 bg-ui-surface px-5 py-3 text-sm"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-md bg-ui-accent px-2 py-0.5 text-xs font-bold text-ui-on-accent">
+              Dine-in
+            </span>
+            <p className="font-semibold text-ui-text">Ordering for Table {dineInTable}</p>
+            <span className="text-xs text-ui-text-muted">
+              Your table number will be prefilled at checkout.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => clearDineInTable()}
+            className="rounded-lg border border-ui-border bg-ui-surface-muted px-2.5 py-1 text-xs font-semibold text-ui-text hover:bg-ui-canvas"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
+      {isOrderingPaused ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="rounded-2xl border border-ui-error/40 bg-ui-surface px-5 py-4 text-sm"
+        >
+          <p className="font-bold text-ui-error">Ordering is currently paused</p>
+          <p className="mt-1 text-ui-text-muted">
+            {store.closedNotice ||
+              'You can still browse the menu and prepare your bag. Placing orders will resume shortly.'}
+          </p>
+        </div>
+      ) : null}
+
       <section className="overflow-hidden rounded-3xl border border-ui-border bg-ui-surface">
         <div className="grid grid-cols-1 lg:grid-cols-12">
           <div className="flex flex-col justify-between gap-6 p-6 sm:p-8 lg:col-span-7">
             <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-ui-text-muted">
-                <span className="rounded-md border border-ui-border bg-ui-surface-muted px-2.5 py-1 text-ui-text">
-                  {STORE_METADATA.branch}
-                </span>
-                <span>{STORE_METADATA.hours}</span>
-                <span>·</span>
-                <span>{STORE_METADATA.contact}</span>
-              </div>
+              {store.branchLabel || store.hoursText || store.contactPhone ? (
+                <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-ui-text-muted">
+                  {store.branchLabel ? (
+                    <span className="rounded-md border border-ui-border bg-ui-surface-muted px-2.5 py-1 text-ui-text">
+                      {store.branchLabel}
+                    </span>
+                  ) : null}
+                  {store.hoursText ? <span>{store.hoursText}</span> : null}
+                  {store.hoursText && store.contactPhone ? <span aria-hidden="true">·</span> : null}
+                  {store.contactPhone ? <span>{store.contactPhone}</span> : null}
+                </div>
+              ) : null}
 
               <h1 className="text-3xl font-bold tracking-tight text-ui-text sm:text-4xl">
-                100g pure beef griddle burgers, made fresh on Chino Roces.
+                {heroTitle}
               </h1>
 
-              <p className="max-w-xl text-base leading-relaxed text-ui-text-muted">
-                Walk up beside Pickup Coffee near Eton WestEnd Square or place an order for Metro
-                Manila delivery. Pick your burgers below, customize with cheese, bacon, or
-                pineapple, and review your bag from the floating cart button at the bottom right.
-              </p>
+              {store.heroSubtext ? (
+                <p className="max-w-xl text-base leading-relaxed text-ui-text-muted">
+                  {store.heroSubtext}
+                </p>
+              ) : null}
             </div>
 
             <div className="space-y-4">
-              <div className="grid grid-cols-3 gap-3 rounded-2xl border border-ui-border bg-ui-surface-muted p-4">
-                <div>
-                  <p className="text-xs text-ui-text-muted">Patty standard</p>
-                  <p className="mt-0.5 text-sm font-semibold text-ui-text">100g Pure Beef</p>
-                </div>
+              <div
+                className={`grid gap-3 rounded-2xl border border-ui-border bg-ui-surface-muted p-4 ${
+                  store.heroBadgeLabel ? 'grid-cols-3' : 'grid-cols-2'
+                }`}
+              >
+                {store.heroBadgeLabel ? (
+                  <div>
+                    <p className="text-xs text-ui-text-muted">Specialty</p>
+                    <p className="mt-0.5 text-sm font-semibold text-ui-text">
+                      {store.heroBadgeLabel}
+                    </p>
+                  </div>
+                ) : null}
                 <div>
                   <p className="text-xs text-ui-text-muted">Menu range</p>
                   <p className="mt-0.5 text-sm font-semibold text-ui-text tabular-nums">
@@ -162,7 +279,7 @@ export function StorefrontCatalog() {
                 </div>
                 <div>
                   <p className="text-xs text-ui-text-muted">Pickup spot</p>
-                  <p className="mt-0.5 text-sm font-semibold text-ui-text">Eton WestEnd</p>
+                  <p className="mt-0.5 text-sm font-semibold text-ui-text">{pickupLabel}</p>
                 </div>
               </div>
 
@@ -186,71 +303,96 @@ export function StorefrontCatalog() {
                   )}
                 </div>
 
-                <p className="text-xs text-ui-text-muted">
-                  Also on{' '}
-                  <a
-                    href={STORE_METADATA.foodpandaUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline decoration-ui-border underline-offset-4 hover:text-ui-text"
-                  >
-                    Foodpanda
-                  </a>
-                  {' · '}
-                  <a
-                    href={STORE_METADATA.facebookUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline decoration-ui-border underline-offset-4 hover:text-ui-text"
-                  >
-                    Facebook
-                  </a>
-                </p>
+                {store.externalLinks.length > 0 ? (
+                  <p className="text-xs text-ui-text-muted">
+                    Also on{' '}
+                    {store.externalLinks.map((link, index) => (
+                      <span key={`${link.label}-${link.url}`}>
+                        {index > 0 ? ' · ' : ''}
+                        <a
+                          href={link.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline decoration-ui-border underline-offset-4 hover:text-ui-text"
+                        >
+                          {link.label}
+                        </a>
+                      </span>
+                    ))}
+                  </p>
+                ) : null}
               </div>
             </div>
           </div>
 
           <div className="relative flex flex-col justify-between border-t border-ui-border bg-ui-surface-muted lg:col-span-5 lg:border-t-0 lg:border-l">
-            <div className="relative aspect-[16/10] w-full flex-1 overflow-hidden lg:aspect-auto lg:min-h-[260px]">
-              <FoodImage
-                src={STORE_METADATA.bannerImageUrl}
-                alt="8Burgers Chino Roces Avenue signature burger showcase"
-                category="classic-burgers"
-                badgeText="8Burgers Chino Roces"
-                loading="eager"
-                fetchPriority="high"
-                className="h-full w-full"
-              />
-            </div>
+            {hasHeroImage ? (
+              <div className="relative aspect-[16/10] w-full flex-1 overflow-hidden lg:aspect-auto lg:min-h-[260px]">
+                <FoodImage
+                  src={store.heroImageUrl}
+                  alt={`${store.storeName}${store.branchLabel ? ` ${store.branchLabel}` : ''} showcase`}
+                  badgeText={store.storeName}
+                  loading="eager"
+                  fetchPriority="high"
+                  className="h-full w-full"
+                />
+              </div>
+            ) : (
+              <div className="flex flex-1 flex-col justify-center gap-3 p-6 sm:p-8 lg:min-h-[260px]">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-ui-accent text-lg font-extrabold text-ui-on-accent">
+                    {store.monogram}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate text-lg font-bold tracking-tight text-ui-text">
+                      {store.storeName}
+                    </p>
+                    {store.branchLabel ? (
+                      <p className="truncate text-xs text-ui-text-muted">{store.branchLabel}</p>
+                    ) : null}
+                  </div>
+                </div>
+                {store.address ? (
+                  <p className="text-sm leading-relaxed text-ui-text-muted">{store.address}</p>
+                ) : null}
+                {store.hoursText ? (
+                  <p className="text-xs font-medium text-ui-text-muted">{store.hoursText}</p>
+                ) : null}
+              </div>
+            )}
 
             {featuredHighlights.length > 0 ? (
               <div className="border-t border-ui-border bg-ui-surface p-4">
                 <p className="text-xs font-semibold tracking-wide text-ui-text-muted uppercase">
-                  Popular on Chino Roces
+                  Popular items
                 </p>
                 <div className="mt-2.5 grid grid-cols-3 gap-2">
-                  {featuredHighlights.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => {
-                        handleAddToCart(item.id, []);
-                        setHeroAnnouncement(`Added ${item.name} to cart.`);
-                      }}
-                      disabled={!item.available}
-                      aria-label={
-                        item.available
-                          ? `Quick add ${item.name}, ${formatPhp(item.pricePhp)}`
-                          : `${item.name} is sold out`
-                      }
-                      className="rounded-xl border border-ui-border bg-ui-surface-muted px-2.5 py-2 text-left transition-colors hover:border-ui-accent disabled:opacity-50"
-                    >
-                      <p className="truncate text-xs font-semibold text-ui-text">{item.name}</p>
-                      <p className="mt-0.5 text-xs font-bold text-ui-accent tabular-nums">
-                        {item.available ? formatPhp(item.pricePhp) : 'Sold out'}
-                      </p>
-                    </button>
-                  ))}
+                  {featuredHighlights.map((item) => {
+                    const orderable = isMenuItemOrderable(item, optionGroups);
+                    const display = getMenuItemDisplayPrice(item, optionGroups);
+                    const priceText = display.isFromPrice
+                      ? `From ${formatPhp(display.pricePhp)}`
+                      : formatPhp(display.pricePhp);
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => handleQuickAddFeatured(item)}
+                        disabled={!orderable}
+                        aria-label={
+                          orderable
+                            ? `Quick add ${item.name}, ${priceText}`
+                            : `${item.name} is sold out`
+                        }
+                        className="rounded-xl border border-ui-border bg-ui-surface-muted px-2.5 py-2 text-left transition-colors motion-reduce:transition-none hover:border-ui-accent disabled:opacity-50"
+                      >
+                        <p className="truncate text-xs font-semibold text-ui-text">{item.name}</p>
+                        <p className="mt-0.5 text-xs font-bold text-ui-accent tabular-nums">
+                          {orderable ? priceText : 'Sold out'}
+                        </p>
+                      </button>
+                    );
+                  })}
                 </div>
                 <p role="status" className="sr-only">
                   {heroAnnouncement}
@@ -267,9 +409,9 @@ export function StorefrontCatalog() {
             <h2 id="menu-heading" className="text-2xl font-bold tracking-tight text-ui-text">
               Menu
             </h2>
-            <p className="mt-1 text-sm text-ui-text-muted">
-              {STORE_METADATA.landmark} · Prices include freshly toasted buns and house dressings.
-            </p>
+            {menuSubtitle ? (
+              <p className="mt-1 text-sm text-ui-text-muted">{menuSubtitle}</p>
+            ) : null}
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -279,7 +421,7 @@ export function StorefrontCatalog() {
                 type="search"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Search burgers, salsa, fries..."
+                placeholder="Search menu items..."
                 aria-label="Search menu items"
                 className="w-full rounded-xl border border-ui-border bg-ui-surface px-3.5 py-2 text-sm text-ui-text placeholder:text-ui-text-muted sm:w-64"
               />
@@ -310,8 +452,8 @@ export function StorefrontCatalog() {
         </div>
 
         <div role="tablist" aria-label="Menu categories" className="flex flex-wrap gap-2">
-          {CATEGORY_TABS.map((category, index) => {
-            const active = selectedCategory === category.id;
+          {categoryTabs.map((category, index) => {
+            const active = effectiveSelectedCategory === category.id;
             const tabId = `${tabIdPrefix}-${category.id}`;
             return (
               <button
@@ -327,7 +469,7 @@ export function StorefrontCatalog() {
                 tabIndex={active ? 0 : -1}
                 onKeyDown={(event) => handleTabKeyDown(event, index)}
                 onClick={() => setSelectedCategory(category.id)}
-                className={`rounded-xl border px-3.5 py-2 text-sm font-medium transition-colors ${
+                className={`rounded-xl border px-3.5 py-2 text-sm font-medium transition-colors motion-reduce:transition-none ${
                   active
                     ? 'border-ui-accent bg-ui-accent text-ui-on-accent'
                     : 'border-ui-border bg-ui-surface text-ui-text hover:bg-ui-surface-muted'
@@ -341,12 +483,16 @@ export function StorefrontCatalog() {
 
         {hasActiveFilter && catalogQuery.isSuccess ? (
           <p role="status" className="text-xs text-ui-text-muted tabular-nums">
-            Showing {filteredItems.length} of {menu.length} menu{' '}
-            {menu.length === 1 ? 'item' : 'items'}
+            Showing {filteredItems.length} of {visibleMenu.length} menu{' '}
+            {visibleMenu.length === 1 ? 'item' : 'items'}
           </p>
         ) : null}
 
-        <div id={tabPanelId} role="tabpanel" aria-labelledby={`${tabIdPrefix}-${selectedCategory}`}>
+        <div
+          id={tabPanelId}
+          role="tabpanel"
+          aria-labelledby={`${tabIdPrefix}-${effectiveSelectedCategory}`}
+        >
           {catalogQuery.isPending ? (
             <div role="status" className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {[1, 2, 3].map((slot) => (
@@ -359,7 +505,7 @@ export function StorefrontCatalog() {
                   <div className="mt-2 h-4 w-full rounded bg-ui-surface-muted" />
                 </div>
               ))}
-              <span className="sr-only">Loading Chino Roces menu…</span>
+              <span className="sr-only">Loading menu…</span>
             </div>
           ) : catalogQuery.isError ? (
             <div
@@ -386,16 +532,16 @@ export function StorefrontCatalog() {
           ) : filteredItems.length === 0 ? (
             <div className="rounded-2xl border border-ui-border bg-ui-surface p-8 text-center">
               <p className="text-base font-semibold text-ui-text">
-                {menu.length === 0
+                {visibleMenu.length === 0
                   ? 'No menu items are currently listed.'
                   : 'No menu items match your filter.'}
               </p>
               <p className="mt-1 text-sm text-ui-text-muted">
-                {menu.length === 0
+                {visibleMenu.length === 0
                   ? 'Check back shortly as the kitchen updates today’s menu.'
                   : 'Try clearing your search query or switching back to all categories.'}
               </p>
-              {menu.length > 0 ? (
+              {visibleMenu.length > 0 ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -415,15 +561,29 @@ export function StorefrontCatalog() {
                 <MenuCard
                   key={item.id}
                   item={item}
-                  addons={addons}
+                  optionGroups={optionGroups}
                   qtyInCart={itemQuantitiesInCart.get(item.id) ?? 0}
-                  onAddToCart={handleAddToCart}
+                  onAddToCart={handleDirectAddToCart}
+                  onOpenCustomizer={setCustomizingItem}
                 />
               ))}
             </div>
           )}
         </div>
       </section>
+
+      {customizingItem ? (
+        <ItemCustomizerModal
+          item={customizingItem}
+          optionGroups={optionGroups}
+          onConfirm={(selection) => {
+            addToCart(customizingItem, selection);
+            setHeroAnnouncement(`Added ${customizingItem.name} to cart.`);
+            setCustomizingItem(null);
+          }}
+          onClose={() => setCustomizingItem(null)}
+        />
+      ) : null}
     </div>
   );
 }

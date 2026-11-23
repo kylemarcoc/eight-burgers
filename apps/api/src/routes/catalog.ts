@@ -1,4 +1,4 @@
-import { menuCategorySchema } from '@eight-burgers/contracts';
+import { slugIdSchema, type SlugId } from '@menu-kiosk/contracts';
 import { Hono } from 'hono';
 import { problemResponse } from '../lib/problem';
 import type { ApiDeps, ApiEnv } from '../types';
@@ -16,16 +16,16 @@ export function createCatalogRoutes(deps: Pick<ApiDeps, 'gateway'>): Hono<ApiEnv
     const availableParam = c.req.query('available');
     const qParam = c.req.query('q');
 
-    let category: ReturnType<typeof menuCategorySchema.parse> | undefined;
+    let category: SlugId | undefined;
     if (categoryParam) {
-      const parsed = menuCategorySchema.safeParse(categoryParam);
+      const parsed = slugIdSchema.safeParse(categoryParam);
       if (!parsed.success) {
         return problemResponse(c, {
           status: 400,
           code: 'INVALID_QUERY',
           title: 'Bad Request',
           detail: 'Unsupported menu category filter.',
-          fieldErrors: { category: ['Must be a valid menu category.'] },
+          fieldErrors: { category: ['Must be a valid category slug.'] },
         });
       }
       category = parsed.data;

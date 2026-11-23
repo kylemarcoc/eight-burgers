@@ -6,5 +6,12 @@ export const AdminCatalogManager = lazy(() =>
   })),
 );
 export { catalogKeys } from './api/catalog-api';
+export { ItemCustomizerModal } from './components/ItemCustomizerModal';
 export { StorefrontCatalog } from './components/StorefrontCatalog';
-export { useCatalogQuery, useDeliveryPricingMutations, useMenuMutations } from './hooks/useCatalog';
+export {
+  useCatalogQuery,
+  useCategoryMutations,
+  useDeliveryPricingMutations,
+  useMenuMutations,
+  useOptionGroupMutations,
+} from './hooks/useCatalog';

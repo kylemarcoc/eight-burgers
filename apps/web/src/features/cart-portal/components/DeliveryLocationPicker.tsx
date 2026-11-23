@@ -1,4 +1,4 @@
-import type { LocationSuggestion } from '@eight-burgers/contracts';
+import type { LocationSuggestion } from '@menu-kiosk/contracts';
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import { ApiError, getApiErrorMessage } from '@/shared/lib/api-error';
 import { isValidCoordinates } from '@/shared/shop/shop-storage';
@@ -11,6 +11,7 @@ export type DeliveryLocationPickerProps = {
   pin: GeoCoordinates | null;
   outOfRange: boolean;
   distanceKm: number | null;
+  originLabel?: string;
   errorText?: string;
   errorId?: string;
   onSelectLocation: (nextPin: GeoCoordinates, resolvedAddress?: string | null) => void;
@@ -25,6 +26,7 @@ export function DeliveryLocationPicker({
   pin,
   outOfRange,
   distanceKm,
+  originLabel = 'shop',
   errorText,
   errorId,
   onSelectLocation,
@@ -371,7 +373,7 @@ export function DeliveryLocationPicker({
             setIsOpen(false);
             setActiveIndex(-1);
           }}
-          placeholder="Search street, building, or landmark in Metro Manila"
+          placeholder="Search street, building, or landmark"
           className={`w-full rounded-xl border bg-ui-canvas px-3 py-2 text-xs font-medium text-ui-text ${
             errorText ? 'border-ui-error' : 'border-ui-border'
           }`}
@@ -385,9 +387,7 @@ export function DeliveryLocationPicker({
             className="absolute right-0 left-0 z-20 mt-1 max-h-56 overflow-y-auto rounded-xl border border-ui-border bg-ui-surface p-1 shadow-lg"
           >
             {searching ? (
-              <p className="px-3 py-2 text-xs text-ui-text-muted">
-                Searching Metro Manila addresses…
-              </p>
+              <p className="px-3 py-2 text-xs text-ui-text-muted">Searching addresses…</p>
             ) : suggestions.length > 0 ? (
               suggestions.map((suggestion, index) => {
                 const isActive = index === activeIndex;
@@ -436,7 +436,7 @@ export function DeliveryLocationPicker({
             <span className="font-semibold text-ui-text">
               {selectedAddress ?? 'Device location'}
             </span>
-            {distanceKm !== null ? ` (~${distanceKm.toFixed(1)} km from Chino Roces)` : ''}
+            {distanceKm !== null ? ` (~${distanceKm.toFixed(1)} km from ${originLabel})` : ''}
           </span>
           <button
             type="button"

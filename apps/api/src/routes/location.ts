@@ -1,18 +1,9 @@
-import { geoCoordinatesSchema } from '@eight-burgers/contracts';
+import { geoCoordinatesSchema } from '@menu-kiosk/contracts';
 import { Hono } from 'hono';
 import { createOsmLocationProvider } from '../lib/location-provider';
 import { problemResponse, zodFieldErrors } from '../lib/problem';
-import { SlidingWindowRateLimiter } from '../lib/rate-limit';
+import { SlidingWindowRateLimiter, extractClientIp } from '../lib/rate-limit';
 import type { ApiDeps, ApiEnv } from '../types';
-
-function extractClientIp(headers: Headers): string {
-  const forwarded = headers.get('x-forwarded-for');
-  if (forwarded) {
-    const first = forwarded.split(',')[0]?.trim();
-    if (first) return first;
-  }
-  return headers.get('x-real-ip') ?? 'local';
-}
 
 function parseCoordinateParam(raw: string | undefined): number {
   if (!raw || raw.trim().length === 0) return Number.NaN;
@@ -20,14 +11,30 @@ function parseCoordinateParam(raw: string | undefined): number {
 }
 
 export function createLocationRoutes(
-  deps: Pick<ApiDeps, 'locationProvider' | 'locationRateLimiter'>,
+  deps: Pick<
+    ApiDeps,
+    'config' | 'gateway' | 'locationProvider' | 'locationRateLimiter' | 'storeProfileCache'
+  >,
 ): Hono<ApiEnv> {
   const app = new Hono<ApiEnv>();
   const provider = deps.locationProvider ?? createOsmLocationProvider();
   const limiter = deps.locationRateLimiter ?? new SlidingWindowRateLimiter(60, 60_000);
 
+  async function resolveBiasOrigin() {
+    try {
+      const profile = deps.storeProfileCache
+        ? await deps.storeProfileCache.get()
+        : await deps.gateway.getStoreProfile();
+      return profile.originCoords ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   app.get('/location/search', async (c) => {
-    const decision = limiter.check(`location:${extractClientIp(c.req.raw.headers)}`);
+    const decision = limiter.check(
+      `location:${extractClientIp(c.req.raw.headers, deps.config.trustProxy)}`,
+    );
     if (!decision.allowed) {
       c.header('Retry-After', String(decision.retryAfterSeconds));
       return problemResponse(c, {
@@ -52,7 +59,8 @@ export function createLocationRoutes(
     }
 
     try {
-      const suggestions = await provider.search(query, c.req.raw.signal);
+      const biasOrigin = await resolveBiasOrigin();
+      const suggestions = await provider.search(query, c.req.raw.signal, biasOrigin);
       c.header('Cache-Control', 'public, max-age=300');
       return c.json({ data: suggestions }, 200);
     } catch {
@@ -66,7 +74,9 @@ export function createLocationRoutes(
   });
 
   app.get('/location/reverse', async (c) => {
-    const decision = limiter.check(`location:${extractClientIp(c.req.raw.headers)}`);
+    const decision = limiter.check(
+      `location:${extractClientIp(c.req.raw.headers, deps.config.trustProxy)}`,
+    );
     if (!decision.allowed) {
       c.header('Retry-After', String(decision.retryAfterSeconds));
       return problemResponse(c, {

@@ -1,4 +1,4 @@
-import type { OrderRecord } from '@eight-burgers/contracts';
+import type { OrderRecord } from '@menu-kiosk/contracts';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AdminAuthGuard } from '@/features/admin-auth';
@@ -13,18 +13,31 @@ const SAMPLE_ORDERS: OrderRecord[] = [
     customerName: 'Marco Santos',
     contactNumber: '09171234567',
     fulfillment: 'delivery',
+    tableNumber: '',
     deliveryEtaMinutes: '20–30 min',
     deliveryPin: { lat: 14.5547, lng: 121.0244 },
     deliveryDistanceKm: 1.4,
     addressOrNotes: 'Leave with lobby guard',
     paymentMethod: 'gcash',
+    paymentStatus: 'pending_verification',
+    paymentReference: 'GCASH-882190',
     lines: [
       {
         lineId: 'burger-deluxe',
         itemId: 'burger-deluxe',
         name: 'Burger Deluxe',
         unitPricePhp: 148,
+        selectedOptions: [
+          {
+            groupId: 'add-ons',
+            groupName: 'Add-ons',
+            choiceId: 'sliced-cheese',
+            choiceName: 'Extra Cheese',
+            priceDeltaPhp: 25,
+          },
+        ],
         addonNames: ['Extra Cheese'],
+        itemNote: 'No onions please',
         addonsPricePhp: 25,
         quantity: 2,
         lineTotalPhp: 346,
@@ -42,16 +55,21 @@ const SAMPLE_ORDERS: OrderRecord[] = [
     queueNumber: '#8B-102',
     customerName: 'Ana Reyes',
     contactNumber: '',
-    fulfillment: 'kiosk-pickup',
+    fulfillment: 'pickup',
+    tableNumber: '',
     addressOrNotes: '',
     paymentMethod: 'cash',
+    paymentStatus: 'unpaid',
+    paymentReference: '',
     lines: [
       {
         lineId: 'chicano-burger',
         itemId: 'chicano-burger',
         name: 'Chicano Burger',
         unitPricePhp: 168,
+        selectedOptions: [],
         addonNames: [],
+        itemNote: '',
         addonsPricePhp: 0,
         quantity: 1,
         lineTotalPhp: 168,
@@ -93,6 +111,8 @@ describe('AdminOrdersManager', () => {
 
     // Defaults to Active queue so completed orders do not crowd page 1
     expect(await screen.findByRole('heading', { level: 3, name: 'Marco Santos' })).toBeTruthy();
+    expect(screen.getByText('Note: No onions please')).toBeTruthy();
+    expect(screen.getByText('GCASH-882190')).toBeTruthy();
     expect(screen.queryByRole('heading', { level: 3, name: 'Ana Reyes' })).toBeNull();
     expect(screen.getByRole('button', { name: /^completed \(1\)$/i })).toBeTruthy();
 
@@ -119,16 +139,21 @@ describe('AdminOrdersManager', () => {
         queueNumber: `#8B-${seq}`,
         customerName: `Customer ${seq}`,
         contactNumber: '',
-        fulfillment: 'kiosk-pickup',
+        fulfillment: 'pickup',
+        tableNumber: '',
         addressOrNotes: '',
         paymentMethod: 'cash',
+        paymentStatus: 'unpaid',
+        paymentReference: '',
         lines: [
           {
             lineId: 'burger-deluxe',
             itemId: 'burger-deluxe',
             name: 'Burger Deluxe',
             unitPricePhp: 148,
+            selectedOptions: [],
             addonNames: [],
+            itemNote: '',
             addonsPricePhp: 0,
             quantity: 1,
             lineTotalPhp: 148,
@@ -177,7 +202,7 @@ describe('AdminOrdersManager', () => {
     );
 
     const statusSelect = await screen.findByLabelText(/order status for #8b-101/i);
-    fireEvent.change(statusSelect, { target: { value: 'grilling' } });
+    fireEvent.change(statusSelect, { target: { value: 'preparing' } });
 
     await waitFor(() => {
       expect(screen.getByRole('status').textContent).toContain(
@@ -239,16 +264,21 @@ describe('AdminOrdersManager', () => {
           queueNumber: '#8B-103',
           customerName: 'Cancelled Guest',
           contactNumber: '',
-          fulfillment: 'kiosk-pickup',
+          fulfillment: 'pickup',
+          tableNumber: '',
           addressOrNotes: '',
           paymentMethod: 'cash',
+          paymentStatus: 'unpaid',
+          paymentReference: '',
           lines: [
             {
               lineId: 'burger-deluxe',
               itemId: 'burger-deluxe',
               name: 'Burger Deluxe',
               unitPricePhp: 148,
+              selectedOptions: [],
               addonNames: [],
+              itemNote: '',
               addonsPricePhp: 0,
               quantity: 1,
               lineTotalPhp: 148,
@@ -278,5 +308,107 @@ describe('AdminOrdersManager', () => {
     fireEvent.click(screen.getByRole('button', { name: /^cancelled \(1\)$/i }));
     expect(await screen.findByRole('heading', { level: 3, name: 'Cancelled Guest' })).toBeTruthy();
     expect(screen.queryByRole('heading', { level: 3, name: 'Marco Santos' })).toBeNull();
+  });
+
+  it('shows StoreOrderingStatusToggle and payment confirmation controls for Cashier (including Cash & Dine-in Table badge) and hides them from Staff', async () => {
+    const dineInCashOrder: OrderRecord = {
+      id: '00000000-0000-4000-8000-000000000104',
+      queueNumber: '#8B-104',
+      customerName: 'Tessa Lim',
+      contactNumber: '',
+      fulfillment: 'dine-in',
+      tableNumber: '7',
+      addressOrNotes: '',
+      paymentMethod: 'cash',
+      paymentStatus: 'unpaid',
+      paymentReference: '',
+      lines: [
+        {
+          lineId: 'burger-deluxe',
+          itemId: 'burger-deluxe',
+          name: 'Burger Deluxe',
+          unitPricePhp: 148,
+          selectedOptions: [],
+          addonNames: [],
+          itemNote: '',
+          addonsPricePhp: 0,
+          quantity: 1,
+          lineTotalPhp: 148,
+        },
+      ],
+      subtotalPhp: 148,
+      deliveryFeePhp: 0,
+      totalPhp: 148,
+      status: 'received',
+      createdAtIso: '2026-11-22T04:16:00.000Z',
+      version: 1,
+    };
+
+    const firstSampleOrder = SAMPLE_ORDERS[0];
+    if (!firstSampleOrder) {
+      throw new Error('Expected sample order.');
+    }
+
+    const { state } = installMockShopApi({
+      authenticated: true,
+      role: 'cashier',
+      initialOrders: [firstSampleOrder, dineInCashOrder],
+    });
+    render(
+      <TestQueryWrapper>
+        <AdminOrdersManager role="cashier" />
+      </TestQueryWrapper>,
+    );
+
+    expect(await screen.findByText('Table 7')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /pending review \(1\)/i })).toBeTruthy();
+
+    // Filter by Pending review -> shows only Marco Santos
+    fireEvent.click(screen.getByRole('button', { name: /pending review \(1\)/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 3, name: 'Marco Santos' })).toBeTruthy();
+      expect(screen.queryByRole('heading', { level: 3, name: 'Tessa Lim' })).toBeNull();
+    });
+
+    // Reset payment filter to All payments and confirm payment on both GCash and Cash orders
+    fireEvent.click(screen.getByRole('button', { name: /all payments/i }));
+    expect(await screen.findByRole('heading', { level: 3, name: 'Tessa Lim' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /mark #8b-104 paid/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('status').textContent).toContain('Marked #8B-104 as paid.');
+    });
+    expect(state.orders.find((o) => o.queueNumber === '#8B-104')?.paymentStatus).toBe('paid');
+
+    fireEvent.click(await screen.findByRole('button', { name: /revert #8b-104 to unpaid/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('status').textContent).toContain('Reverted #8B-104 to unpaid.');
+    });
+    expect(state.orders.find((o) => o.queueNumber === '#8B-104')?.paymentStatus).toBe('unpaid');
+
+    // Cashier can also pause orders
+    const pauseButton = screen.getByRole('button', { name: /pause orders/i });
+    fireEvent.click(pauseButton);
+    await waitFor(() => {
+      expect(state.store.acceptingOrders).toBe(false);
+    });
+
+    // Staff cannot pause orders or mark orders paid
+    cleanup();
+    vi.restoreAllMocks();
+    installMockShopApi({
+      authenticated: true,
+      role: 'staff',
+      initialOrders: [dineInCashOrder],
+    });
+    render(
+      <TestQueryWrapper>
+        <AdminOrdersManager role="staff" />
+      </TestQueryWrapper>,
+    );
+
+    expect(await screen.findByRole('heading', { level: 3, name: 'Tessa Lim' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /pause orders/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /mark #8b-104 paid/i })).toBeNull();
   });
 });

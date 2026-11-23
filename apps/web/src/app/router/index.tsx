@@ -13,6 +13,9 @@ const AdminPage = lazy(() =>
 const AdminOrdersPage = lazy(() =>
   import('@/routes/AdminOrdersPage').then((module) => ({ default: module.AdminOrdersPage })),
 );
+const AdminSettingsPage = lazy(() =>
+  import('@/routes/AdminSettingsPage').then((module) => ({ default: module.AdminSettingsPage })),
+);
 const AdminTeamPage = lazy(() =>
   import('@/routes/AdminTeamPage').then((module) => ({ default: module.AdminTeamPage })),
 );
@@ -62,6 +65,7 @@ function AppRouter() {
               <Route path="/admin" element={<AdminLayout />}>
                 <Route index element={<AdminPage />} />
                 <Route path="orders" element={<AdminOrdersPage />} />
+                <Route path="settings" element={<AdminSettingsPage />} />
                 <Route path="team" element={<AdminTeamPage />} />
               </Route>
               <Route path="*" element={<NotFoundPage />} />

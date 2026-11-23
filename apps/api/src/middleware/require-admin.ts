@@ -1,4 +1,4 @@
-import { hasAdminRole, type AdminRole } from '@eight-burgers/contracts';
+import { hasAdminRole, type AdminRole } from '@menu-kiosk/contracts';
 import type { MiddlewareHandler } from 'hono';
 import { refreshAdminSessionSingleFlight } from '../lib/auth-refresh';
 import { clearAuthCookies, readAuthCookies, setAuthCookies } from '../lib/cookies';

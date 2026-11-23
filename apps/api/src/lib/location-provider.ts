@@ -1,13 +1,16 @@
 import {
-  STORE_ORIGIN_COORDS,
   isValidCoordinates,
   type GeoCoordinates,
   type LocationReverseResult,
   type LocationSuggestion,
-} from '@eight-burgers/contracts';
+} from '@menu-kiosk/contracts';
 
 export type LocationProvider = {
-  search: (query: string, signal?: AbortSignal) => Promise<LocationSuggestion[]>;
+  search: (
+    query: string,
+    signal?: AbortSignal,
+    biasOrigin?: GeoCoordinates | null,
+  ) => Promise<LocationSuggestion[]>;
   reverse: (coords: GeoCoordinates, signal?: AbortSignal) => Promise<LocationReverseResult | null>;
 };
 
@@ -58,7 +61,7 @@ const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_CACHE_TTL_MS = 5 * 60_000;
 const DEFAULT_MAX_CACHE_ENTRIES = 200;
 const PH_BBOX = '116.8,4.5,126.7,21.2';
-const BFF_USER_AGENT = 'eight-burgers-bff/1.0';
+const BFF_USER_AGENT = 'menu-kiosk-bff/1.0';
 
 function readNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -299,11 +302,19 @@ export function createOsmLocationProvider(
   const reverseCache = new BoundedTtlCache<LocationReverseResult | null>(ttlMs, maxEntries, now);
 
   return {
-    async search(query, signal) {
+    async search(query, signal, biasOrigin) {
       const trimmed = query.trim();
       if (!trimmed) return [];
 
-      const cacheKey = trimmed.toLowerCase();
+      const validBias: GeoCoordinates | null =
+        biasOrigin && isValidCoordinates(biasOrigin)
+          ? { lat: roundCoord(biasOrigin.lat), lng: roundCoord(biasOrigin.lng) }
+          : null;
+
+      const biasKey = validBias
+        ? `${validBias.lat.toFixed(4)},${validBias.lng.toFixed(4)}`
+        : 'none';
+      const cacheKey = `${trimmed.toLowerCase()}|${biasKey}`;
       const cached = searchCache.get(cacheKey);
       if (cached) {
         return cached.map((entry) => ({
@@ -316,8 +327,10 @@ export function createOsmLocationProvider(
       url.searchParams.set('q', trimmed);
       url.searchParams.set('limit', '6');
       url.searchParams.set('lang', 'en');
-      url.searchParams.set('lat', String(STORE_ORIGIN_COORDS.lat));
-      url.searchParams.set('lon', String(STORE_ORIGIN_COORDS.lng));
+      if (validBias) {
+        url.searchParams.set('lat', String(validBias.lat));
+        url.searchParams.set('lon', String(validBias.lng));
+      }
       url.searchParams.set('bbox', PH_BBOX);
 
       const timed = createTimedSignal(timeoutMs, signal);

@@ -16,16 +16,21 @@ export type AdminPermissions = {
   canManageDelivery: boolean;
   canManageOrders: boolean;
   canManageTeam: boolean;
+  canConfirmPayment: boolean;
+  canPauseOrders: boolean;
 };
 
 export function getAdminPermissions(role: AdminRole): AdminPermissions {
   const isOwner = role === 'owner';
+  const isOwnerOrCashier = role === 'owner' || role === 'cashier';
   return {
     canManageCatalog: isOwner,
     canToggleMenuStock: true,
     canManageDelivery: isOwner,
     canManageOrders: true,
     canManageTeam: isOwner,
+    canConfirmPayment: isOwnerOrCashier,
+    canPauseOrders: isOwnerOrCashier,
   };
 }
 

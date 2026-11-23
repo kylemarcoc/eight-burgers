@@ -20,24 +20,36 @@ describe('auth.schema RBAC helpers', () => {
     expect(adminRoleSchema.safeParse('').success).toBe(false);
   });
 
-  it('grants full permissions to owner and scoped stock + order permissions to cashier and staff', () => {
+  it('grants full permissions to owner, payment+pause to cashier, and scoped stock+order to staff', () => {
     expect(getAdminPermissions('owner')).toEqual({
       canManageCatalog: true,
       canToggleMenuStock: true,
       canManageDelivery: true,
       canManageOrders: true,
       canManageTeam: true,
+      canConfirmPayment: true,
+      canPauseOrders: true,
     });
 
-    for (const role of ['cashier', 'staff'] as const) {
-      expect(getAdminPermissions(role)).toEqual({
-        canManageCatalog: false,
-        canToggleMenuStock: true,
-        canManageDelivery: false,
-        canManageOrders: true,
-        canManageTeam: false,
-      });
-    }
+    expect(getAdminPermissions('cashier')).toEqual({
+      canManageCatalog: false,
+      canToggleMenuStock: true,
+      canManageDelivery: false,
+      canManageOrders: true,
+      canManageTeam: false,
+      canConfirmPayment: true,
+      canPauseOrders: true,
+    });
+
+    expect(getAdminPermissions('staff')).toEqual({
+      canManageCatalog: false,
+      canToggleMenuStock: true,
+      canManageDelivery: false,
+      canManageOrders: true,
+      canManageTeam: false,
+      canConfirmPayment: false,
+      canPauseOrders: false,
+    });
   });
 
   it('checks role membership via hasAdminRole', () => {
@@ -49,12 +61,12 @@ describe('auth.schema RBAC helpers', () => {
 
   it('validates createAdminUserRequestSchema and normalizes email casing', () => {
     const parsed = createAdminUserRequestSchema.parse({
-      email: '  Cashier2@EightBurgers.Local  ',
+      email: '  Cashier2@YourShop.Local  ',
       password: 'StrongPassword123!',
       role: 'cashier',
     });
     expect(parsed).toEqual({
-      email: 'cashier2@eightburgers.local',
+      email: 'cashier2@yourshop.local',
       password: 'StrongPassword123!',
       role: 'cashier',
     });
@@ -69,7 +81,7 @@ describe('auth.schema RBAC helpers', () => {
 
     expect(
       createAdminUserRequestSchema.safeParse({
-        email: 'staff2@eightburgers.local',
+        email: 'staff2@yourshop.local',
         password: 'short',
         role: 'staff',
       }).success,

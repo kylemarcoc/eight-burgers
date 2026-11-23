@@ -1,4 +1,4 @@
-import type { ProblemDetail } from '@eight-burgers/contracts';
+import type { ProblemDetail } from '@menu-kiosk/contracts';
 
 export type ApiFailure =
   | {

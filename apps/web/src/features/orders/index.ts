@@ -8,6 +8,8 @@ export {
   useOrderReceiptQuery,
   usePlaceOrderMutation,
   usePublicOrderTrackerQuery,
+  useSubmitPaymentReferenceMutation,
+  useUpdateOrderPaymentStatusMutation,
   useUpdateOrderStatusMutation,
 } from './hooks/useOrders';
 export type { AdminOrdersQueryOptions } from './hooks/useOrders';
