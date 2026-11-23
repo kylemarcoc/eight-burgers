@@ -30,13 +30,37 @@ function CartDrawerTestHarness({ initialItemId = 'burger-deluxe' }: { initialIte
   );
 }
 
+const ORIGINAL_GEOLOCATION_DESCRIPTOR = Object.getOwnPropertyDescriptor(navigator, 'geolocation');
+
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
   resetCartStore();
   document.body.style.overflow = '';
+  if (ORIGINAL_GEOLOCATION_DESCRIPTOR) {
+    Object.defineProperty(navigator, 'geolocation', ORIGINAL_GEOLOCATION_DESCRIPTOR);
+  } else {
+    Reflect.deleteProperty(navigator, 'geolocation');
+  }
   vi.restoreAllMocks();
 });
+
+function createGeolocationPosition(latitude: number, longitude: number): GeolocationPosition {
+  return {
+    coords: {
+      latitude,
+      longitude,
+      accuracy: 10,
+      altitude: null,
+      altitudeAccuracy: null,
+      heading: null,
+      speed: null,
+      toJSON: () => ({}),
+    },
+    timestamp: Date.now(),
+    toJSON: () => ({}),
+  };
+}
 
 describe('CartPortalDrawer', () => {
   it('moves focus into the modal on open, traps Tab/Shift+Tab, and restores focus on Escape', () => {
@@ -90,7 +114,7 @@ describe('CartPortalDrawer', () => {
     expect(within(dialog).getByText('Your cart is empty.')).toBeTruthy();
   });
 
-  it('wires validation errors with aria-invalid/aria-describedby, focuses pin search when only pin is missing, and preserves input', async () => {
+  it('wires validation errors with aria-invalid/aria-describedby, focuses address when only address is missing, and preserves input', async () => {
     installMockShopApi();
     render(
       <TestQueryWrapper>
@@ -106,20 +130,13 @@ describe('CartPortalDrawer', () => {
     const nameInput = within(dialog).getByLabelText(/your name/i);
 
     fireEvent.click(within(dialog).getByRole('radio', { name: /delivery/i }));
-    const pinSearchInput = await within(dialog).findByLabelText(/pin delivery location/i);
+    expect(await within(dialog).findByLabelText(/delivery area/i)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: /buy order/i }));
 
     expect(nameInput.getAttribute('aria-invalid')).toBe('true');
     const nameErrorId = nameInput.getAttribute('aria-describedby');
     expect(nameErrorId).toBeTruthy();
     expect(document.getElementById(nameErrorId ?? '')?.textContent).toContain('Enter your name');
-
-    expect(pinSearchInput.getAttribute('aria-invalid')).toBe('true');
-    const pinErrorId = pinSearchInput.getAttribute('aria-describedby');
-    expect(pinErrorId).toBeTruthy();
-    expect(document.getElementById(pinErrorId ?? '')?.textContent).toContain(
-      'Pin your delivery location on the map',
-    );
 
     const contactInput = within(dialog).getByLabelText(/mobile number/i);
     const notesInput = within(dialog).getByLabelText(/delivery address/i);
@@ -128,17 +145,38 @@ describe('CartPortalDrawer', () => {
 
     fireEvent.change(nameInput, { target: { value: 'Marco' } });
     fireEvent.change(contactInput, { target: { value: '09171234567' } });
-    fireEvent.change(notesInput, { target: { value: 'Yakal St, Makati' } });
     fireEvent.click(within(dialog).getByRole('button', { name: /buy order/i }));
-    expect(document.activeElement).toBe(pinSearchInput);
+    expect(document.activeElement).toBe(notesInput);
 
     fireEvent.click(within(dialog).getByRole('radio', { name: /kiosk pickup/i }));
-    expect(within(dialog).queryByText(/pin your delivery location on the map/i)).toBeNull();
+    expect(within(dialog).queryByText(/enter your building, unit, or street/i)).toBeNull();
     expect((nameInput as HTMLInputElement).value).toBe('Marco');
   });
 
-  it('places a pinned delivery order via the API, copies summary with Google Maps link, and dismisses the receipt cleanly', async () => {
-    installMockShopApi();
+  it('places a GPS delivery order via "Use my location", auto-fills address, copies summary with Google Maps link, and dismisses the receipt cleanly', async () => {
+    installMockShopApi({
+      onExternalFetch: async () =>
+        new Response(
+          JSON.stringify({
+            address: {
+              road: 'Chino Roces Avenue',
+              neighbourhood: 'San Antonio',
+              city: 'Makati',
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    });
+
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      value: {
+        getCurrentPosition: vi.fn((success: PositionCallback) => {
+          success(createGeolocationPosition(14.5608, 121.0124));
+        }),
+      },
+    });
+
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -164,12 +202,13 @@ describe('CartPortalDrawer', () => {
       target: { value: '09171234567' },
     });
 
-    const chinoRocesPinBtn = await within(dialog).findByRole('button', { name: 'Chino Roces' });
-    fireEvent.click(chinoRocesPinBtn);
+    fireEvent.click(within(dialog).getByRole('button', { name: /^use my location$/i }));
 
-    fireEvent.change(within(dialog).getByLabelText(/delivery address/i), {
-      target: { value: 'Chino Roces Tower' },
+    const addressInput = within(dialog).getByLabelText(/delivery address/i) as HTMLInputElement;
+    await waitFor(() => {
+      expect(addressInput.value).toBe('Chino Roces Avenue, San Antonio, Makati');
     });
+
     fireEvent.change(within(dialog).getByLabelText(/payment method/i), {
       target: { value: 'gcash' },
     });
@@ -193,13 +232,22 @@ describe('CartPortalDrawer', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('auto-locks delivery zone by pin, blocks out-of-range pins, and unlocks free delivery above minimum subtotal', async () => {
+  it('supports manual delivery area selection, blocks out-of-range device GPS with manual override, and unlocks free delivery above minimum subtotal', async () => {
     installMockShopApi({
       onExternalFetch: async () =>
-        new Response(
-          JSON.stringify([{ lat: '14.1153', lon: '120.9621', display_name: 'Tagaytay, Cavite' }]),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        ),
+        new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    });
+
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      value: {
+        getCurrentPosition: vi.fn((success: PositionCallback) => {
+          success(createGeolocationPosition(14.1153, 120.9621));
+        }),
+      },
     });
 
     render(
@@ -215,25 +263,23 @@ describe('CartPortalDrawer', () => {
     await within(dialog).findByText('Overload Burger');
     fireEvent.click(within(dialog).getByRole('radio', { name: /delivery/i }));
 
-    const bgcPinBtn = await within(dialog).findByRole('button', { name: 'BGC' });
-    fireEvent.click(bgcPinBtn);
+    const areaSelect = within(dialog).getByLabelText(/delivery area/i);
+    fireEvent.change(areaSelect, { target: { value: 'bgc-pasay-mandaluyong' } });
     expect(within(dialog).getByRole('button', { name: /buy order · ₱373/i })).toBeTruthy();
 
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Alabang' }));
+    fireEvent.change(areaSelect, { target: { value: 'qc-south-metro' } });
     expect(within(dialog).getByRole('button', { name: /buy order · ₱423/i })).toBeTruthy();
 
-    fireEvent.change(within(dialog).getByLabelText(/pin delivery location/i), {
-      target: { value: 'Tagaytay' },
-    });
-    fireEvent.click(within(dialog).getByRole('button', { name: /^find$/i }));
-    await waitFor(() => {
-      expect(within(dialog).getByText('Outside delivery area')).toBeTruthy();
-    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^use my location$/i }));
+    expect(await within(dialog).findByText('Outside delivery area')).toBeTruthy();
     expect(
       (within(dialog).getByRole('button', { name: /buy order/i }) as HTMLButtonElement).disabled,
     ).toBe(true);
 
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Alabang' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /choose delivery area manually/i }));
+    expect(within(dialog).queryByText('Outside delivery area')).toBeNull();
+    expect(within(dialog).getByRole('button', { name: /buy order · ₱423/i })).toBeTruthy();
+
     fireEvent.click(
       within(dialog).getByRole('button', { name: /increase quantity of overload burger/i }),
     );

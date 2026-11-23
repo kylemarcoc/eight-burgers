@@ -1,15 +1,5 @@
 import { normalizeQueueNumber, type PublicOrderTracker } from '@eight-burgers/contracts';
-import {
-  Suspense,
-  lazy,
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type FormEvent,
-} from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type SubmitEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useCatalogQuery } from '@/features/menu-catalog';
 import {
@@ -19,7 +9,6 @@ import {
   usePlaceOrderMutation,
   usePublicOrderTrackerQuery,
 } from '@/features/orders';
-import { ErrorBoundary } from '@/shared/components/ErrorBoundary';
 import { FoodImage } from '@/shared/components/FoodImage';
 import { getApiErrorMessage, isApiError } from '@/shared/lib/api-error';
 import { STORE_METADATA } from '@/shared/shop/eight-burgers-seed';
@@ -45,8 +34,7 @@ import {
   useTrackedQueueNumber,
 } from '@/shared/store/useCartStore';
 import { useResolvedCartSummary } from '../hooks/useResolvedCartSummary';
-
-const DeliveryMapPicker = lazy(() => import('./DeliveryMapPicker'));
+import { DeliveryLocationPicker } from './DeliveryLocationPicker';
 
 const EMPTY_DELIVERY_PRICING: DeliveryPricingConfig = {
   zones: [],
@@ -169,37 +157,6 @@ function createIdempotencyKey(): string {
   return `eb-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
 }
 
-function MapPickerErrorFallback({ onRetry }: { onRetry: () => void }) {
-  return (
-    <div
-      role="alert"
-      className="flex min-h-[330px] flex-col items-center justify-center gap-3 rounded-xl border border-ui-error/40 bg-ui-surface p-4 text-center text-xs text-ui-error"
-    >
-      <p className="font-semibold">Unable to load the interactive delivery map right now.</p>
-      <p className="text-ui-text-muted">
-        Retry loading the map, reload the page after an update, or switch to Kiosk Pickup to place
-        your order.
-      </p>
-      <div className="flex flex-wrap items-center justify-center gap-2">
-        <button
-          type="button"
-          onClick={onRetry}
-          className="rounded-lg border border-ui-border bg-ui-surface-muted px-3 py-1.5 font-semibold text-ui-text hover:bg-ui-canvas"
-        >
-          Retry map
-        </button>
-        <button
-          type="button"
-          onClick={() => window.location.reload()}
-          className="rounded-lg bg-ui-accent px-3 py-1.5 font-semibold text-ui-on-accent hover:bg-ui-accent-hover"
-        >
-          Reload page
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function buildSmsOrderHref(contact: string, body: string): string {
   const digits = contact.replace(/[^0-9+]/g, '');
   return `sms:${digits}?body=${encodeURIComponent(body)}`;
@@ -208,7 +165,6 @@ function buildSmsOrderHref(contact: string, body: string): string {
 type CheckoutFieldErrors = {
   customerName?: string;
   contactNumber?: string;
-  deliveryPin?: string;
   addressOrNotes?: string;
 };
 
@@ -299,6 +255,7 @@ export function CartPortalDrawer() {
   const [customerName, setCustomerName] = useState('');
   const [contactNumber, setContactNumber] = useState('');
   const [fulfillment, setFulfillment] = useState<FulfillmentMode>('kiosk-pickup');
+  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
   const [deliveryPin, setDeliveryPin] = useState<GeoCoordinates | null>(null);
   const [addressOrNotes, setAddressOrNotes] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
@@ -312,7 +269,6 @@ export function CartPortalDrawer() {
   const titleId = useId();
   const nameErrorId = useId();
   const contactErrorId = useId();
-  const pinErrorId = useId();
   const addressErrorId = useId();
 
   const portalRootRef = useRef<HTMLDivElement | null>(null);
@@ -320,16 +276,45 @@ export function CartPortalDrawer() {
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const contactInputRef = useRef<HTMLInputElement | null>(null);
-  const pinSearchInputRef = useRef<HTMLInputElement | null>(null);
   const notesInputRef = useRef<HTMLInputElement | null>(null);
   const receiptHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const lastAutoFilledAddressRef = useRef<string | null>(null);
+
+  const enabledZones = useMemo(
+    () =>
+      [...deliveryPricing.zones]
+        .filter((zone) => zone.enabled)
+        .sort((a, b) => a.maxDistanceKm - b.maxDistanceKm),
+    [deliveryPricing.zones],
+  );
+
+  const effectiveZoneId =
+    selectedZoneId && enabledZones.some((zone) => zone.id === selectedZoneId)
+      ? selectedZoneId
+      : (enabledZones[0]?.id ?? null);
+
+  const deliveryQuote = useMemo(
+    () =>
+      calculateDeliveryQuote({
+        fulfillment,
+        subtotalPhp: cartSummary.subtotalPhp,
+        deliveryPricing,
+        zoneId: fulfillment === 'delivery' ? effectiveZoneId : null,
+        pin: fulfillment === 'delivery' ? deliveryPin : null,
+      }),
+    [fulfillment, cartSummary.subtotalPhp, deliveryPricing, effectiveZoneId, deliveryPin],
+  );
+
+  const resolvedZoneIdForSignature =
+    fulfillment === 'delivery' ? (deliveryQuote.zone?.id ?? effectiveZoneId) : null;
 
   const attemptSignature = useMemo(
     () =>
       JSON.stringify({
         cart: cartLines,
         fulfillment,
+        deliveryZoneId: resolvedZoneIdForSignature,
         deliveryPin,
         customerName: customerName.trim(),
         contactNumber: contactNumber.trim(),
@@ -339,6 +324,7 @@ export function CartPortalDrawer() {
     [
       cartLines,
       fulfillment,
+      resolvedZoneIdForSignature,
       deliveryPin,
       customerName,
       contactNumber,
@@ -373,30 +359,34 @@ export function CartPortalDrawer() {
     setCartOpen(false);
   }, [setCartOpen]);
 
-  const handlePinChange = useCallback((nextPin: GeoCoordinates) => {
-    setDeliveryPin(nextPin);
+  const handleZoneChange = useCallback((zoneId: string) => {
+    setSelectedZoneId(zoneId);
+    setDeliveryPin(null);
     setSubmitError(null);
-    setFieldErrors((prev) => (prev.deliveryPin ? { ...prev, deliveryPin: undefined } : prev));
   }, []);
 
-  const enabledZones = useMemo(
-    () =>
-      [...deliveryPricing.zones]
-        .filter((zone) => zone.enabled)
-        .sort((a, b) => a.maxDistanceKm - b.maxDistanceKm),
-    [deliveryPricing.zones],
-  );
+  const handleClearPin = useCallback(() => {
+    setDeliveryPin(null);
+    setSubmitError(null);
+  }, []);
 
-  const deliveryQuote = useMemo(
-    () =>
-      calculateDeliveryQuote({
-        fulfillment,
-        subtotalPhp: cartSummary.subtotalPhp,
-        deliveryPricing,
-        pin: fulfillment === 'delivery' ? deliveryPin : null,
-      }),
-    [fulfillment, cartSummary.subtotalPhp, deliveryPricing, deliveryPin],
-  );
+  const handlePinChange = useCallback((nextPin: GeoCoordinates, resolvedAddress?: string) => {
+    setDeliveryPin(nextPin);
+    setSubmitError(null);
+    if (resolvedAddress) {
+      setAddressOrNotes((current) => {
+        const trimmed = current.trim();
+        if (!trimmed || trimmed === lastAutoFilledAddressRef.current) {
+          lastAutoFilledAddressRef.current = resolvedAddress;
+          return resolvedAddress;
+        }
+        return current;
+      });
+      setFieldErrors((prev) =>
+        prev.addressOrNotes ? { ...prev, addressOrNotes: undefined } : prev,
+      );
+    }
+  }, []);
 
   useEffect(() => {
     if (!isCartOpen) return;
@@ -521,7 +511,7 @@ export function CartPortalDrawer() {
 
   const deliveryOptionBadge = !hasEnabledZones
     ? 'Paused'
-    : fulfillment === 'delivery' && deliveryPin
+    : fulfillment === 'delivery'
       ? deliveryQuote.outOfRange
         ? 'Out of range'
         : deliveryQuote.isFreeDelivery || deliveryQuote.feePhp === 0
@@ -538,9 +528,8 @@ export function CartPortalDrawer() {
               ? `+${formatPhp(lowestZoneFeePhp)}`
               : 'Paused';
 
-  const isPinPending = fulfillment === 'delivery' && hasEnabledZones && !deliveryPin;
   const deliveryFeePhp =
-    fulfillment === 'delivery' && deliveryPin && deliveryQuote.available ? deliveryQuote.feePhp : 0;
+    fulfillment === 'delivery' && deliveryQuote.available ? deliveryQuote.feePhp : 0;
   const grandTotalPhp = cartSummary.subtotalPhp + deliveryFeePhp;
   const isDeliveryBlocked =
     fulfillment === 'delivery' && (!hasEnabledZones || deliveryQuote.outOfRange);
@@ -555,7 +544,7 @@ export function CartPortalDrawer() {
         )
       : 0;
 
-  async function handleCheckoutSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleCheckoutSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     if (isCheckoutDisabled) return;
 
@@ -566,28 +555,17 @@ export function CartPortalDrawer() {
     if (fulfillment === 'delivery' && !contactNumber.trim()) {
       nextErrors.contactNumber = 'Enter a mobile number so the rider can reach you.';
     }
-    if (fulfillment === 'delivery' && !deliveryPin) {
-      nextErrors.deliveryPin =
-        'Pin your delivery location on the map to lock your exact delivery zone and fee.';
-    }
     if (fulfillment === 'delivery' && !addressOrNotes.trim()) {
       nextErrors.addressOrNotes =
         'Enter your building, unit, or street instructions for the rider.';
     }
 
-    if (
-      nextErrors.customerName ||
-      nextErrors.contactNumber ||
-      nextErrors.deliveryPin ||
-      nextErrors.addressOrNotes
-    ) {
+    if (nextErrors.customerName || nextErrors.contactNumber || nextErrors.addressOrNotes) {
       setFieldErrors(nextErrors);
       if (nextErrors.customerName) {
         nameInputRef.current?.focus();
       } else if (nextErrors.contactNumber) {
         contactInputRef.current?.focus();
-      } else if (nextErrors.deliveryPin) {
-        pinSearchInputRef.current?.focus();
       } else if (nextErrors.addressOrNotes) {
         notesInputRef.current?.focus();
       }
@@ -636,7 +614,9 @@ export function CartPortalDrawer() {
       setCustomerName('');
       setContactNumber('');
       setAddressOrNotes('');
+      setSelectedZoneId(null);
       setDeliveryPin(null);
+      lastAutoFilledAddressRef.current = null;
     } catch (error) {
       if (isApiError(error) && error.code === 'PRICE_CHANGED') {
         idempotencyRef.current = { signature: '', key: createIdempotencyKey() };
@@ -651,7 +631,7 @@ export function CartPortalDrawer() {
     }
   }
 
-  function handleQueueLookupSubmit(event: FormEvent<HTMLFormElement>) {
+  function handleQueueLookupSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     const normalized = normalizeQueueNumber(queueLookupInput);
     if (!normalized) {
@@ -687,7 +667,7 @@ export function CartPortalDrawer() {
     }
   }
 
-  async function handleConfirmPublicQueueCancel(event: FormEvent<HTMLFormElement>) {
+  async function handleConfirmPublicQueueCancel(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!publicTrackedOrder) return;
     const trimmed = cancelVerificationInput.trim();
@@ -1652,11 +1632,11 @@ export function CartPortalDrawer() {
                           checked={fulfillment === 'kiosk-pickup'}
                           onChange={() => {
                             setFulfillment('kiosk-pickup');
+                            setDeliveryPin(null);
                             setSubmitError(null);
                             setFieldErrors((prev) => ({
                               ...prev,
                               contactNumber: undefined,
-                              deliveryPin: undefined,
                               addressOrNotes: undefined,
                             }));
                           }}
@@ -1706,42 +1686,19 @@ export function CartPortalDrawer() {
                     </p>
                   ) : (
                     <div className="space-y-3 rounded-xl border border-ui-border bg-ui-surface-muted p-3">
-                      <ErrorBoundary
-                        fallback={(reset) => <MapPickerErrorFallback onRetry={reset} />}
-                      >
-                        <Suspense
-                          fallback={
-                            <div
-                              role="status"
-                              className="flex min-h-[330px] items-center justify-center rounded-xl border border-ui-border bg-ui-canvas text-xs text-ui-text-muted"
-                            >
-                              Loading delivery map…
-                            </div>
-                          }
-                        >
-                          <DeliveryMapPicker
-                            pin={deliveryPin}
-                            maxDeliveryDistanceKm={deliveryQuote.maxDeliveryDistanceKm}
-                            onPinChange={handlePinChange}
-                            searchInputRef={pinSearchInputRef}
-                            pinErrorId={pinErrorId}
-                            hasPinError={Boolean(fieldErrors.deliveryPin)}
-                          />
-                        </Suspense>
-                      </ErrorBoundary>
-
-                      {fieldErrors.deliveryPin ? (
-                        <p
-                          id={pinErrorId}
-                          role="alert"
-                          className="text-xs font-semibold text-ui-error"
-                        >
-                          {fieldErrors.deliveryPin}
-                        </p>
-                      ) : null}
+                      <DeliveryLocationPicker
+                        zones={enabledZones}
+                        selectedZoneId={deliveryQuote.zone?.id ?? effectiveZoneId}
+                        pin={deliveryPin}
+                        outOfRange={deliveryQuote.outOfRange}
+                        distanceKm={deliveryQuote.distanceKm}
+                        onZoneChange={handleZoneChange}
+                        onPinChange={handlePinChange}
+                        onClearPin={handleClearPin}
+                      />
 
                       <div role="status" aria-live="polite" aria-atomic="true">
-                        {deliveryPin && !deliveryQuote.outOfRange && deliveryQuote.zone ? (
+                        {!deliveryQuote.outOfRange && deliveryQuote.zone ? (
                           <div className="rounded-lg border border-ui-border bg-ui-surface px-3 py-2 text-xs">
                             <div className="flex items-center justify-between gap-2">
                               <span className="font-semibold text-ui-text">
@@ -1754,8 +1711,9 @@ export function CartPortalDrawer() {
                               </span>
                             </div>
                             <p className="mt-0.5 text-ui-text-muted tabular-nums">
-                              ~{deliveryQuote.distanceKm?.toFixed(1)} km from Chino Roces · Est.{' '}
-                              {deliveryQuote.zone.etaMinutes}
+                              {typeof deliveryQuote.distanceKm === 'number'
+                                ? `~${deliveryQuote.distanceKm.toFixed(1)} km from Chino Roces · Est. ${deliveryQuote.zone.etaMinutes}`
+                                : `Est. ${deliveryQuote.zone.etaMinutes}`}
                             </p>
                           </div>
                         ) : null}
@@ -1764,19 +1722,21 @@ export function CartPortalDrawer() {
                       {deliveryPin && deliveryQuote.outOfRange ? (
                         <div
                           role="alert"
-                          className="rounded-lg border border-ui-error/40 bg-ui-surface px-3 py-2 text-xs text-ui-error"
+                          className="space-y-2 rounded-lg border border-ui-error/40 bg-ui-surface px-3 py-2 text-xs text-ui-error"
                         >
                           <p className="font-semibold">Outside delivery area</p>
-                          <p className="mt-0.5 tabular-nums">
-                            Pinned spot is ~{deliveryQuote.distanceKm?.toFixed(1)} km away (max
+                          <p className="tabular-nums">
+                            Device location is ~{deliveryQuote.distanceKm?.toFixed(1)} km away (max
                             coverage: {deliveryQuote.maxDeliveryDistanceKm} km from Chino Roces).
-                            Move the pin closer or switch to Kiosk Pickup.
+                            Choose a Metro Manila delivery area manually or switch to Kiosk Pickup.
                           </p>
-                        </div>
-                      ) : !deliveryPin ? (
-                        <div className="rounded-lg border border-dashed border-ui-border bg-ui-surface px-3 py-2 text-xs text-ui-text-muted">
-                          No pin dropped yet — tap the map, search a landmark, or use a quick pin
-                          above to calculate your exact fee.
+                          <button
+                            type="button"
+                            onClick={handleClearPin}
+                            className="rounded-lg border border-ui-border bg-ui-surface-muted px-2.5 py-1 text-xs font-semibold text-ui-text hover:bg-ui-canvas"
+                          >
+                            Choose delivery area manually
+                          </button>
                         </div>
                       ) : null}
 
@@ -1785,9 +1745,7 @@ export function CartPortalDrawer() {
                         <div className="space-y-1.5 border-t border-ui-border pt-2">
                           <div className="flex items-center justify-between text-xs">
                             {deliveryQuote.isFreeDelivery ||
-                            (isPinPending &&
-                              cartSummary.subtotalPhp >=
-                                deliveryQuote.freeDeliveryMinSubtotalPhp) ? (
+                            cartSummary.subtotalPhp >= deliveryQuote.freeDeliveryMinSubtotalPhp ? (
                               <span className="font-semibold text-ui-accent">
                                 Free delivery unlocked (
                                 {formatPhp(deliveryQuote.freeDeliveryMinSubtotalPhp)}+ order)
@@ -1908,14 +1866,12 @@ export function CartPortalDrawer() {
                   </div>
                   <div className="flex justify-between gap-2 text-ui-text-muted">
                     <span className="truncate">
-                      {fulfillment === 'delivery' && deliveryPin && deliveryQuote.zone
+                      {fulfillment === 'delivery' && deliveryQuote.zone
                         ? `Delivery (${deliveryQuote.zone.name})`
                         : 'Delivery fee'}
                     </span>
                     <span className="shrink-0">
-                      {isPinPending ? (
-                        'Pin location'
-                      ) : deliveryQuote.outOfRange ? (
+                      {deliveryQuote.outOfRange ? (
                         'Out of range'
                       ) : deliveryQuote.isFreeDelivery ? (
                         <span className="inline-flex items-center gap-1.5">

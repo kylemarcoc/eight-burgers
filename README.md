@@ -42,7 +42,7 @@ Full-stack ordering storefront, role-protected Staff Portal console, REST BFF, a
 
 ## Technology stack
 
-- **Frontend (`apps/web`)** — React 19, TypeScript, Vite 8, Tailwind CSS v4, React Router, TanStack Query v5, Zustand, Immer, and Leaflet.
+- **Frontend (`apps/web`)** — React 19, TypeScript, Vite 8, Tailwind CSS v4, React Router, TanStack Query v5, Zustand, and Immer.
 - **Backend (`apps/api`)** — Hono, `@hono/node-server`, `@supabase/supabase-js`, Sharp, and Zod v4.
 - **Database (`supabase/`)** — Local Supabase CLI + PostgreSQL 17 with migrations, Row-Level Security, and atomic SQL RPCs.
 - **Testing & tooling** — Vitest, React Testing Library, Oxlint, and Prettier.

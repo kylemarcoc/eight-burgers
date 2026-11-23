@@ -1,4 +1,4 @@
-import { useCallback, useId, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useId, useMemo, useRef, useState, type SubmitEvent } from 'react';
 import { getApiErrorMessage, isApiError } from '@/shared/lib/api-error';
 import { formatPhp } from '@/shared/shop/shop-storage';
 import type { DeliveryPricingConfig, DeliveryZone, DeliveryZoneInput } from '@/shared/shop/types';
@@ -124,7 +124,7 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
   const sortedZones = [...deliveryPricing.zones].sort((a, b) => a.maxDistanceKm - b.maxDistanceKm);
   const activeZoneCount = deliveryPricing.zones.filter((zone) => zone.enabled).length;
 
-  async function handleThresholdSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleThresholdSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!thresholdEnabled) {
       setThresholdError(null);
@@ -203,7 +203,7 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
     onStatusMessage(`Reloaded latest details for delivery zone "${latest.name}".`);
   }
 
-  async function handleZoneSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleZoneSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedName = zoneForm.name.trim();
     const parsedRadius = Number(zoneForm.maxDistanceKm);

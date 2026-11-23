@@ -4,7 +4,7 @@ import {
   type AdminRole,
   type AdminTeamMember,
 } from '@eight-burgers/contracts';
-import { useId, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useId, useMemo, useRef, useState, type SubmitEvent } from 'react';
 import { getApiErrorMessage } from '@/shared/lib/api-error';
 import { useAdminTeamMutations, useAdminTeamQuery } from '../hooks/useAdminTeam';
 
@@ -78,7 +78,7 @@ export function AdminTeamManager({ currentUserId }: AdminTeamManagerProps) {
     });
   }
 
-  async function handleCreateSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleCreateSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedEmail = email.trim().toLowerCase();
     const nextErrors: FormFieldErrors = {};

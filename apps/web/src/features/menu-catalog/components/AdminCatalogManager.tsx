@@ -12,7 +12,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
-  type FormEvent,
+  type SubmitEvent,
 } from 'react';
 import { FoodImage } from '@/shared/components/FoodImage';
 import { getApiErrorMessage, isApiError } from '@/shared/lib/api-error';
@@ -265,7 +265,7 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
     showStatus(`Reloaded latest details for "${latest.name}".`);
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedName = form.name.trim();
     const parsedPrice = Number(form.pricePhp);

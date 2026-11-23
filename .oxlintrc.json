@@ -26,9 +26,69 @@
     ],
     "typescript/no-explicit-any": "warn",
     "typescript/no-non-null-assertion": "warn",
+    "typescript/no-restricted-types": [
+      "error",
+      {
+        "types": {
+          "FormEvent": {
+            "message": "FormEvent is deprecated in React 19. Use SubmitEvent, ChangeEvent, InputEvent, or SyntheticEvent instead."
+          },
+          "React.FormEvent": {
+            "message": "React.FormEvent is deprecated in React 19. Use React.SubmitEvent, React.ChangeEvent, React.InputEvent, or React.SyntheticEvent instead."
+          },
+          "FormEventHandler": {
+            "message": "FormEventHandler is deprecated in React 19. Use SubmitEventHandler, ChangeEventHandler, or InputEventHandler instead."
+          },
+          "React.FormEventHandler": {
+            "message": "React.FormEventHandler is deprecated in React 19. Use React.SubmitEventHandler, React.ChangeEventHandler, or React.InputEventHandler instead."
+          },
+          "ElementRef": {
+            "message": "ElementRef is deprecated in React 19. Use ComponentRef instead."
+          },
+          "React.ElementRef": {
+            "message": "React.ElementRef is deprecated in React 19. Use React.ComponentRef instead."
+          },
+          "MutableRefObject": {
+            "message": "MutableRefObject is deprecated in React 19. Use RefObject instead."
+          },
+          "React.MutableRefObject": {
+            "message": "React.MutableRefObject is deprecated in React 19. Use React.RefObject instead."
+          },
+          "LegacyRef": {
+            "message": "LegacyRef is deprecated in React 19. Use Ref instead."
+          },
+          "React.LegacyRef": {
+            "message": "React.LegacyRef is deprecated in React 19. Use React.Ref instead."
+          }
+        }
+      }
+    ],
     "no-restricted-imports": [
       "error",
       {
+        "paths": [
+          {
+            "name": "react",
+            "importNames": [
+              "FormEvent",
+              "FormEventHandler",
+              "forwardRef",
+              "ForwardRefRenderFunction",
+              "ForwardRefExoticComponent",
+              "ElementRef",
+              "MutableRefObject",
+              "LegacyRef",
+              "PropsWithRef",
+              "ReactComponentElement",
+              "FunctionComponentElement",
+              "ComponentElement",
+              "CElement",
+              "ClassicElement",
+              "DOMElement"
+            ],
+            "message": "Do not import deprecated React 19 symbols. Use SubmitEvent/ChangeEvent/InputEvent instead of FormEvent, ref props instead of forwardRef, ComponentRef instead of ElementRef, and RefObject instead of MutableRefObject."
+          }
+        ],
         "patterns": [
           {
             "regex": "^(?:@/|(?:\\.\\.?/)+(?:src/)?)features/[^/]+/[^/]",
@@ -45,6 +105,29 @@
         "no-restricted-imports": [
           "error",
           {
+            "paths": [
+              {
+                "name": "react",
+                "importNames": [
+                  "FormEvent",
+                  "FormEventHandler",
+                  "forwardRef",
+                  "ForwardRefRenderFunction",
+                  "ForwardRefExoticComponent",
+                  "ElementRef",
+                  "MutableRefObject",
+                  "LegacyRef",
+                  "PropsWithRef",
+                  "ReactComponentElement",
+                  "FunctionComponentElement",
+                  "ComponentElement",
+                  "CElement",
+                  "ClassicElement",
+                  "DOMElement"
+                ],
+                "message": "Do not import deprecated React 19 symbols. Use SubmitEvent/ChangeEvent/InputEvent instead of FormEvent, ref props instead of forwardRef, ComponentRef instead of ElementRef, and RefObject instead of MutableRefObject."
+              }
+            ],
             "patterns": [
               {
                 "regex": "^(?:@/|(?:\\.\\.?/)+(?:src/)?)features/[^/]+/[^/]",
@@ -69,6 +152,29 @@
         "no-restricted-imports": [
           "error",
           {
+            "paths": [
+              {
+                "name": "react",
+                "importNames": [
+                  "FormEvent",
+                  "FormEventHandler",
+                  "forwardRef",
+                  "ForwardRefRenderFunction",
+                  "ForwardRefExoticComponent",
+                  "ElementRef",
+                  "MutableRefObject",
+                  "LegacyRef",
+                  "PropsWithRef",
+                  "ReactComponentElement",
+                  "FunctionComponentElement",
+                  "ComponentElement",
+                  "CElement",
+                  "ClassicElement",
+                  "DOMElement"
+                ],
+                "message": "Do not import deprecated React 19 symbols. Use SubmitEvent/ChangeEvent/InputEvent instead of FormEvent, ref props instead of forwardRef, ComponentRef instead of ElementRef, and RefObject instead of MutableRefObject."
+              }
+            ],
             "patterns": [
               {
                 "regex": "^(?:@/|(?:\\.\\.?/)+(?:src/)?)features/[^/]+/[^/]",
@@ -97,6 +203,29 @@
         "no-restricted-imports": [
           "error",
           {
+            "paths": [
+              {
+                "name": "react",
+                "importNames": [
+                  "FormEvent",
+                  "FormEventHandler",
+                  "forwardRef",
+                  "ForwardRefRenderFunction",
+                  "ForwardRefExoticComponent",
+                  "ElementRef",
+                  "MutableRefObject",
+                  "LegacyRef",
+                  "PropsWithRef",
+                  "ReactComponentElement",
+                  "FunctionComponentElement",
+                  "ComponentElement",
+                  "CElement",
+                  "ClassicElement",
+                  "DOMElement"
+                ],
+                "message": "Do not import deprecated React 19 symbols. Use SubmitEvent/ChangeEvent/InputEvent instead of FormEvent, ref props instead of forwardRef, ComponentRef instead of ElementRef, and RefObject instead of MutableRefObject."
+              }
+            ],
             "patterns": [
               {
                 "regex": "^(?:@/|(?:\\.\\.?/)+(?:src/)?)features/[^/]+/[^/]",
@@ -125,6 +254,29 @@
         "no-restricted-imports": [
           "error",
           {
+            "paths": [
+              {
+                "name": "react",
+                "importNames": [
+                  "FormEvent",
+                  "FormEventHandler",
+                  "forwardRef",
+                  "ForwardRefRenderFunction",
+                  "ForwardRefExoticComponent",
+                  "ElementRef",
+                  "MutableRefObject",
+                  "LegacyRef",
+                  "PropsWithRef",
+                  "ReactComponentElement",
+                  "FunctionComponentElement",
+                  "ComponentElement",
+                  "CElement",
+                  "ClassicElement",
+                  "DOMElement"
+                ],
+                "message": "Do not import deprecated React 19 symbols. Use SubmitEvent/ChangeEvent/InputEvent instead of FormEvent, ref props instead of forwardRef, ComponentRef instead of ElementRef, and RefObject instead of MutableRefObject."
+              }
+            ],
             "patterns": [
               {
                 "regex": "^(?:@/|(?:\\.\\.?/)+(?:src/)?)features/[^/]+/[^/]",
@@ -166,7 +318,7 @@
                 "message": "Shared contracts must not depend on web or api workspaces."
               },
               {
-                "regex": "^(?:react(?:/|$)|react-dom(?:/|$)|react-router-dom(?:/|$)|@tanstack/react-query(?:/|$)|zustand(?:/|$)|immer(?:/|$)|leaflet(?:/|$)|hono(?:/|$)|@hono/|sharp(?:/|$)|@supabase/supabase-js(?:/|$)|node:)",
+                "regex": "^(?:react(?:/|$)|react-dom(?:/|$)|react-router-dom(?:/|$)|@tanstack/react-query(?:/|$)|zustand(?:/|$)|immer(?:/|$)|hono(?:/|$)|@hono/|sharp(?:/|$)|@supabase/supabase-js(?:/|$)|node:)",
                 "message": "Shared contracts must stay pure and independent of frontend UI or backend server runtimes."
               }
             ]
@@ -186,7 +338,7 @@
                 "message": "API workspace must not import from web workspace."
               },
               {
-                "regex": "^(?:react(?:/|$)|react-dom(?:/|$)|react-router-dom(?:/|$)|@tanstack/react-query(?:/|$)|zustand(?:/|$)|immer(?:/|$)|leaflet(?:/|$))",
+                "regex": "^(?:react(?:/|$)|react-dom(?:/|$)|react-router-dom(?:/|$)|@tanstack/react-query(?:/|$)|zustand(?:/|$)|immer(?:/|$))",
                 "message": "API workspace must not import frontend UI or client packages."
               }
             ]
