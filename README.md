@@ -28,16 +28,16 @@ Full-stack ordering storefront, role-protected Staff Portal console, REST BFF, a
 
 ## Screenshots
 
-| Cart & Delivery Map | Order Receipt & Live Tracker |
-| --- | --- |
+| Cart & Delivery Map                                                                     | Order Receipt & Live Tracker                                                             |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | ![Cart drawer and Metro Manila delivery map](./docs/screenshots/cart-delivery-map.webp) | ![Order receipt and live 4-stage tracker](./docs/screenshots/order-receipt-tracker.webp) |
 
-| Owner — Menu & Delivery Console | Staff Portal — Live Customer Orders |
-| --- | --- |
+| Owner — Menu & Delivery Console                                                 | Staff Portal — Live Customer Orders                                       |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | ![Owner menu and delivery manager](./docs/screenshots/admin-menu-delivery.webp) | ![Live customer orders queue](./docs/screenshots/admin-orders-queue.webp) |
 
-| Cashier — Menu Stock Manager | Owner — Team & Roles (`/admin/team`) |
-| --- | --- |
+| Cashier — Menu Stock Manager                                              | Owner — Team & Roles (`/admin/team`)                                      |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | ![Cashier menu stock manager](./docs/screenshots/cashier-menu-stock.webp) | ![Owner team and roles manager](./docs/screenshots/admin-team-roles.webp) |
 
 ## Technology stack
