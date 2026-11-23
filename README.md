@@ -6,43 +6,33 @@ Full-stack ordering storefront, role-protected Staff Portal console, REST BFF, a
 
 ## Implemented Capabilities
 
-- **Storefront (`apps/web`, `/`)**: Live PostgreSQL-backed menu and Metro Manila delivery pricing fetched via `GET /api/v1/catalog` and cached in TanStack Query v5. Includes self-hosted WebP imagery (`apps/web/public/images/menu/`), category filtering, keyword search, in-stock filter, burger add-ons (_Sliced Cheese +₱20_, _Crispy Bacon +₱20_, _Extra Veggies +₱26_, _Grilled Pineapple +₱26_), and instant add-to-cart actions.
-- **Floating Cart & Server-Verified Checkout**: Local cart persistence (`apps/web/src/shared/store/useCartStore.ts`) stores only non-sensitive cart line items under `eight-burgers:cart:v2` and automatically migrates/purges legacy `eight-burgers:state:v1` guest PII. Submitting an order calls `POST /api/v1/orders` with a per-attempt `Idempotency-Key`; PostgreSQL `place_order(...)` calculates authoritative totals, delivery zones/waivers, and atomic `#8B-101+` queue numbers inside a single transaction.
-- **Staff Portal (`apps/web`, `/admin`)**: Protected by server-backed Supabase Auth + `public.admin_users` allowlist + `HttpOnly; SameSite=Lax; Path=/api` session cookies (`AdminAuthGuard` + `AdminLoginForm`) with role-based access control (`owner`, `cashier`, `staff`) enforced across PostgreSQL RLS/triggers, API routes, and UI. `owner` manages live menu CRUD, WebP photo uploads, default menu restoration, Metro Manila delivery zones & free-delivery threshold, customer orders, and the **Team & Roles** tab (`/admin/team`) to register Cashier/Staff logins, change roles, or disable accounts; `cashier` and `staff` manage live customer orders (all stages including `cancelled`) and menu `In Stock / Sold Out` toggles with optimistic concurrency checks (`409 Conflict` on stale updates).
-- **REST BFF (`apps/api`, Hono + Node 22)**: Same-origin `/api/v1/*` API proxied by Vite in local dev, enforcing CSRF (`Origin` + `X-Requested-With: fetch`), sliding-window rate limits (`429` + `Retry-After`), RFC 9457 Problem Details (`application/problem+json`), SHA-256 guest receipt tokens (`X-Order-Receipt-Token`), and user-scoped JWT forwarding so PostgreSQL Row-Level Security executes on every admin operation.
-- **Shared Contracts (`packages/contracts`)**: Single source of truth for Zod v4 schemas, domain types, and pure Haversine/delivery pricing math shared across `apps/web` and `apps/api`.
+- **Storefront (`apps/web`, `/`)**: Live PostgreSQL-backed menu and Metro Manila distance-formula delivery pricing fetched via `GET /api/v1/catalog` and cached in TanStack Query v5. Includes self-hosted WebP imagery (`apps/web/public/images/menu/`), category filtering, keyword search, in-stock filter, burger add-ons (_Sliced Cheese +₱20_, _Crispy Bacon +₱20_, _Extra Veggies +₱26_, _Grilled Pineapple +₱26_), and instant add-to-cart actions.
+- **Floating Cart & Server-Verified Checkout**: Local cart persistence (`apps/web/src/shared/store/useCartStore.ts`) stores only non-sensitive cart line items under `eight-burgers:cart:v2` and automatically migrates/purges legacy `eight-burgers:state:v1` guest PII. Delivery checkout uses search-first Metro Manila address autocomplete (`GET /api/v1/location/search`) or device geolocation reverse lookup (`GET /api/v1/location/reverse`) instead of a customer-facing zone dropdown, and handles paused delivery or out-of-range pins cleanly. Submitting an order calls `POST /api/v1/orders` with a per-attempt `Idempotency-Key`; PostgreSQL `place_order(...)` calculates authoritative totals, distance-based delivery fees (`baseFee + perKmRate`), estimated ETA, max-radius and pause checks, free-delivery subtotal waivers, and atomic `#8B-101+` queue numbers inside a single transaction.
+- **Staff Portal (`apps/web`, `/admin`)**: Protected by server-backed Supabase Auth + `public.admin_users` allowlist + `HttpOnly; SameSite=Lax; Path=/api` session cookies (`AdminAuthGuard` + `AdminLoginForm`) with role-based access control (`owner`, `cashier`, `staff`) enforced across PostgreSQL RLS/triggers, API routes, and UI. `owner` manages live menu CRUD, WebP photo uploads, default menu restoration, distance-formula delivery pricing (base fee, per-km rate, max coverage radius, delivery pause toggle, live rate preview, and free-delivery threshold), customer orders, and the **Team & Roles** tab (`/admin/team`) to register Cashier/Staff logins, change roles, or disable accounts; `cashier` and `staff` manage live customer orders (all stages including `cancelled`) and menu `In Stock / Sold Out` toggles with optimistic concurrency checks (`409 Conflict` on stale updates).
+- **REST BFF (`apps/api`, Hono + Node 22)**: Same-origin `/api/v1/*` API proxied by Vite in local dev, enforcing CSRF (`Origin` + `X-Requested-With: fetch`), sliding-window rate limits (`429` + `Retry-After`), RFC 9457 Problem Details (`application/problem+json`), SHA-256 guest receipt tokens (`X-Order-Receipt-Token`), proxied OpenStreetMap Photon/Nominatim location lookups behind a swappable `LocationProvider` interface (`/api/v1/location/search`, `/api/v1/location/reverse`), and user-scoped JWT forwarding so PostgreSQL Row-Level Security executes on every admin operation.
+- **Shared Contracts (`packages/contracts`)**: Single source of truth for Zod v4 schemas, domain types, and pure Haversine/distance-formula delivery pricing math shared across `apps/web` and `apps/api`.
 
 ## Screenshots
 
-| Cart & Delivery Map                                                                     | Order Receipt & Live Tracker                                                             |
-| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| ![Cart drawer and Metro Manila delivery map](./docs/screenshots/cart-delivery-map.webp) | ![Order receipt and live 4-stage tracker](./docs/screenshots/order-receipt-tracker.webp) |
+| Cart & Delivery Address Search                                                                             | Order Receipt & Live Tracker                                                             |
+| ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| ![Cart drawer with address autocomplete and distance quote](./docs/screenshots/cart-delivery-address.webp) | ![Order receipt and live 4-stage tracker](./docs/screenshots/order-receipt-tracker.webp) |
 
-| Owner — Menu & Delivery Console                                                 | Staff Portal — Live Customer Orders                                       |
-| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| ![Owner menu and delivery manager](./docs/screenshots/admin-menu-delivery.webp) | ![Live customer orders queue](./docs/screenshots/admin-orders-queue.webp) |
+| Owner — Menu & Delivery Console                                                 | Owner — Distance-Formula Delivery Pricing                                                                   |
+| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| ![Owner menu and delivery manager](./docs/screenshots/admin-menu-delivery.webp) | ![Owner distance-formula delivery pricing and live preview](./docs/screenshots/admin-delivery-pricing.webp) |
 
-| Cashier — Menu Stock Manager                                              | Owner — Team & Roles (`/admin/team`)                                      |
+| Staff Portal — Live Customer Orders                                       | Cashier — Menu Stock Manager                                              |
 | ------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| ![Cashier menu stock manager](./docs/screenshots/cashier-menu-stock.webp) | ![Owner team and roles manager](./docs/screenshots/admin-team-roles.webp) |
+| ![Live customer orders queue](./docs/screenshots/admin-orders-queue.webp) | ![Cashier menu stock manager](./docs/screenshots/cashier-menu-stock.webp) |
 
-## Screenshots
-
-| Cart & Delivery Map                                                                     | Order Receipt & Live Tracker                                                             |
-| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| ![Cart drawer and Metro Manila delivery map](./docs/screenshots/cart-delivery-map.webp) | ![Order receipt and live 4-stage tracker](./docs/screenshots/order-receipt-tracker.webp) |
-
-| Owner — Menu & Delivery Console                                                 | Staff Portal — Live Customer Orders                                       |
-| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| ![Owner menu and delivery manager](./docs/screenshots/admin-menu-delivery.webp) | ![Live customer orders queue](./docs/screenshots/admin-orders-queue.webp) |
-
-| Cashier — Menu Stock Manager                                              | Owner — Team & Roles (`/admin/team`)                                      |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| ![Cashier menu stock manager](./docs/screenshots/cashier-menu-stock.webp) | ![Owner team and roles manager](./docs/screenshots/admin-team-roles.webp) |
+| Owner — Team & Roles (`/admin/team`)                                      | Checkout — Paused Delivery State                                                            |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| ![Owner team and roles manager](./docs/screenshots/admin-team-roles.webp) | ![Cart drawer showing paused delivery option](./docs/screenshots/cart-delivery-paused.webp) |
 
 ## Technology stack
 
-- **Frontend (`apps/web`)** — React 19, TypeScript, Vite 8, Tailwind CSS v4, React Router, TanStack Query v5, Zustand, Immer, and Leaflet.
+- **Frontend (`apps/web`)** — React 19, TypeScript, Vite 8, Tailwind CSS v4, React Router, TanStack Query v5, Zustand, and Immer.
 - **Backend (`apps/api`)** — Hono, `@hono/node-server`, `@supabase/supabase-js`, Sharp, and Zod v4.
 - **Database (`supabase/`)** — Local Supabase CLI + PostgreSQL 17 with migrations, Row-Level Security, and atomic SQL RPCs.
 - **Testing & tooling** — Vitest, React Testing Library, Oxlint, and Prettier.
@@ -70,7 +60,7 @@ Use `npm install` when updating dependencies. If PowerShell blocks `npm` or `npx
    ```
 
    `npm run db:reset` applies all migrations in `supabase/migrations/` and seeds:
-   - `supabase/seeds/catalog.sql` — 16 Chino Roces menu items, 4 add-ons, store settings, and 5 Metro Manila delivery zones.
+   - `supabase/seeds/catalog.sql` — 16 Chino Roces menu items, 4 add-ons, and default distance-formula store delivery settings (base fee, per-km rate, max radius, and free-delivery threshold).
    - `supabase/seeds/dev_admin.sql` — local-dev-only Staff Portal accounts (all share password `EightBurgersDev123!`). **Never apply `dev_admin.sql` to staging or production.**
      - **Owner**: `owner@eightburgers.local` / `EightBurgersDev123!` — full Menu CRUD, photos, Delivery settings, Customer Orders, and Team & Roles (`/admin/team`).
      - **Cashier**: `cashier@eightburgers.local` / `EightBurgersDev123!` — Customer Orders and Menu `In Stock / Sold Out` toggles.

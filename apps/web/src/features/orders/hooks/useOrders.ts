@@ -29,7 +29,7 @@ export function usePlaceOrderMutation() {
       void queryClient.invalidateQueries({ queryKey: orderKeys.adminAll });
     },
     onError: (error) => {
-      if (isApiError(error) && error.status === 409) {
+      if (isApiError(error) && (error.status === 409 || error.status === 422)) {
         void queryClient.invalidateQueries({ queryKey: ['catalog'] });
       }
     },

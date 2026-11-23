@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   adminOrderCountsSchema,
   cancelPublicOrderByQueueRequestSchema,
+  locationReverseResponseSchema,
+  locationSearchResponseSchema,
   normalizeContactDigits,
   normalizeQueueNumber,
   orderStatusSchema,
+  placeOrderRequestSchema,
   publicOrderTrackerSchema,
-} from './order.schema';
+} from './index';
 
 describe('order.schema', () => {
   it('accepts cancelled in orderStatusSchema and adminOrderCountsSchema', () => {
@@ -50,7 +53,6 @@ describe('order.schema', () => {
     const parsed = publicOrderTrackerSchema.parse({
       queueNumber: '#8B-101',
       fulfillment: 'delivery',
-      deliveryZoneName: 'Chino Roces & San Antonio',
       deliveryEtaMinutes: '15–25 min',
       lines: [
         {
@@ -79,5 +81,94 @@ describe('order.schema', () => {
       cancelPublicOrderByQueueRequestSchema.safeParse({ contactNumber: '09171234567' }).success,
     ).toBe(true);
     expect(cancelPublicOrderByQueueRequestSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('rejects unknown deliveryZoneId key and delivery orders without deliveryPin while allowing pickup without pin', () => {
+    const legacyZoneOnlyDelivery = placeOrderRequestSchema.safeParse({
+      customerName: 'Marco',
+      contactNumber: '09171234567',
+      fulfillment: 'delivery',
+      deliveryZoneId: 'chino-roces-san-antonio',
+      deliveryPin: { lat: 14.5608, lng: 121.0124 },
+      addressOrNotes: '215 Chino Roces Ave',
+      paymentMethod: 'cash',
+      items: [{ itemId: 'burger-deluxe', quantity: 1, addonIds: [] }],
+    });
+    expect(legacyZoneOnlyDelivery.success).toBe(false);
+
+    const missingPinDelivery = placeOrderRequestSchema.safeParse({
+      customerName: 'Marco',
+      contactNumber: '09171234567',
+      fulfillment: 'delivery',
+      addressOrNotes: '215 Chino Roces Ave',
+      paymentMethod: 'cash',
+      items: [{ itemId: 'burger-deluxe', quantity: 1, addonIds: [] }],
+    });
+    expect(missingPinDelivery.success).toBe(false);
+    if (!missingPinDelivery.success) {
+      expect(missingPinDelivery.error.issues.map((issue) => issue.path.join('.'))).toContain(
+        'deliveryPin',
+      );
+    }
+
+    const pickupWithoutPin = placeOrderRequestSchema.safeParse({
+      customerName: 'Marco',
+      contactNumber: '',
+      fulfillment: 'kiosk-pickup',
+      addressOrNotes: '',
+      paymentMethod: 'cash',
+      items: [{ itemId: 'burger-deluxe', quantity: 1, addonIds: [] }],
+    });
+    expect(pickupWithoutPin.success).toBe(true);
+  });
+
+  it('enforces coordinate bounds, item caps, and label bounds on location response schemas', () => {
+    expect(
+      locationSearchResponseSchema.safeParse({
+        data: [
+          {
+            id: 'osm-w-1',
+            label: 'Valid Place',
+            coordinates: { lat: 91, lng: 121 },
+          },
+        ],
+      }).success,
+    ).toBe(false);
+
+    expect(
+      locationSearchResponseSchema.safeParse({
+        data: [
+          {
+            id: 'osm-w-1',
+            label: 'Valid Place',
+            coordinates: { lat: 14.5, lng: 181 },
+          },
+        ],
+      }).success,
+    ).toBe(false);
+
+    const elevenItems = Array.from({ length: 11 }, (_, idx) => ({
+      id: `item-${idx}`,
+      label: `Place ${idx}`,
+      coordinates: { lat: 14.56, lng: 121.01 },
+    }));
+    expect(locationSearchResponseSchema.safeParse({ data: elevenItems }).success).toBe(false);
+
+    expect(locationReverseResponseSchema.safeParse({ data: null }).success).toBe(true);
+    expect(
+      locationReverseResponseSchema.safeParse({
+        data: { label: '   ', coordinates: { lat: 14.56, lng: 121.01 } },
+      }).success,
+    ).toBe(false);
+    expect(
+      locationReverseResponseSchema.safeParse({
+        data: { label: 'x'.repeat(251), coordinates: { lat: 14.56, lng: 121.01 } },
+      }).success,
+    ).toBe(false);
+    expect(
+      locationReverseResponseSchema.safeParse({
+        data: { label: 'x'.repeat(250), coordinates: { lat: 14.56, lng: 121.01 } },
+      }).success,
+    ).toBe(true);
   });
 });

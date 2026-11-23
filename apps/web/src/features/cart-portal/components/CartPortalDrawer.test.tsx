@@ -30,13 +30,37 @@ function CartDrawerTestHarness({ initialItemId = 'burger-deluxe' }: { initialIte
   );
 }
 
+const ORIGINAL_GEOLOCATION_DESCRIPTOR = Object.getOwnPropertyDescriptor(navigator, 'geolocation');
+
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
   resetCartStore();
   document.body.style.overflow = '';
+  if (ORIGINAL_GEOLOCATION_DESCRIPTOR) {
+    Object.defineProperty(navigator, 'geolocation', ORIGINAL_GEOLOCATION_DESCRIPTOR);
+  } else {
+    Reflect.deleteProperty(navigator, 'geolocation');
+  }
   vi.restoreAllMocks();
 });
+
+function createGeolocationPosition(latitude: number, longitude: number): GeolocationPosition {
+  return {
+    coords: {
+      latitude,
+      longitude,
+      accuracy: 10,
+      altitude: null,
+      altitudeAccuracy: null,
+      heading: null,
+      speed: null,
+      toJSON: () => ({}),
+    },
+    timestamp: Date.now(),
+    toJSON: () => ({}),
+  };
+}
 
 describe('CartPortalDrawer', () => {
   it('moves focus into the modal on open, traps Tab/Shift+Tab, and restores focus on Escape', () => {
@@ -90,7 +114,7 @@ describe('CartPortalDrawer', () => {
     expect(within(dialog).getByText('Your cart is empty.')).toBeTruthy();
   });
 
-  it('wires validation errors with aria-invalid/aria-describedby, focuses pin search when only pin is missing, and preserves input', async () => {
+  it('wires validation errors with aria-invalid/aria-describedby, focuses address search when pin is missing, and preserves input', async () => {
     installMockShopApi();
     render(
       <TestQueryWrapper>
@@ -106,7 +130,10 @@ describe('CartPortalDrawer', () => {
     const nameInput = within(dialog).getByLabelText(/your name/i);
 
     fireEvent.click(within(dialog).getByRole('radio', { name: /delivery/i }));
-    const pinSearchInput = await within(dialog).findByLabelText(/pin delivery location/i);
+    expect(within(dialog).queryByLabelText(/delivery area/i)).toBeNull();
+    const locationInput = await within(dialog).findByRole('combobox', {
+      name: /delivery address/i,
+    });
     fireEvent.click(within(dialog).getByRole('button', { name: /buy order/i }));
 
     expect(nameInput.getAttribute('aria-invalid')).toBe('true');
@@ -114,31 +141,34 @@ describe('CartPortalDrawer', () => {
     expect(nameErrorId).toBeTruthy();
     expect(document.getElementById(nameErrorId ?? '')?.textContent).toContain('Enter your name');
 
-    expect(pinSearchInput.getAttribute('aria-invalid')).toBe('true');
-    const pinErrorId = pinSearchInput.getAttribute('aria-describedby');
-    expect(pinErrorId).toBeTruthy();
-    expect(document.getElementById(pinErrorId ?? '')?.textContent).toContain(
-      'Pin your delivery location on the map',
-    );
-
     const contactInput = within(dialog).getByLabelText(/mobile number/i);
-    const notesInput = within(dialog).getByLabelText(/delivery address/i);
+    const notesInput = within(dialog).getByLabelText(/street, building & rider notes/i);
     expect(contactInput.getAttribute('aria-invalid')).toBe('true');
+    expect(locationInput.getAttribute('aria-invalid')).toBe('true');
     expect(notesInput.getAttribute('aria-invalid')).toBe('true');
 
     fireEvent.change(nameInput, { target: { value: 'Marco' } });
     fireEvent.change(contactInput, { target: { value: '09171234567' } });
-    fireEvent.change(notesInput, { target: { value: 'Yakal St, Makati' } });
     fireEvent.click(within(dialog).getByRole('button', { name: /buy order/i }));
-    expect(document.activeElement).toBe(pinSearchInput);
+    expect(document.activeElement).toBe(locationInput);
 
     fireEvent.click(within(dialog).getByRole('radio', { name: /kiosk pickup/i }));
-    expect(within(dialog).queryByText(/pin your delivery location on the map/i)).toBeNull();
+    expect(within(dialog).queryByText(/select a delivery address/i)).toBeNull();
     expect((nameInput as HTMLInputElement).value).toBe('Marco');
   });
 
-  it('places a pinned delivery order via the API, copies summary with Google Maps link, and dismisses the receipt cleanly', async () => {
+  it('places a GPS delivery order via "Use my location", resolves address via BFF, copies summary with Google Maps link, and dismisses receipt cleanly', async () => {
     installMockShopApi();
+
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      value: {
+        getCurrentPosition: vi.fn((success: PositionCallback) => {
+          success(createGeolocationPosition(14.5608, 121.0124));
+        }),
+      },
+    });
+
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -164,12 +194,20 @@ describe('CartPortalDrawer', () => {
       target: { value: '09171234567' },
     });
 
-    const chinoRocesPinBtn = await within(dialog).findByRole('button', { name: 'Chino Roces' });
-    fireEvent.click(chinoRocesPinBtn);
+    fireEvent.click(within(dialog).getByRole('button', { name: /^use my location$/i }));
 
-    fireEvent.change(within(dialog).getByLabelText(/delivery address/i), {
-      target: { value: 'Chino Roces Tower' },
+    const locationInput = within(dialog).getByRole('combobox', {
+      name: /delivery address/i,
+    }) as HTMLInputElement;
+    await waitFor(() => {
+      expect(locationInput.value).toBe('Chino Roces Avenue, San Antonio, Makati');
     });
+
+    const riderNotesInput = within(dialog).getByLabelText(
+      /building, unit & rider notes \(optional\)/i,
+    );
+    fireEvent.change(riderNotesInput, { target: { value: 'Unit 402' } });
+
     fireEvent.change(within(dialog).getByLabelText(/payment method/i), {
       target: { value: 'gcash' },
     });
@@ -177,6 +215,10 @@ describe('CartPortalDrawer', () => {
 
     expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
     expect(within(dialog).getByText('#8B-101')).toBeTruthy();
+    expect(
+      within(dialog).getByText(/unit 402 — chino roces avenue, san antonio, makati/i),
+    ).toBeTruthy();
+    expect(within(dialog).queryByText(/^zone:/i)).toBeNull();
     expect(within(dialog).getByText(/confirm gcash payment details/i)).toBeTruthy();
     const mapLink = within(dialog).getByRole('link', { name: /open in google maps/i });
     expect(mapLink.getAttribute('href')).toContain('https://maps.google.com/?q=14.56080,121.01240');
@@ -193,13 +235,22 @@ describe('CartPortalDrawer', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('auto-locks delivery zone by pin, blocks out-of-range pins, and unlocks free delivery above minimum subtotal', async () => {
+  it('quotes fees dynamically from searched address, blocks out-of-range locations with recovery, unlocks free delivery, and requires manual address when GPS reverse lookup is null', async () => {
     installMockShopApi({
-      onExternalFetch: async () =>
-        new Response(
-          JSON.stringify([{ lat: '14.1153', lon: '120.9621', display_name: 'Tagaytay, Cavite' }]),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        ),
+      onLocationReverse: () =>
+        new Response(JSON.stringify({ data: null }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    });
+
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      value: {
+        getCurrentPosition: vi.fn((success: PositionCallback) => {
+          success(createGeolocationPosition(14.5547, 121.0244));
+        }),
+      },
     });
 
     render(
@@ -215,66 +266,96 @@ describe('CartPortalDrawer', () => {
     await within(dialog).findByText('Overload Burger');
     fireEvent.click(within(dialog).getByRole('radio', { name: /delivery/i }));
 
-    const bgcPinBtn = await within(dialog).findByRole('button', { name: 'BGC' });
-    fireEvent.click(bgcPinBtn);
-    expect(within(dialog).getByRole('button', { name: /buy order · ₱373/i })).toBeTruthy();
-
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Alabang' }));
-    expect(within(dialog).getByRole('button', { name: /buy order · ₱423/i })).toBeTruthy();
-
-    fireEvent.change(within(dialog).getByLabelText(/pin delivery location/i), {
-      target: { value: 'Tagaytay' },
-    });
-    fireEvent.click(within(dialog).getByRole('button', { name: /^find$/i }));
-    await waitFor(() => {
-      expect(within(dialog).getByText('Outside delivery area')).toBeTruthy();
-    });
-    expect(
-      (within(dialog).getByRole('button', { name: /buy order/i }) as HTMLButtonElement).disabled,
-    ).toBe(true);
-
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Alabang' }));
-    fireEvent.click(
-      within(dialog).getByRole('button', { name: /increase quantity of overload burger/i }),
-    );
-    expect(within(dialog).getByText(/free delivery unlocked/i)).toBeTruthy();
-    expect(within(dialog).getByRole('button', { name: /buy order · ₱596/i })).toBeTruthy();
-
+    // GPS with null reverse label keeps pin (Makati CBD 1.9 km -> ₱54 fee -> ₱352 total), requires manual street/building input
     fireEvent.change(within(dialog).getByLabelText(/your name/i), { target: { value: 'Mia' } });
     fireEvent.change(within(dialog).getByLabelText(/mobile number/i), {
       target: { value: '09171234567' },
     });
-    fireEvent.change(within(dialog).getByLabelText(/delivery address/i), {
-      target: { value: 'Filinvest City, Alabang' },
+    fireEvent.click(within(dialog).getByRole('button', { name: /^use my location$/i }));
+    await waitFor(() => {
+      expect(within(dialog).getByText('Device location')).toBeTruthy();
     });
+    fireEvent.click(within(dialog).getByRole('button', { name: /buy order · ₱352/i }));
+    expect(document.activeElement).toBe(
+      within(dialog).getByLabelText(/street, building & rider notes/i),
+    );
+
+    // Clear GPS and search Bonifacio High Street (5.5 km -> ₱90 fee -> ₱388 total)
+    fireEvent.click(within(dialog).getByRole('button', { name: /^change$/i }));
+    const locationInput = within(dialog).getByRole('combobox', { name: /delivery address/i });
+    fireEvent.change(locationInput, { target: { value: 'Bonifacio' } });
+    fireEvent.click(await within(dialog).findByRole('option', { name: /bonifacio high street/i }));
+    expect(within(dialog).getByRole('button', { name: /buy order · ₱388/i })).toBeTruthy();
+    expect(within(dialog).getByText(/estimated delivery · 25–35 min/i)).toBeTruthy();
+    expect(
+      within(dialog).getByText(/~5\.5 km from chino roces · ₱35 base \+ ₱10\/km/i),
+    ).toBeTruthy();
+
+    // Search out-of-range Tagaytay and recover via "Search another address"
+    fireEvent.change(locationInput, { target: { value: 'Tagaytay' } });
+    fireEvent.click(await within(dialog).findByRole('option', { name: /tagaytay rotonda/i }));
+    expect(await within(dialog).findByText('Outside delivery area')).toBeTruthy();
+    expect(
+      (within(dialog).getByRole('button', { name: /buy order/i }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /search another address/i }));
+    expect(within(dialog).queryByText('Outside delivery area')).toBeNull();
+    expect(document.activeElement).toBe(locationInput);
+
+    // Search Filinvest Alabang (21.2 km -> ₱247 fee -> ₱545 total) then unlock free delivery above ₱500
+    fireEvent.change(locationInput, { target: { value: 'Alabang' } });
+    fireEvent.click(await within(dialog).findByRole('option', { name: /filinvest city alabang/i }));
+    expect(within(dialog).getByRole('button', { name: /buy order · ₱545/i })).toBeTruthy();
+
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: /increase quantity of overload burger/i }),
+    );
+    expect(within(dialog).getByText(/free delivery unlocked/i)).toBeTruthy();
+    expect(within(dialog).getByText('₱247')).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: /buy order · ₱596/i })).toBeTruthy();
+
+    // Submit using selectedAddress without requiring duplicate manual address entry
     fireEvent.click(within(dialog).getByRole('button', { name: /buy order · ₱596/i }));
 
     expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
-    expect(within(dialog).getByText('Delivery (Quezon City, Parañaque & Alabang)')).toBeTruthy();
+    expect(within(dialog).getByText(/filinvest city alabang, alabang, muntinlupa/i)).toBeTruthy();
+    expect(within(dialog).queryByText(/^zone:/i)).toBeNull();
     expect(within(dialog).getByText('Free (min. met)')).toBeTruthy();
   });
 
-  it('disables delivery option when all delivery zones are paused', async () => {
+  it('disables delivery option when delivery is paused even above free-delivery subtotal and allows pickup checkout', async () => {
     installMockShopApi({
       initialDeliveryPricing: {
-        zones: DEFAULT_DELIVERY_PRICING.zones.map((zone) => ({ ...zone, enabled: false })),
-        freeDeliveryMinSubtotalPhp: 500,
+        ...DEFAULT_DELIVERY_PRICING,
+        deliveryEnabled: false,
       },
     });
 
     render(
       <TestQueryWrapper>
-        <CartDrawerTestHarness />
+        <CartDrawerTestHarness initialItemId="overload-burger" />
       </TestQueryWrapper>,
     );
+    fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
     fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
 
     const dialog = screen.getByRole('dialog', { name: /your order cart/i });
-    await within(dialog).findByText('Burger Deluxe');
+    await within(dialog).findByText('Overload Burger');
     const deliveryRadio = within(dialog).getByRole('radio', { name: /delivery/i });
     expect((deliveryRadio as HTMLInputElement).disabled).toBe(true);
-    expect(within(dialog).getByText('Paused')).toBeTruthy();
+    const deliveryOptionLabel = deliveryRadio.closest('label');
+    expect(deliveryOptionLabel).toBeTruthy();
+    if (deliveryOptionLabel) {
+      expect(within(deliveryOptionLabel).getByText('Paused')).toBeTruthy();
+      expect(within(deliveryOptionLabel).queryByText('Free')).toBeNull();
+    }
+
+    fireEvent.change(within(dialog).getByLabelText(/your name/i), { target: { value: 'Marco' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /buy order · ₱596/i }));
+    expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
+    expect(within(dialog).getByText('Chino Roces Pickup')).toBeTruthy();
   });
 
   it('auto-prunes deleted menu items with a notice and keeps checkout enabled for remaining items', async () => {
@@ -399,8 +480,6 @@ describe('CartPortalDrawer', () => {
           customerName: 'Carla',
           contactNumber: '09171234567',
           fulfillment: 'delivery',
-          deliveryZoneId: 'makati-core',
-          deliveryZoneName: 'Makati Core',
           deliveryEtaMinutes: '20–30 min',
           addressOrNotes: 'Ayala Ave',
           paymentMethod: 'gcash',
@@ -442,6 +521,8 @@ describe('CartPortalDrawer', () => {
 
     expect(await within(dialog).findByText('#8B-105')).toBeTruthy();
     expect(within(dialog).getByText('Live Order Tracker')).toBeTruthy();
+    expect(within(dialog).getByText(/estimated delivery:/i)).toBeTruthy();
+    expect(within(dialog).queryByText(/^zone:/i)).toBeNull();
     expect(within(dialog).queryByText('Carla')).toBeNull();
     expect(within(dialog).queryByText('Ayala Ave')).toBeNull();
 
@@ -461,5 +542,205 @@ describe('CartPortalDrawer', () => {
         /this order was cancelled and removed from the active kitchen queue/i,
       ),
     ).toBeTruthy();
+  });
+
+  it('closes the suggestion listbox on first Escape without closing the drawer, then closes drawer on second Escape', async () => {
+    installMockShopApi();
+    render(
+      <TestQueryWrapper>
+        <CartDrawerTestHarness />
+      </TestQueryWrapper>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
+
+    const dialog = screen.getByRole('dialog', { name: /your order cart/i });
+    await within(dialog).findByText('Burger Deluxe');
+    fireEvent.click(within(dialog).getByRole('radio', { name: /delivery/i }));
+
+    const locationInput = within(dialog).getByRole('combobox', { name: /delivery address/i });
+    fireEvent.change(locationInput, { target: { value: 'Ayala' } });
+    expect(await within(dialog).findByRole('listbox')).toBeTruthy();
+
+    fireEvent.keyDown(locationInput, { key: 'Escape' });
+    expect(within(dialog).queryByRole('listbox')).toBeNull();
+    expect(screen.getByRole('dialog', { name: /your order cart/i })).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('clears a locked pin if the customer edits the address search text and blocks stale submission', async () => {
+    const { spy } = installMockShopApi();
+    render(
+      <TestQueryWrapper>
+        <CartDrawerTestHarness initialItemId="overload-burger" />
+      </TestQueryWrapper>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
+
+    const dialog = screen.getByRole('dialog', { name: /your order cart/i });
+    await within(dialog).findByText('Overload Burger');
+    fireEvent.change(within(dialog).getByLabelText(/your name/i), { target: { value: 'Mia' } });
+    fireEvent.click(within(dialog).getByRole('radio', { name: /delivery/i }));
+    fireEvent.change(within(dialog).getByLabelText(/mobile number/i), {
+      target: { value: '09171234567' },
+    });
+
+    const locationInput = within(dialog).getByRole('combobox', { name: /delivery address/i });
+    fireEvent.change(locationInput, { target: { value: 'Alabang' } });
+    fireEvent.click(await within(dialog).findByRole('option', { name: /filinvest city alabang/i }));
+    expect(within(dialog).getByRole('button', { name: /buy order · ₱545/i })).toBeTruthy();
+
+    // Editing the input clears the locked pin immediately so stale coordinates cannot be billed
+    fireEvent.change(locationInput, { target: { value: 'Alabang Town' } });
+    expect(within(dialog).getByText('Enter address')).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: /buy order · ₱298/i })).toBeTruthy();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /buy order · ₱298/i }));
+    expect(
+      within(dialog).getByText(
+        /select a delivery address from the suggestions or use your device location/i,
+      ),
+    ).toBeTruthy();
+    expect(document.activeElement).toBe(locationInput);
+
+    const orderPosts = spy.mock.calls.filter(
+      ([input, init]) => String(input) === '/api/v1/orders' && init?.method === 'POST',
+    );
+    expect(orderPosts).toHaveLength(0);
+  });
+
+  it('omits deliveryZoneId, clamps composed addressOrNotes to 500 chars, and resets delivery state for the next order', async () => {
+    const { spy } = installMockShopApi();
+    render(
+      <TestQueryWrapper>
+        <CartDrawerTestHarness />
+      </TestQueryWrapper>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
+
+    const dialog = screen.getByRole('dialog', { name: /your order cart/i });
+    await within(dialog).findByText('Burger Deluxe');
+    fireEvent.change(within(dialog).getByLabelText(/your name/i), { target: { value: 'Alex' } });
+    fireEvent.click(within(dialog).getByRole('radio', { name: /delivery/i }));
+    fireEvent.change(within(dialog).getByLabelText(/mobile number/i), {
+      target: { value: '09171234567' },
+    });
+
+    const locationInput = within(dialog).getByRole('combobox', { name: /delivery address/i });
+    fireEvent.change(locationInput, { target: { value: 'Ayala' } });
+    fireEvent.click(await within(dialog).findByRole('option', { name: /ayala triangle gardens/i }));
+
+    const longNotes = `Tower 1 ${'B'.repeat(490)}`;
+    fireEvent.change(within(dialog).getByLabelText(/building, unit & rider notes/i), {
+      target: { value: longNotes },
+    });
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /buy order · ₱200/i }));
+    expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
+
+    const orderPost = spy.mock.calls.find(
+      ([input, init]) => String(input) === '/api/v1/orders' && init?.method === 'POST',
+    );
+    expect(orderPost).toBeTruthy();
+    const sentPayload = JSON.parse(String(orderPost?.[1]?.body ?? '{}')) as Record<string, unknown>;
+    expect('deliveryZoneId' in sentPayload).toBe(false);
+    expect(sentPayload.deliveryPin).toEqual({ lat: 14.5572, lng: 121.0236 });
+    expect(typeof sentPayload.addressOrNotes).toBe('string');
+    expect((sentPayload.addressOrNotes as string).length).toBeLessThanOrEqual(500);
+
+    // Dismiss receipt and start a fresh order -> delivery state must be reset
+    fireEvent.click(within(dialog).getByRole('button', { name: /done · back to menu/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
+
+    const nextDialog = screen.getByRole('dialog', { name: /your order cart/i });
+    await within(nextDialog).findByText('Burger Deluxe');
+    fireEvent.click(within(nextDialog).getByRole('radio', { name: /delivery/i }));
+
+    const nextLocationInput = within(nextDialog).getByRole('combobox', {
+      name: /delivery address/i,
+    }) as HTMLInputElement;
+    const nextNotesInput = within(nextDialog).getByLabelText(
+      /street, building & rider notes/i,
+    ) as HTMLInputElement;
+    expect(nextLocationInput.value).toBe('');
+    expect(nextNotesInput.value).toBe('');
+    expect(within(nextDialog).getByText('Enter address')).toBeTruthy();
+  });
+
+  it('handles mid-checkout delivery pause (422 DELIVERY_UNAVAILABLE), refreshes catalog to paused state, preserves form inputs, and recovers via Switch to Chino Roces Pickup', async () => {
+    const { state } = installMockShopApi();
+    render(
+      <TestQueryWrapper>
+        <CartDrawerTestHarness />
+      </TestQueryWrapper>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
+
+    const dialog = screen.getByRole('dialog', { name: /your order cart/i });
+    await within(dialog).findByText('Burger Deluxe');
+
+    const nameInput = within(dialog).getByLabelText(/your name/i) as HTMLInputElement;
+    fireEvent.change(nameInput, { target: { value: 'Marco' } });
+    fireEvent.click(within(dialog).getByRole('radio', { name: /delivery/i }));
+    const mobileInput = within(dialog).getByLabelText(/mobile number/i) as HTMLInputElement;
+    fireEvent.change(mobileInput, { target: { value: '09171234567' } });
+
+    const locationInput = within(dialog).getByRole('combobox', { name: /delivery address/i });
+    fireEvent.change(locationInput, { target: { value: 'Ayala' } });
+    fireEvent.click(await within(dialog).findByRole('option', { name: /ayala triangle gardens/i }));
+    const buyDeliveryBtn = within(dialog).getByRole('button', {
+      name: /buy order · ₱200/i,
+    }) as HTMLButtonElement;
+    expect(buyDeliveryBtn.disabled).toBe(false);
+
+    // Owner pauses delivery while customer already has Delivery selected
+    state.deliveryPricing.deliveryEnabled = false;
+    state.deliveryPricing.version = (state.deliveryPricing.version ?? 1) + 1;
+
+    fireEvent.click(buyDeliveryBtn);
+
+    expect(
+      await within(dialog).findByText(
+        /delivery is currently paused\. switch to chino roces pickup to continue\./i,
+      ),
+    ).toBeTruthy();
+    expect(
+      await within(dialog).findByText(
+        /delivery is temporarily paused\. switch to kiosk pickup to place your order\./i,
+      ),
+    ).toBeTruthy();
+
+    expect(
+      (within(dialog).getByRole('radio', { name: /delivery/i }) as HTMLInputElement).disabled,
+    ).toBe(true);
+    expect(within(dialog).getAllByText('Paused')).toHaveLength(2);
+    expect(within(dialog).queryByText('Enter address')).toBeNull();
+    expect(
+      (within(dialog).getByRole('button', { name: /buy order/i }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(nameInput.value).toBe('Marco');
+    expect(mobileInput.value).toBe('09171234567');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /switch to chino roces pickup/i }));
+
+    expect(
+      (within(dialog).getByRole('radio', { name: /kiosk pickup/i }) as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(within(dialog).queryByText(/delivery is currently paused\./i)).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /buy order · ₱148/i }));
+    expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
+    expect(within(dialog).getByText('#8B-101')).toBeTruthy();
+    expect(within(dialog).getByText('Chino Roces Pickup')).toBeTruthy();
   });
 });

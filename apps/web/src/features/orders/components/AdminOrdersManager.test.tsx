@@ -13,8 +13,6 @@ const SAMPLE_ORDERS: OrderRecord[] = [
     customerName: 'Marco Santos',
     contactNumber: '09171234567',
     fulfillment: 'delivery',
-    deliveryZoneId: 'makati-core',
-    deliveryZoneName: 'Makati Core',
     deliveryEtaMinutes: '20–30 min',
     deliveryPin: { lat: 14.5547, lng: 121.0244 },
     deliveryDistanceKm: 1.4,

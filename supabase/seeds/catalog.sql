@@ -9,57 +9,17 @@ values
   ('pineapple', 'Grilled Pineapple', 26, 4)
 on conflict (id) do nothing;
 
-insert into public.store_settings (id, free_delivery_min_subtotal_php, origin_lat, origin_lng)
-values (1, 500, 14.5608, 121.0124)
-on conflict (id) do nothing;
-
-insert into public.delivery_zones (id, name, areas, max_distance_km, fee_php, eta_minutes, enabled)
-values
-  (
-    'chino-roces-san-antonio',
-    'Chino Roces & San Antonio',
-    'Eton WestEnd, Yakal, Malugay, San Antonio Village',
-    2.5,
-    35,
-    '15–25 min',
-    true
-  ),
-  (
-    'makati-cbd-poblacion',
-    'Makati CBD, Poblacion & Rockwell',
-    'Legazpi, Salcedo, Ayala Ave, Bel-Air, Rockwell, Circuit',
-    5.0,
-    49,
-    '20–35 min',
-    true
-  ),
-  (
-    'bgc-pasay-mandaluyong',
-    'BGC, Pasay & Mandaluyong',
-    'Bonifacio High Street, Uptown, MOA, Newport, Greenfield, Shaw',
-    10.0,
-    75,
-    '30–45 min',
-    true
-  ),
-  (
-    'manila-ortigas-pasig',
-    'Manila, Ortigas & Pasig',
-    'Malate, Ermita, Taft, Ortigas Center, Kapitolyo, San Juan',
-    16.0,
-    95,
-    '40–55 min',
-    true
-  ),
-  (
-    'qc-south-metro',
-    'Quezon City, Parañaque & Alabang',
-    'Cubao, Timog, Diliman, BF Homes, Sucat, Filinvest Alabang',
-    25.0,
-    125,
-    '50–70 min',
-    true
-  )
+insert into public.store_settings (
+  id,
+  delivery_enabled,
+  delivery_base_fee_php,
+  delivery_per_km_rate_php,
+  delivery_max_distance_km,
+  free_delivery_min_subtotal_php,
+  origin_lat,
+  origin_lng
+)
+values (1, true, 35, 10, 25.0, 500, 14.5608, 121.0124)
 on conflict (id) do nothing;
 
 insert into public.menu_items (

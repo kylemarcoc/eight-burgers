@@ -6,60 +6,77 @@ export const geoCoordinatesSchema = z.strictObject({
 });
 export type GeoCoordinates = z.infer<typeof geoCoordinatesSchema>;
 
-export const deliveryZoneSchema = z.object({
-  id: z.string().min(1).max(120),
-  name: z.string().min(1).max(120),
-  areas: z.string().max(300),
-  maxDistanceKm: z.number().finite().positive().max(200),
-  feePhp: z.number().int().min(0).max(10000),
-  etaMinutes: z.string().min(1).max(60),
-  enabled: z.boolean(),
-  updatedAt: z.string().optional(),
-  version: z.number().int().positive().optional(),
-});
-export type DeliveryZone = z.infer<typeof deliveryZoneSchema>;
-
-export const deliveryZoneInputSchema = z.strictObject({
-  name: z.string().trim().min(1, 'Zone name is required.').max(120),
-  areas: z.string().trim().max(300),
-  maxDistanceKm: z.number().finite().min(0.1, 'Radius must be at least 0.1 km.').max(200),
-  feePhp: z.number().int().min(0, 'Fee must be zero or positive.').max(10000),
-  etaMinutes: z.string().trim().min(1, 'ETA is required.').max(60),
-  enabled: z.boolean(),
-  expectedVersion: z.number().int().positive().optional(),
-});
-export type DeliveryZoneInput = Omit<DeliveryZone, 'id' | 'updatedAt' | 'version'>;
-export type DeliveryZoneMutationInput = z.infer<typeof deliveryZoneInputSchema>;
-
-export const deliveryZoneEnabledPatchSchema = z.strictObject({
-  enabled: z.boolean(),
-  expectedVersion: z.number().int().positive().optional(),
-});
-export type DeliveryZoneEnabledPatch = z.infer<typeof deliveryZoneEnabledPatchSchema>;
-
 export const deliveryPricingConfigSchema = z.object({
-  zones: z.array(deliveryZoneSchema),
+  deliveryEnabled: z.boolean(),
+  baseFeePhp: z.number().int().min(0).max(10000),
+  perKmRatePhp: z.number().int().min(0).max(1000),
+  maxDistanceKm: z.number().finite().min(0.1).max(200),
   freeDeliveryMinSubtotalPhp: z.number().int().positive().nullable(),
   updatedAt: z.string().optional(),
   version: z.number().int().positive().optional(),
 });
 export type DeliveryPricingConfig = z.infer<typeof deliveryPricingConfigSchema>;
 
-export const deliveryPricingPatchSchema = z.strictObject({
-  freeDeliveryMinSubtotalPhp: z.number().int().positive().max(100000).nullable(),
-  expectedVersion: z.number().int().positive().optional(),
-});
+export const deliveryPricingPatchSchema = z
+  .strictObject({
+    deliveryEnabled: z.boolean().optional(),
+    baseFeePhp: z.number().int().min(0).max(10000).optional(),
+    perKmRatePhp: z.number().int().min(0).max(1000).optional(),
+    maxDistanceKm: z
+      .number()
+      .finite()
+      .min(0.1, 'Max distance must be at least 0.1 km.')
+      .max(200)
+      .optional(),
+    freeDeliveryMinSubtotalPhp: z.number().int().positive().max(100000).nullable().optional(),
+    expectedVersion: z.number().int().positive().optional(),
+  })
+  .refine(
+    (patch) =>
+      patch.deliveryEnabled !== undefined ||
+      patch.baseFeePhp !== undefined ||
+      patch.perKmRatePhp !== undefined ||
+      patch.maxDistanceKm !== undefined ||
+      patch.freeDeliveryMinSubtotalPhp !== undefined,
+    {
+      message: 'Provide at least one delivery pricing field to update.',
+    },
+  );
 export type DeliveryPricingPatch = z.infer<typeof deliveryPricingPatchSchema>;
 
 export const deliveryPricingResponseSchema = z.object({
   data: deliveryPricingConfigSchema,
 });
 
-export const deliveryZoneResponseSchema = z.object({
-  data: deliveryZoneSchema,
+export const locationSuggestionSchema = z.object({
+  id: z.string().trim().min(1).max(200),
+  label: z.string().trim().min(1).max(250),
+  secondaryLabel: z.string().trim().max(250).optional(),
+  coordinates: geoCoordinatesSchema,
 });
+export type LocationSuggestion = z.infer<typeof locationSuggestionSchema>;
 
-export const DEFAULT_DELIVERY_FEE_PHP = 35;
+export const locationSearchResponseSchema = z.object({
+  data: z.array(locationSuggestionSchema).max(10),
+});
+export type LocationSearchResponse = z.infer<typeof locationSearchResponseSchema>;
+
+export const locationReverseResultSchema = z.object({
+  label: z.string().trim().min(1).max(250),
+  coordinates: geoCoordinatesSchema,
+});
+export type LocationReverseResult = z.infer<typeof locationReverseResultSchema>;
+
+export const locationReverseResponseSchema = z.object({
+  data: locationReverseResultSchema.nullable(),
+});
+export type LocationReverseResponse = z.infer<typeof locationReverseResponseSchema>;
+
+export const DEFAULT_DELIVERY_ENABLED = true;
+export const DEFAULT_DELIVERY_BASE_FEE_PHP = 35;
+export const DEFAULT_DELIVERY_PER_KM_RATE_PHP = 10;
+export const DEFAULT_DELIVERY_MAX_DISTANCE_KM = 25;
+export const DEFAULT_DELIVERY_FEE_PHP = DEFAULT_DELIVERY_BASE_FEE_PHP;
 export const ROAD_DISTANCE_FACTOR = 1.3;
 export const DEFAULT_FREE_DELIVERY_MIN_SUBTOTAL_PHP = 500;
 
@@ -68,55 +85,10 @@ export const STORE_ORIGIN_COORDS: GeoCoordinates = {
   lng: 121.0124,
 };
 
-export const DEFAULT_DELIVERY_ZONES: readonly DeliveryZone[] = [
-  {
-    id: 'chino-roces-san-antonio',
-    name: 'Chino Roces & San Antonio',
-    areas: 'Eton WestEnd, Yakal, Malugay, San Antonio Village',
-    maxDistanceKm: 2.5,
-    feePhp: 35,
-    etaMinutes: '15–25 min',
-    enabled: true,
-  },
-  {
-    id: 'makati-cbd-poblacion',
-    name: 'Makati CBD, Poblacion & Rockwell',
-    areas: 'Legazpi, Salcedo, Ayala Ave, Bel-Air, Rockwell, Circuit',
-    maxDistanceKm: 5,
-    feePhp: 49,
-    etaMinutes: '20–35 min',
-    enabled: true,
-  },
-  {
-    id: 'bgc-pasay-mandaluyong',
-    name: 'BGC, Pasay & Mandaluyong',
-    areas: 'Bonifacio High Street, Uptown, MOA, Newport, Greenfield, Shaw',
-    maxDistanceKm: 10,
-    feePhp: 75,
-    etaMinutes: '30–45 min',
-    enabled: true,
-  },
-  {
-    id: 'manila-ortigas-pasig',
-    name: 'Manila, Ortigas & Pasig',
-    areas: 'Malate, Ermita, Taft, Ortigas Center, Kapitolyo, San Juan',
-    maxDistanceKm: 16,
-    feePhp: 95,
-    etaMinutes: '40–55 min',
-    enabled: true,
-  },
-  {
-    id: 'qc-south-metro',
-    name: 'Quezon City, Parañaque & Alabang',
-    areas: 'Cubao, Timog, Diliman, BF Homes, Sucat, Filinvest Alabang',
-    maxDistanceKm: 25,
-    feePhp: 125,
-    etaMinutes: '50–70 min',
-    enabled: true,
-  },
-];
-
 export const DEFAULT_DELIVERY_PRICING: DeliveryPricingConfig = {
-  zones: DEFAULT_DELIVERY_ZONES.map((zone) => ({ ...zone })),
+  deliveryEnabled: DEFAULT_DELIVERY_ENABLED,
+  baseFeePhp: DEFAULT_DELIVERY_BASE_FEE_PHP,
+  perKmRatePhp: DEFAULT_DELIVERY_PER_KM_RATE_PHP,
+  maxDistanceKm: DEFAULT_DELIVERY_MAX_DISTANCE_KM,
   freeDeliveryMinSubtotalPhp: DEFAULT_FREE_DELIVERY_MIN_SUBTOTAL_PHP,
 };

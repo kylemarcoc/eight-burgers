@@ -4,7 +4,7 @@ import {
   type AdminRole,
   type AdminTeamMember,
 } from '@eight-burgers/contracts';
-import { useId, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useId, useMemo, useRef, useState, type SubmitEvent } from 'react';
 import { getApiErrorMessage } from '@/shared/lib/api-error';
 import { useAdminTeamMutations, useAdminTeamQuery } from '../hooks/useAdminTeam';
 
@@ -24,7 +24,7 @@ const ROLE_DESCRIPTIONS: Record<AdminRole, string> = {
   staff:
     'Can update Customer Orders (Received, Grilling, Ready, Completed, Cancelled) and toggle Menu Stock. Cannot edit catalog prices or delivery settings.',
   owner:
-    'Full access to Menu prices and photos, Delivery zones and fees, Customer Orders, and Team & Roles.',
+    'Full access to Menu prices and photos, Delivery pricing and pause controls, Customer Orders, and Team & Roles.',
 };
 
 const ROLE_SORT_ORDER: Record<AdminRole, number> = {
@@ -78,7 +78,7 @@ export function AdminTeamManager({ currentUserId }: AdminTeamManagerProps) {
     });
   }
 
-  async function handleCreateSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleCreateSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedEmail = email.trim().toLowerCase();
     const nextErrors: FormFieldErrors = {};

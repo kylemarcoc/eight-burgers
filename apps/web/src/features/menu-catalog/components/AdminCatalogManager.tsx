@@ -12,7 +12,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
-  type FormEvent,
+  type SubmitEvent,
 } from 'react';
 import { FoodImage } from '@/shared/components/FoodImage';
 import { getApiErrorMessage, isApiError } from '@/shared/lib/api-error';
@@ -265,7 +265,7 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
     showStatus(`Reloaded latest details for "${latest.name}".`);
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedName = form.name.trim();
     const parsedPrice = Number(form.pricePhp);
@@ -359,8 +359,8 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
           </h1>
           <p className="mt-1 text-sm text-ui-text-muted">
             {canManageCatalog
-              ? 'Add new burgers, paste updated Foodpanda or Facebook photo URLs, toggle sold-out items, and configure Metro Manila delivery zones. Changes sync live to the database.'
-              : 'Toggle In Stock or Sold Out availability on menu items in real time. Adding, editing, or removing listings and delivery zones requires an Owner account.'}
+              ? 'Add new burgers, paste updated Foodpanda or Facebook photo URLs, toggle sold-out items, and configure distance-based delivery pricing. Changes sync live to the database.'
+              : 'Toggle In Stock or Sold Out availability on menu items in real time. Adding, editing, or removing listings and delivery settings requires an Owner account.'}
           </p>
         </div>
 

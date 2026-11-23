@@ -34,22 +34,24 @@ describe('shop storage helpers and cart calculations', () => {
     expect(formatPhp(summary.subtotalPhp)).toBe('₱376');
   });
 
-  it('locks delivery zone strictly from pinned coordinates and rejects out-of-range pins', () => {
+  it('calculates distance-formula delivery fees strictly from pinned coordinates and rejects out-of-range or paused states', () => {
     const pricing = createDefaultDeliveryPricing();
 
     const alabangQuote = calculateDeliveryQuote({
       fulfillment: 'delivery',
       subtotalPhp: 336,
       deliveryPricing: pricing,
-      zoneId: 'chino-roces-san-antonio',
       pin: { lat: 14.417, lng: 121.041 },
     });
     expect(alabangQuote.available).toBe(true);
     expect(alabangQuote.outOfRange).toBe(false);
-    expect(alabangQuote.zone?.id).toBe('qc-south-metro');
-    expect(alabangQuote.baseFeePhp).toBe(125);
-    expect(alabangQuote.feePhp).toBe(125);
-    expect(alabangQuote.distanceKm).toBeGreaterThan(16);
+    expect(alabangQuote.distanceKm).toBe(21.2);
+    expect(alabangQuote.baseFeePhp).toBe(35);
+    expect(alabangQuote.perKmRatePhp).toBe(10);
+    expect(alabangQuote.distanceFeePhp).toBe(212);
+    expect(alabangQuote.subtotalFeePhp).toBe(247);
+    expect(alabangQuote.feePhp).toBe(247);
+    expect(alabangQuote.etaMinutes).toBe('55–70 min');
     expect(alabangQuote.amountToFreeDeliveryPhp).toBe(164);
 
     const unlockedFree = calculateDeliveryQuote({
@@ -58,7 +60,7 @@ describe('shop storage helpers and cart calculations', () => {
       deliveryPricing: pricing,
       pin: { lat: 14.417, lng: 121.041 },
     });
-    expect(unlockedFree.baseFeePhp).toBe(125);
+    expect(unlockedFree.subtotalFeePhp).toBe(247);
     expect(unlockedFree.feePhp).toBe(0);
     expect(unlockedFree.isFreeDelivery).toBe(true);
     expect(unlockedFree.amountToFreeDeliveryPhp).toBeNull();
@@ -71,8 +73,17 @@ describe('shop storage helpers and cart calculations', () => {
     });
     expect(outOfRangeQuote.available).toBe(false);
     expect(outOfRangeQuote.outOfRange).toBe(true);
-    expect(outOfRangeQuote.zone).toBeNull();
+    expect(outOfRangeQuote.distanceKm).toBe(64.8);
     expect(outOfRangeQuote.maxDeliveryDistanceKm).toBe(25);
+
+    const pausedQuote = calculateDeliveryQuote({
+      fulfillment: 'delivery',
+      subtotalPhp: 300,
+      deliveryPricing: { ...pricing, deliveryEnabled: false },
+      pin: { lat: 14.5572, lng: 121.0236 },
+    });
+    expect(pausedQuote.available).toBe(false);
+    expect(pausedQuote.outOfRange).toBe(false);
   });
 
   it('formats a shareable order summary and validates image URLs strictly', () => {
@@ -82,9 +93,7 @@ describe('shop storage helpers and cart calculations', () => {
       customerName: 'Marco',
       contactNumber: '09171234567',
       fulfillment: 'delivery',
-      deliveryZoneId: 'manila-ortigas-pasig',
-      deliveryZoneName: 'Manila, Ortigas & Pasig',
-      deliveryEtaMinutes: '40–55 min',
+      deliveryEtaMinutes: '30–40 min',
       deliveryPin: { lat: 14.5869, lng: 121.0614 },
       deliveryDistanceKm: 7.8,
       deliveryFeeWaived: true,
@@ -109,7 +118,7 @@ describe('shop storage helpers and cart calculations', () => {
       createdAtIso: '2026-11-21T10:05:00.000Z',
     });
 
-    expect(text).toContain('Fulfillment: Delivery — Manila, Ortigas & Pasig (~7.8 km · 40–55 min)');
+    expect(text).toContain('Fulfillment: Delivery (~7.8 km · 30–40 min)');
     expect(text).toContain('Map Pin: https://maps.google.com/?q=14.58690,121.06140');
     expect(text).toContain('Delivery fee: Free (min. order met)');
 

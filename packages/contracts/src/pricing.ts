@@ -1,12 +1,8 @@
 import {
-  DEFAULT_DELIVERY_FEE_PHP,
-  DEFAULT_DELIVERY_ZONES,
-  DEFAULT_FREE_DELIVERY_MIN_SUBTOTAL_PHP,
+  DEFAULT_DELIVERY_PRICING,
   ROAD_DISTANCE_FACTOR,
   STORE_ORIGIN_COORDS,
   type DeliveryPricingConfig,
-  type DeliveryZone,
-  type DeliveryZoneInput,
   type GeoCoordinates,
 } from './delivery.schema';
 import {
@@ -22,9 +18,12 @@ import {
 import type { CartLineItem, FulfillmentMode, OrderRecord } from './order.schema';
 
 export type DeliveryFeeQuote = {
-  zone: DeliveryZone | null;
   baseFeePhp: number;
+  perKmRatePhp: number;
+  distanceFeePhp: number;
+  subtotalFeePhp: number;
   feePhp: number;
+  etaMinutes: string | null;
   isFreeDelivery: boolean;
   amountToFreeDeliveryPhp: number | null;
   freeDeliveryMinSubtotalPhp: number | null;
@@ -88,6 +87,26 @@ export function estimateRoadDistanceKm(from: GeoCoordinates, to: GeoCoordinates)
   return Math.round(straightKm * ROAD_DISTANCE_FACTOR * 10) / 10;
 }
 
+export function estimateDeliveryFeePhp(
+  distanceKm: number,
+  baseFeePhp: number,
+  perKmRatePhp: number,
+): number {
+  const safeBase = Number.isFinite(baseFeePhp) ? Math.max(0, Math.round(baseFeePhp)) : 0;
+  const safeRate = Number.isFinite(perKmRatePhp) ? Math.max(0, Math.round(perKmRatePhp)) : 0;
+  const safeDistTenths = Number.isFinite(distanceKm) ? Math.max(0, Math.round(distanceKm * 10)) : 0;
+  const distanceFee = Math.floor((safeDistTenths * safeRate + 5) / 10);
+  return safeBase + distanceFee;
+}
+
+export function estimateDeliveryEtaMinutes(distanceKm: number): string {
+  const safeDistTenths = Number.isFinite(distanceKm) ? Math.max(0, Math.round(distanceKm * 10)) : 0;
+  const rawMin = 15 + Math.floor((safeDistTenths * 2 + 5) / 10);
+  const etaMin = Math.floor((rawMin + 2) / 5) * 5;
+  const spread = safeDistTenths > 100 ? 15 : 10;
+  return `${etaMin}–${etaMin + spread} min`;
+}
+
 export function buildGoogleMapsPinUrl(pin: GeoCoordinates): string {
   return `https://maps.google.com/?q=${pin.lat.toFixed(5)},${pin.lng.toFixed(5)}`;
 }
@@ -100,12 +119,12 @@ export function formatOrderShareText(order: OrderRecord): string {
   if (order.deliveryEtaMinutes) {
     deliveryDetailsParts.push(order.deliveryEtaMinutes);
   }
-  const deliveryZoneSummary =
-    order.fulfillment === 'delivery' && order.deliveryZoneName
-      ? ` — ${order.deliveryZoneName}${deliveryDetailsParts.length > 0 ? ` (${deliveryDetailsParts.join(' · ')})` : ''}`
+  const deliverySummary =
+    order.fulfillment === 'delivery' && deliveryDetailsParts.length > 0
+      ? ` (${deliveryDetailsParts.join(' · ')})`
       : '';
   const fulfillmentLabel =
-    order.fulfillment === 'kiosk-pickup' ? 'Chino Roces Pickup' : `Delivery${deliveryZoneSummary}`;
+    order.fulfillment === 'kiosk-pickup' ? 'Chino Roces Pickup' : `Delivery${deliverySummary}`;
   const deliveryFeeLine =
     order.deliveryFeePhp > 0
       ? [`Delivery fee: ${formatPhp(order.deliveryFeePhp)}`]
@@ -262,10 +281,7 @@ export function sanitizeMenuItemInput(input: MenuItemInput): MenuItemInput {
 }
 
 export function createDefaultDeliveryPricing(): DeliveryPricingConfig {
-  return {
-    zones: DEFAULT_DELIVERY_ZONES.map((zone) => ({ ...zone })),
-    freeDeliveryMinSubtotalPhp: DEFAULT_FREE_DELIVERY_MIN_SUBTOTAL_PHP,
-  };
+  return { ...DEFAULT_DELIVERY_PRICING };
 }
 
 export function normalizeFreeDeliveryThreshold(value: number | null | undefined): number | null {
@@ -275,34 +291,10 @@ export function normalizeFreeDeliveryThreshold(value: number | null | undefined)
   return Math.round(numeric);
 }
 
-export function slugifyZoneId(name: string, existingIds: ReadonlySet<string>): string {
-  return slugifyWithMaxLength(name, 'delivery-zone', existingIds);
-}
-
-export function sanitizeDeliveryZoneInput(input: DeliveryZoneInput): DeliveryZoneInput {
-  const numericFee = Number(input.feePhp);
-  const feePhp =
-    Number.isFinite(numericFee) && numericFee >= 0
-      ? Math.round(numericFee)
-      : DEFAULT_DELIVERY_FEE_PHP;
-  const numericRadius = Number(input.maxDistanceKm);
-  const maxDistanceKm =
-    Number.isFinite(numericRadius) && numericRadius > 0 ? Math.round(numericRadius * 10) / 10 : 5;
-  return {
-    name: input.name.trim() || 'Metro Manila Delivery Zone',
-    areas: input.areas.trim() || 'Metro Manila',
-    maxDistanceKm,
-    feePhp,
-    etaMinutes: input.etaMinutes.trim() || '20–35 min',
-    enabled: Boolean(input.enabled),
-  };
-}
-
 export function calculateDeliveryQuote(params: {
   fulfillment: FulfillmentMode;
   subtotalPhp: number;
   deliveryPricing: DeliveryPricingConfig;
-  zoneId?: string | null;
   pin?: GeoCoordinates | null;
   storeOrigin?: GeoCoordinates;
 }): DeliveryFeeQuote {
@@ -310,12 +302,26 @@ export function calculateDeliveryQuote(params: {
     params.deliveryPricing.freeDeliveryMinSubtotalPhp,
   );
   const safeSubtotal = Number.isFinite(params.subtotalPhp) ? Math.max(0, params.subtotalPhp) : 0;
+  const baseFeePhp = Number.isFinite(params.deliveryPricing.baseFeePhp)
+    ? Math.max(0, Math.round(params.deliveryPricing.baseFeePhp))
+    : 0;
+  const perKmRatePhp = Number.isFinite(params.deliveryPricing.perKmRatePhp)
+    ? Math.max(0, Math.round(params.deliveryPricing.perKmRatePhp))
+    : 0;
+  const maxDeliveryDistanceKm =
+    Number.isFinite(params.deliveryPricing.maxDistanceKm) &&
+    params.deliveryPricing.maxDistanceKm > 0
+      ? Math.round(params.deliveryPricing.maxDistanceKm * 10) / 10
+      : null;
 
   if (params.fulfillment !== 'delivery') {
     return {
-      zone: null,
       baseFeePhp: 0,
+      perKmRatePhp: 0,
+      distanceFeePhp: 0,
+      subtotalFeePhp: 0,
       feePhp: 0,
+      etaMinutes: null,
       isFreeDelivery: false,
       amountToFreeDeliveryPhp: null,
       freeDeliveryMinSubtotalPhp: threshold,
@@ -326,16 +332,14 @@ export function calculateDeliveryQuote(params: {
     };
   }
 
-  const enabledZones = [...params.deliveryPricing.zones]
-    .filter((zone) => zone.enabled)
-    .sort((a, b) => a.maxDistanceKm - b.maxDistanceKm);
-  const maxDeliveryDistanceKm = enabledZones[enabledZones.length - 1]?.maxDistanceKm ?? null;
-
-  if (enabledZones.length === 0) {
+  if (!params.deliveryPricing.deliveryEnabled || maxDeliveryDistanceKm === null) {
     return {
-      zone: null,
-      baseFeePhp: 0,
+      baseFeePhp,
+      perKmRatePhp,
+      distanceFeePhp: 0,
+      subtotalFeePhp: 0,
       feePhp: 0,
+      etaMinutes: null,
       isFreeDelivery: false,
       amountToFreeDeliveryPhp: null,
       freeDeliveryMinSubtotalPhp: threshold,
@@ -351,54 +355,40 @@ export function calculateDeliveryQuote(params: {
     ? estimateRoadDistanceKm(origin, params.pin)
     : null;
 
-  let selectedZone: DeliveryZone | null = null;
-  if (distanceKm !== null) {
-    selectedZone = enabledZones.find((zone) => distanceKm <= zone.maxDistanceKm) ?? null;
-    if (!selectedZone) {
-      return {
-        zone: null,
-        baseFeePhp: 0,
-        feePhp: 0,
-        isFreeDelivery: false,
-        amountToFreeDeliveryPhp: null,
-        freeDeliveryMinSubtotalPhp: threshold,
-        distanceKm,
-        maxDeliveryDistanceKm,
-        outOfRange: true,
-        available: false,
-      };
-    }
-  } else if (params.zoneId) {
-    selectedZone = enabledZones.find((zone) => zone.id === params.zoneId) ?? null;
-  } else {
-    selectedZone = enabledZones[0] ?? null;
-  }
-
-  if (!selectedZone) {
+  if (distanceKm !== null && distanceKm > maxDeliveryDistanceKm) {
     return {
-      zone: null,
-      baseFeePhp: 0,
+      baseFeePhp,
+      perKmRatePhp,
+      distanceFeePhp: 0,
+      subtotalFeePhp: 0,
       feePhp: 0,
+      etaMinutes: null,
       isFreeDelivery: false,
       amountToFreeDeliveryPhp: null,
       freeDeliveryMinSubtotalPhp: threshold,
       distanceKm,
       maxDeliveryDistanceKm,
-      outOfRange: false,
+      outOfRange: true,
       available: false,
     };
   }
 
-  const baseFeePhp = Math.max(0, Math.round(selectedZone.feePhp));
-  const isFreeDelivery = threshold !== null && safeSubtotal >= threshold && baseFeePhp > 0;
-  const feePhp = isFreeDelivery ? 0 : baseFeePhp;
+  const subtotalFeePhp =
+    distanceKm !== null ? estimateDeliveryFeePhp(distanceKm, baseFeePhp, perKmRatePhp) : baseFeePhp;
+  const distanceFeePhp = Math.max(0, subtotalFeePhp - baseFeePhp);
+  const etaMinutes = distanceKm !== null ? estimateDeliveryEtaMinutes(distanceKm) : null;
+  const isFreeDelivery = threshold !== null && safeSubtotal >= threshold && subtotalFeePhp > 0;
+  const feePhp = isFreeDelivery ? 0 : subtotalFeePhp;
   const amountToFreeDeliveryPhp =
     threshold !== null && safeSubtotal < threshold ? threshold - safeSubtotal : null;
 
   return {
-    zone: selectedZone,
     baseFeePhp,
+    perKmRatePhp,
+    distanceFeePhp,
+    subtotalFeePhp,
     feePhp,
+    etaMinutes,
     isFreeDelivery,
     amountToFreeDeliveryPhp,
     freeDeliveryMinSubtotalPhp: threshold,

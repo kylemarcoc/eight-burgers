@@ -108,8 +108,8 @@ describe('AdminCatalogManager', () => {
     );
   });
 
-  it('configures free delivery threshold and manages delivery zones in the admin panel', async () => {
-    installMockShopApi({ authenticated: true });
+  it('validates and updates distance-formula delivery pricing, live preview, conflicts, and defaults reset in admin panel', async () => {
+    const { state } = installMockShopApi({ authenticated: true });
     render(
       <TestQueryWrapper>
         <AdminCatalogManager />
@@ -117,40 +117,160 @@ describe('AdminCatalogManager', () => {
     );
 
     await screen.findByRole('heading', { level: 3, name: 'Burger Deluxe' });
-    const minSubtotalInput = screen.getByLabelText(/min\. subtotal \(₱\)/i);
+
+    const enabledCheckbox = screen.getByLabelText(/accepting delivery orders/i) as HTMLInputElement;
+    const baseFeeInput = screen.getByLabelText(/base fee \(₱\)/i) as HTMLInputElement;
+    const perKmInput = screen.getByLabelText(/per-km rate \(₱\/km\)/i) as HTMLInputElement;
+    const maxDistInput = screen.getByLabelText(/max distance \(km\)/i) as HTMLInputElement;
+    const minSubtotalInput = screen.getByLabelText(/min\. subtotal \(₱\)/i) as HTMLInputElement;
+    const saveBtn = screen.getByRole('button', { name: /save delivery settings/i });
+
+    // Validation bounds
+    fireEvent.change(baseFeeInput, { target: { value: '-5' } });
+    fireEvent.click(saveBtn);
+    expect(baseFeeInput.getAttribute('aria-invalid')).toBe('true');
+
+    fireEvent.change(baseFeeInput, { target: { value: '45' } });
+    fireEvent.change(perKmInput, { target: { value: '-1' } });
+    fireEvent.click(saveBtn);
+    expect(perKmInput.getAttribute('aria-invalid')).toBe('true');
+
+    fireEvent.change(perKmInput, { target: { value: '12' } });
+    fireEvent.change(maxDistInput, { target: { value: '0.04' } });
+    fireEvent.click(saveBtn);
+    expect(maxDistInput.getAttribute('aria-invalid')).toBe('true');
+
+    fireEvent.change(maxDistInput, { target: { value: '15' } });
     fireEvent.change(minSubtotalInput, { target: { value: '0' } });
-    fireEvent.click(screen.getByRole('button', { name: /save threshold/i }));
+    fireEvent.click(saveBtn);
     expect(minSubtotalInput.getAttribute('aria-invalid')).toBe('true');
 
+    // Live formula preview reflects dirty inputs before saving
+    expect(screen.getByText(/₱45 base \+ ₱12\/km · up to 15 km/i)).toBeTruthy();
+    expect(screen.getByText(/₱165/)).toBeTruthy(); // 10 km -> 45 + 120 = 165
+    expect(screen.getByText('Out of range')).toBeTruthy(); // 20 km > 15 km
+
+    // Save valid formula pricing
     fireEvent.change(minSubtotalInput, { target: { value: '600' } });
-    fireEvent.click(screen.getByRole('button', { name: /save threshold/i }));
+    fireEvent.click(saveBtn);
     await waitFor(() => {
-      expect(screen.getByRole('status').textContent).toContain('₱600');
+      expect(screen.getByRole('status').textContent).toContain(
+        'Saved delivery pricing: ₱45 base + ₱12/km up to 15 km (Free delivery at ₱600+).',
+      );
+    });
+    expect(state.deliveryPricing.baseFeePhp).toBe(45);
+    expect(state.deliveryPricing.perKmRatePhp).toBe(12);
+    expect(state.deliveryPricing.maxDistanceKm).toBe(15);
+    expect(state.deliveryPricing.freeDeliveryMinSubtotalPhp).toBe(600);
+
+    // Pausing delivery persists deliveryEnabled = false and shows Paused badge
+    fireEvent.click(enabledCheckbox);
+    fireEvent.click(saveBtn);
+    await waitFor(() => {
+      expect(screen.getByRole('status').textContent).toContain('Delivery paused.');
+    });
+    expect(screen.getByText('Paused')).toBeTruthy();
+
+    // Simulate concurrent external update triggering 409 conflict and recover via "Reload latest settings"
+    state.deliveryPricing.baseFeePhp = 55;
+    state.deliveryPricing.version = (state.deliveryPricing.version ?? 1) + 5;
+    fireEvent.change(baseFeeInput, { target: { value: '70' } });
+    fireEvent.click(saveBtn);
+    await waitFor(() => {
+      expect(
+        screen
+          .getAllByRole('alert')
+          .some((node) =>
+            node.textContent?.includes('Delivery settings changed on another device.'),
+          ),
+      ).toBe(true);
     });
 
-    const zoneNameInput = screen.getByLabelText(/zone name/i);
-    fireEvent.change(zoneNameInput, { target: { value: 'Circuit & Olympia' } });
-    fireEvent.change(screen.getByLabelText(/covered areas/i), {
-      target: { value: 'Circuit Mall, AP Reyes' },
-    });
-    fireEvent.change(screen.getByLabelText(/max distance \(km\)/i), { target: { value: '4.5' } });
-    fireEvent.change(screen.getByLabelText(/delivery fee \(₱\)/i), { target: { value: '55' } });
-    fireEvent.change(screen.getByLabelText(/estimated eta/i), { target: { value: '20–30 min' } });
-    fireEvent.click(screen.getByRole('button', { name: /add delivery zone/i }));
-
-    expect(
-      await screen.findByRole('heading', { level: 3, name: 'Circuit & Olympia' }),
-    ).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: /active — pause circuit & olympia/i }));
-    expect(
-      await screen.findByRole('button', { name: /paused — activate circuit & olympia/i }),
-    ).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: /delete zone circuit & olympia/i }));
-    fireEvent.click(screen.getByRole('button', { name: /confirm delete zone circuit & olympia/i }));
+    fireEvent.click(screen.getByRole('button', { name: /reload latest settings/i }));
     await waitFor(() => {
-      expect(screen.queryByRole('heading', { level: 3, name: 'Circuit & Olympia' })).toBeNull();
+      expect(baseFeeInput.value).toBe('55');
+    });
+
+    // Two-step Restore Defaults confirmation resets all formula values
+    fireEvent.click(screen.getByRole('button', { name: /restore defaults/i }));
+    fireEvent.click(screen.getByRole('button', { name: /confirm restore/i }));
+    await waitFor(() => {
+      expect(baseFeeInput.value).toBe('35');
+      expect(perKmInput.value).toBe('10');
+      expect(maxDistInput.value).toBe('25');
+      expect(minSubtotalInput.value).toBe('500');
+      expect(enabledCheckbox.checked).toBe(true);
+    });
+  });
+
+  it('pauses and resumes delivery in AdminDeliverySettings without losing custom formula rates or free-delivery threshold', async () => {
+    const { state } = installMockShopApi({ authenticated: true });
+    render(
+      <TestQueryWrapper>
+        <AdminCatalogManager />
+      </TestQueryWrapper>,
+    );
+
+    await screen.findByRole('heading', { level: 3, name: 'Burger Deluxe' });
+
+    const enabledCheckbox = screen.getByLabelText(/accepting delivery orders/i) as HTMLInputElement;
+    const baseFeeInput = screen.getByLabelText(/base fee \(₱\)/i) as HTMLInputElement;
+    const perKmInput = screen.getByLabelText(/per-km rate \(₱\/km\)/i) as HTMLInputElement;
+    const maxDistInput = screen.getByLabelText(/max distance \(km\)/i) as HTMLInputElement;
+    const minSubtotalInput = screen.getByLabelText(/min\. subtotal \(₱\)/i) as HTMLInputElement;
+    const saveBtn = screen.getByRole('button', { name: /save delivery settings/i });
+
+    fireEvent.change(baseFeeInput, { target: { value: '50' } });
+    fireEvent.change(perKmInput, { target: { value: '15' } });
+    fireEvent.change(maxDistInput, { target: { value: '12' } });
+    fireEvent.change(minSubtotalInput, { target: { value: '700' } });
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole('status').textContent).toContain(
+        'Saved delivery pricing: ₱50 base + ₱15/km up to 12 km (Free delivery at ₱700+).',
+      );
+    });
+
+    // Unchecking shows pause banner in live preview before saving
+    fireEvent.click(enabledCheckbox);
+    expect(
+      screen.getByText(/delivery orders are currently paused in this configuration\./i),
+    ).toBeTruthy();
+
+    fireEvent.click(saveBtn);
+    await waitFor(() => {
+      expect(screen.getByRole('status').textContent).toContain(
+        'Delivery paused. Only Kiosk Pickup orders will be accepted.',
+      );
+    });
+    expect(screen.getByText('Paused')).toBeTruthy();
+    expect(state.deliveryPricing).toMatchObject({
+      deliveryEnabled: false,
+      baseFeePhp: 50,
+      perKmRatePhp: 15,
+      maxDistanceKm: 12,
+      freeDeliveryMinSubtotalPhp: 700,
+    });
+
+    // Re-enabling preserves all custom rates and threshold
+    fireEvent.click(enabledCheckbox);
+    fireEvent.click(saveBtn);
+    await waitFor(() => {
+      expect(screen.getByRole('status').textContent).toContain(
+        'Saved delivery pricing: ₱50 base + ₱15/km up to 12 km (Free delivery at ₱700+).',
+      );
+    });
+    expect(screen.getByText('Accepting delivery')).toBeTruthy();
+    expect(
+      screen.queryByText(/delivery orders are currently paused in this configuration\./i),
+    ).toBeNull();
+    expect(state.deliveryPricing).toMatchObject({
+      deliveryEnabled: true,
+      baseFeePhp: 50,
+      perKmRatePhp: 15,
+      maxDistanceKm: 12,
+      freeDeliveryMinSubtotalPhp: 700,
     });
   });
 

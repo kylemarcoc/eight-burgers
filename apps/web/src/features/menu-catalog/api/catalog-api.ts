@@ -1,14 +1,12 @@
 import {
   catalogResponseSchema,
   deliveryPricingResponseSchema,
-  deliveryZoneResponseSchema,
   menuItemResponseSchema,
   menuItemsListResponseSchema,
   uploadedMenuImageResponseSchema,
   type CatalogPayload,
   type DeliveryPricingConfig,
-  type DeliveryZone,
-  type DeliveryZoneInput,
+  type DeliveryPricingPatch,
   type MenuItem,
   type MenuItemInput,
   type UploadedMenuImage,
@@ -101,66 +99,15 @@ export async function deleteUnusedAdminMenuImage(imageUrl: string): Promise<void
   });
 }
 
-export async function patchAdminFreeDeliveryThreshold(params: {
-  freeDeliveryMinSubtotalPhp: number | null;
-  expectedVersion?: number;
-}): Promise<DeliveryPricingConfig> {
+export async function patchAdminDeliveryPricing(
+  params: DeliveryPricingPatch,
+): Promise<DeliveryPricingConfig> {
   const res = await apiRequest('/admin/delivery-pricing', {
     method: 'PATCH',
-    body: {
-      freeDeliveryMinSubtotalPhp: params.freeDeliveryMinSubtotalPhp,
-      ...(params.expectedVersion !== undefined ? { expectedVersion: params.expectedVersion } : {}),
-    },
+    body: params,
     schema: deliveryPricingResponseSchema,
   });
   return res.data;
-}
-
-export async function createAdminDeliveryZone(input: DeliveryZoneInput): Promise<DeliveryZone> {
-  const res = await apiRequest('/admin/delivery-zones', {
-    method: 'POST',
-    body: input,
-    schema: deliveryZoneResponseSchema,
-  });
-  return res.data;
-}
-
-export async function updateAdminDeliveryZone(params: {
-  id: string;
-  input: DeliveryZoneInput;
-  expectedVersion?: number;
-}): Promise<DeliveryZone> {
-  const res = await apiRequest(`/admin/delivery-zones/${encodeURIComponent(params.id)}`, {
-    method: 'PUT',
-    body: {
-      ...params.input,
-      ...(params.expectedVersion !== undefined ? { expectedVersion: params.expectedVersion } : {}),
-    },
-    schema: deliveryZoneResponseSchema,
-  });
-  return res.data;
-}
-
-export async function patchAdminDeliveryZoneEnabled(params: {
-  id: string;
-  enabled: boolean;
-  expectedVersion?: number;
-}): Promise<DeliveryZone> {
-  const res = await apiRequest(`/admin/delivery-zones/${encodeURIComponent(params.id)}/enabled`, {
-    method: 'PATCH',
-    body: {
-      enabled: params.enabled,
-      ...(params.expectedVersion !== undefined ? { expectedVersion: params.expectedVersion } : {}),
-    },
-    schema: deliveryZoneResponseSchema,
-  });
-  return res.data;
-}
-
-export async function deleteAdminDeliveryZone(id: string): Promise<void> {
-  await apiRequest(`/admin/delivery-zones/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-  });
 }
 
 export async function resetAdminDeliveryPricing(): Promise<DeliveryPricingConfig> {
