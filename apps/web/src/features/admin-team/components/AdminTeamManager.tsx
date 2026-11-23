@@ -24,7 +24,7 @@ const ROLE_DESCRIPTIONS: Record<AdminRole, string> = {
   staff:
     'Can update Customer Orders (Received, Grilling, Ready, Completed, Cancelled) and toggle Menu Stock. Cannot edit catalog prices or delivery settings.',
   owner:
-    'Full access to Menu prices and photos, Delivery zones and fees, Customer Orders, and Team & Roles.',
+    'Full access to Menu prices and photos, Delivery pricing and pause controls, Customer Orders, and Team & Roles.',
 };
 
 const ROLE_SORT_ORDER: Record<AdminRole, number> = {
