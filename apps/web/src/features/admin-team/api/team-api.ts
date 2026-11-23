@@ -4,7 +4,7 @@ import {
   type AdminTeamMember,
   type CreateAdminUserRequest,
   type UpdateAdminUserRequest,
-} from '@eight-burgers/contracts';
+} from '@menu-kiosk/contracts';
 import { apiRequest } from '@/shared/lib/http-client';
 
 export const adminTeamKeys = {

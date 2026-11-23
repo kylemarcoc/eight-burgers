@@ -1,7 +1,8 @@
-import { DEFAULT_MENU_ITEMS } from '@eight-burgers/contracts';
+import { DEFAULT_MENU_ITEMS } from '@menu-kiosk/contracts';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  RECEIPT_SESSION_STORAGE_KEY,
   resetCartStore,
   useCartActions,
   useCartOpen,
@@ -33,6 +34,7 @@ function FloatingButtonHarness() {
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  window.sessionStorage.clear();
   resetCartStore();
   vi.restoreAllMocks();
 });
@@ -70,16 +72,21 @@ describe('FloatingCartButton', () => {
           queueNumber: '#8B-101',
           customerName: 'Marco',
           contactNumber: '',
-          fulfillment: 'kiosk-pickup',
+          fulfillment: 'pickup',
+          tableNumber: '',
           addressOrNotes: '',
           paymentMethod: 'cash',
+          paymentStatus: 'unpaid',
+          paymentReference: '',
           lines: [
             {
               lineId: 'burger-deluxe',
               itemId: 'burger-deluxe',
               name: 'Burger Deluxe',
               unitPricePhp: 148,
+              selectedOptions: [],
               addonNames: [],
+              itemNote: '',
               addonsPricePhp: 0,
               quantity: 1,
               lineTotalPhp: 148,
@@ -88,7 +95,7 @@ describe('FloatingCartButton', () => {
           subtotalPhp: 148,
           deliveryFeePhp: 0,
           totalPhp: 148,
-          status: 'grilling',
+          status: 'preparing',
           createdAtIso: '2026-11-22T03:00:00.000Z',
           version: 2,
         },
@@ -109,5 +116,66 @@ describe('FloatingCartButton', () => {
     ).toBeTruthy();
     expect(screen.getByText('Order #8B-101')).toBeTruthy();
     expect(screen.getByText('On the Grill')).toBeTruthy();
+  });
+
+  it('restores live status after reload from opaque sessionStorage receipt credentials', async () => {
+    installMockShopApi({
+      initialOrders: [
+        {
+          id: '00000000-0000-4000-8000-000000000109',
+          queueNumber: '#8B-109',
+          customerName: 'Dina',
+          contactNumber: '',
+          fulfillment: 'dine-in',
+          tableNumber: '7',
+          addressOrNotes: '',
+          paymentMethod: 'gcash',
+          paymentStatus: 'pending_verification',
+          paymentReference: 'GC-9001',
+          lines: [
+            {
+              lineId: 'burger-deluxe',
+              itemId: 'burger-deluxe',
+              name: 'Burger Deluxe',
+              unitPricePhp: 148,
+              selectedOptions: [],
+              addonNames: [],
+              itemNote: '',
+              addonsPricePhp: 0,
+              quantity: 1,
+              lineTotalPhp: 148,
+            },
+          ],
+          subtotalPhp: 148,
+          deliveryFeePhp: 0,
+          totalPhp: 148,
+          status: 'ready',
+          createdAtIso: '2026-11-22T03:00:00.000Z',
+          version: 2,
+        },
+      ],
+    });
+
+    window.sessionStorage.setItem(
+      RECEIPT_SESSION_STORAGE_KEY,
+      JSON.stringify({
+        orderId: '00000000-0000-4000-8000-000000000109',
+        queueNumber: '#8B-109',
+        receiptToken: 'opaque-token-109',
+      }),
+    );
+    useCartStore.getState().actions.rehydrateSessionStorage();
+
+    render(
+      <TestQueryWrapper>
+        <FloatingButtonHarness />
+      </TestQueryWrapper>,
+    );
+
+    expect(
+      await screen.findByRole('button', {
+        name: /open order tracker for #8b-109 \(ready\)/i,
+      }),
+    ).toBeTruthy();
   });
 });

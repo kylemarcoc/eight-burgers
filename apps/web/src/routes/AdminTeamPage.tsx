@@ -1,4 +1,4 @@
-import { getAdminPermissions } from '@eight-burgers/contracts';
+import { getAdminPermissions } from '@menu-kiosk/contracts';
 import { Link } from 'react-router-dom';
 import { useAdminSessionQuery } from '@/features/admin-auth';
 import { AdminTeamManager } from '@/features/admin-team';

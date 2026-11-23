@@ -134,7 +134,7 @@
                 "message": "Import from the feature folder to use its public index.ts. Use relative sibling imports inside a feature."
               },
               {
-                "regex": "^(?:@eight-burgers/api(?:/|$)|(?:\\.\\./){2,}(?:apps/)?api(?:/|$))",
+                "regex": "^(?:@menu-kiosk/api(?:/|$)|(?:\\.\\./){2,}(?:apps/)?api(?:/|$))",
                 "message": "Web workspace must not import from the API workspace."
               },
               {
@@ -185,7 +185,7 @@
                 "message": "Keep app composition and providers in app/. Compose features and shared modules inside routes."
               },
               {
-                "regex": "^(?:@eight-burgers/api(?:/|$)|(?:\\.\\./){3,}(?:apps/)?api(?:/|$))",
+                "regex": "^(?:@menu-kiosk/api(?:/|$)|(?:\\.\\./){3,}(?:apps/)?api(?:/|$))",
                 "message": "Web workspace must not import from the API workspace."
               },
               {
@@ -236,7 +236,7 @@
                 "message": "Keep app and route wiring in the composition layer. Pass dependencies into the feature through its public API."
               },
               {
-                "regex": "^(?:@eight-burgers/api(?:/|$)|(?:\\.\\./){3,}(?:apps/)?api(?:/|$))",
+                "regex": "^(?:@menu-kiosk/api(?:/|$)|(?:\\.\\./){3,}(?:apps/)?api(?:/|$))",
                 "message": "Web workspace must not import from the API workspace."
               },
               {
@@ -287,7 +287,7 @@
                 "message": "Shared modules must be independent of app wiring, routes, and business features."
               },
               {
-                "regex": "^(?:@eight-burgers/api(?:/|$)|(?:\\.\\./){3,}(?:apps/)?api(?:/|$))",
+                "regex": "^(?:@menu-kiosk/api(?:/|$)|(?:\\.\\./){3,}(?:apps/)?api(?:/|$))",
                 "message": "Web workspace must not import from the API workspace."
               },
               {
@@ -314,7 +314,7 @@
           {
             "patterns": [
               {
-                "regex": "^(?:@eight-burgers/(?:web|api)(?:/|$)|(?:\\.\\./){3,}apps(?:/|$))",
+                "regex": "^(?:@menu-kiosk/(?:web|api)(?:/|$)|(?:\\.\\./){3,}apps(?:/|$))",
                 "message": "Shared contracts must not depend on web or api workspaces."
               },
               {
@@ -334,7 +334,7 @@
           {
             "patterns": [
               {
-                "regex": "^(?:@eight-burgers/web(?:/|$)|(?:\\.\\./){2,}(?:apps/)?web(?:/|$))",
+                "regex": "^(?:@menu-kiosk/web(?:/|$)|(?:\\.\\./){2,}(?:apps/)?web(?:/|$))",
                 "message": "API workspace must not import from web workspace."
               },
               {

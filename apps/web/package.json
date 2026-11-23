@@ -1,5 +1,5 @@
 {
-  "name": "@eight-burgers/web",
+  "name": "@menu-kiosk/web",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -11,9 +11,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@eight-burgers/contracts": "*",
+    "@menu-kiosk/contracts": "*",
     "@tanstack/react-query": "^5.90.0",
     "immer": "^11.2.10",
+    "qrcode": "^1.5.4",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router-dom": "^7.18.5",
@@ -23,6 +24,7 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.5",
     "@testing-library/react": "^16.3.3",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.2.1",

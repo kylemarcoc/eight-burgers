@@ -1,3 +1,5 @@
+import { DEFAULT_STORE_PROFILE, normalizeQueueNumber } from '@menu-kiosk/contracts';
+import { useCatalogQuery } from '@/features/menu-catalog';
 import { useOrderReceiptQuery, usePublicOrderTrackerQuery } from '@/features/orders';
 import { formatPhp } from '@/shared/shop/shop-storage';
 import type { OrderStatus } from '@/shared/shop/types';
@@ -5,47 +7,68 @@ import {
   useCartActions,
   useCartOpen,
   useLastPlacedOrder,
+  useReceiptSession,
   useTrackedQueueNumber,
 } from '@/shared/store/useCartStore';
 import { useResolvedCartSummary } from '../hooks/useResolvedCartSummary';
 
-const TRACKER_STAGE_LABELS: Record<OrderStatus, string> = {
-  received: 'Order Received',
-  grilling: 'On the Grill',
-  ready: 'Ready',
-  completed: 'Completed',
-  cancelled: 'Cancelled',
-};
+function getTrackerStageLabel(status: OrderStatus, preparingStageLabel: string): string {
+  switch (status) {
+    case 'received':
+      return 'Order Received';
+    case 'preparing':
+      return preparingStageLabel || 'Preparing';
+    case 'ready':
+      return 'Ready';
+    case 'completed':
+      return 'Completed';
+    case 'cancelled':
+      return 'Cancelled';
+  }
+}
 
 export function FloatingCartButton() {
+  const catalogQuery = useCatalogQuery();
+  const store = catalogQuery.data?.store ?? DEFAULT_STORE_PROFILE;
+  const preparingLabel = store.preparingStageLabel || 'Preparing';
   const cartSummary = useResolvedCartSummary();
   const isCartOpen = useCartOpen();
   const lastPlacedOrderState = useLastPlacedOrder();
+  const receiptSession = useReceiptSession();
   const trackedQueueNumber = useTrackedQueueNumber();
   const { setCartOpen } = useCartActions();
 
-  const activeQueueNumber = trackedQueueNumber ?? lastPlacedOrderState?.order.queueNumber ?? null;
-  const hasMatchingInMemoryReceipt = Boolean(
-    lastPlacedOrderState &&
+  const activeReceiptOrderId = lastPlacedOrderState?.order.id ?? receiptSession?.orderId ?? null;
+  const activeReceiptToken =
+    lastPlacedOrderState?.receiptToken ?? receiptSession?.receiptToken ?? null;
+  const activeReceiptQueue =
+    lastPlacedOrderState?.order.queueNumber ?? receiptSession?.queueNumber ?? null;
+
+  const activeQueueNumber = trackedQueueNumber ?? activeReceiptQueue ?? null;
+  const hasMatchingReceiptSession = Boolean(
+    activeReceiptOrderId &&
+    activeReceiptToken &&
     (!activeQueueNumber ||
-      lastPlacedOrderState.order.queueNumber.toUpperCase() === activeQueueNumber.toUpperCase()),
+      !activeReceiptQueue ||
+      normalizeQueueNumber(activeReceiptQueue, store.queuePrefix) ===
+        normalizeQueueNumber(activeQueueNumber, store.queuePrefix)),
   );
 
   const receiptQuery = useOrderReceiptQuery(
-    hasMatchingInMemoryReceipt ? (lastPlacedOrderState?.order.id ?? null) : null,
-    hasMatchingInMemoryReceipt ? (lastPlacedOrderState?.receiptToken ?? null) : null,
-    hasMatchingInMemoryReceipt,
+    hasMatchingReceiptSession ? activeReceiptOrderId : null,
+    hasMatchingReceiptSession ? activeReceiptToken : null,
+    hasMatchingReceiptSession,
   );
   const publicTrackerQuery = usePublicOrderTrackerQuery(
     activeQueueNumber,
-    Boolean(activeQueueNumber && !hasMatchingInMemoryReceipt),
+    Boolean(activeQueueNumber && !hasMatchingReceiptSession),
   );
 
-  const trackedStatus: OrderStatus | null = hasMatchingInMemoryReceipt
+  const trackedStatus: OrderStatus | null = hasMatchingReceiptSession
     ? (receiptQuery.data?.status ?? lastPlacedOrderState?.order.status ?? null)
     : (publicTrackerQuery.data?.status ?? null);
   const trackedStageLabel = trackedStatus
-    ? TRACKER_STAGE_LABELS[trackedStatus]
+    ? getTrackerStageLabel(trackedStatus, preparingLabel)
     : 'Track live status';
 
   const label =

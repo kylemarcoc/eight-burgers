@@ -1,4 +1,4 @@
-import { problemDetailSchema } from '@eight-burgers/contracts';
+import { problemDetailSchema } from '@menu-kiosk/contracts';
 import type { z } from 'zod';
 import { ApiError } from './api-error';
 

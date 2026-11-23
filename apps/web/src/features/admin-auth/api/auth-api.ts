@@ -2,7 +2,7 @@ import {
   adminSessionResponseSchema,
   type AdminLoginRequest,
   type AdminSession,
-} from '@eight-burgers/contracts';
+} from '@menu-kiosk/contracts';
 import { apiRequest } from '@/shared/lib/http-client';
 
 export const adminAuthKeys = {

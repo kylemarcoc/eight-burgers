@@ -1,0 +1,82 @@
+import {
+  DEFAULT_STORE_PROFILE,
+  type StoreAssetUploadPurpose,
+  type StoreOrderingStatusPatch,
+  type StoreProfilePatch,
+} from '@menu-kiosk/contracts';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { catalogKeys, useCatalogQuery } from '@/features/menu-catalog';
+import { isApiError } from '@/shared/lib/api-error';
+import {
+  deleteUnusedAdminStoreAsset,
+  patchAdminStoreOrderingStatus,
+  patchAdminStoreProfile,
+  uploadAdminStoreAsset,
+} from '../api/store-settings-api';
+
+function handleAdminStoreMutationError(
+  queryClient: ReturnType<typeof useQueryClient>,
+  error: unknown,
+) {
+  if (isApiError(error) && error.status === 401) {
+    void queryClient.cancelQueries({ queryKey: ['admin'] });
+    queryClient.removeQueries({ queryKey: ['admin', 'orders'] });
+    queryClient.setQueryData(['admin', 'auth', 'session'], {
+      authenticated: false,
+      user: null,
+    });
+  } else if (isApiError(error) && error.status === 409) {
+    void queryClient.invalidateQueries({ queryKey: catalogKeys.all });
+  }
+}
+
+export function useStoreProfile() {
+  const catalogQuery = useCatalogQuery();
+  const store = catalogQuery.data?.store ?? DEFAULT_STORE_PROFILE;
+
+  return {
+    store,
+    hasLoadedStore: Boolean(catalogQuery.data?.store),
+    deliveryPricing: catalogQuery.data?.deliveryPricing ?? null,
+    catalogQuery,
+  };
+}
+
+export function useUpdateStoreProfileMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (patch: StoreProfilePatch) => patchAdminStoreProfile(patch),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: catalogKeys.all }),
+    onError: (error) => handleAdminStoreMutationError(queryClient, error),
+  });
+}
+
+export function useUpdateStoreOrderingStatusMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (patch: StoreOrderingStatusPatch) => patchAdminStoreOrderingStatus(patch),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: catalogKeys.all }),
+    onError: (error) => handleAdminStoreMutationError(queryClient, error),
+  });
+}
+
+export function useUploadStoreAssetMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (params: { file: File; purpose: StoreAssetUploadPurpose }) =>
+      uploadAdminStoreAsset(params),
+    onError: (error) => handleAdminStoreMutationError(queryClient, error),
+  });
+}
+
+export function useDeleteUnusedStoreAssetMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (imageUrl: string) => deleteUnusedAdminStoreAsset(imageUrl),
+    onError: (error) => handleAdminStoreMutationError(queryClient, error),
+  });
+}

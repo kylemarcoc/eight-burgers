@@ -1,16 +1,28 @@
 import {
   catalogResponseSchema,
   deliveryPricingResponseSchema,
+  menuCategoriesListResponseSchema,
+  menuCategoryResponseSchema,
   menuItemResponseSchema,
   menuItemsListResponseSchema,
+  optionChoiceResponseSchema,
+  optionGroupResponseSchema,
+  optionGroupsListResponseSchema,
   uploadedMenuImageResponseSchema,
   type CatalogPayload,
   type DeliveryPricingConfig,
   type DeliveryPricingPatch,
+  type MenuCategory,
+  type MenuCategoryInput,
+  type MenuCategoryPatch,
   type MenuItem,
   type MenuItemInput,
+  type OptionChoice,
+  type OptionGroup,
+  type OptionGroupInput,
+  type OptionGroupPatch,
   type UploadedMenuImage,
-} from '@eight-burgers/contracts';
+} from '@menu-kiosk/contracts';
 import { apiRequest } from '@/shared/lib/http-client';
 
 export const catalogKeys = {
@@ -97,6 +109,99 @@ export async function deleteUnusedAdminMenuImage(imageUrl: string): Promise<void
     method: 'DELETE',
     body: { imageUrl },
   });
+}
+
+export async function createAdminCategory(input: MenuCategoryInput): Promise<MenuCategory> {
+  const res = await apiRequest('/admin/categories', {
+    method: 'POST',
+    body: input,
+    schema: menuCategoryResponseSchema,
+  });
+  return res.data;
+}
+
+export async function patchAdminCategory(params: {
+  id: string;
+  patch: MenuCategoryPatch;
+}): Promise<MenuCategory> {
+  const res = await apiRequest(`/admin/categories/${encodeURIComponent(params.id)}`, {
+    method: 'PATCH',
+    body: params.patch,
+    schema: menuCategoryResponseSchema,
+  });
+  return res.data;
+}
+
+export async function reorderAdminCategories(orderedIds: string[]): Promise<MenuCategory[]> {
+  const res = await apiRequest('/admin/categories/reorder', {
+    method: 'POST',
+    body: { orderedIds },
+    schema: menuCategoriesListResponseSchema,
+  });
+  return res.data;
+}
+
+export async function deleteAdminCategory(id: string): Promise<void> {
+  await apiRequest(`/admin/categories/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function createAdminOptionGroup(input: OptionGroupInput): Promise<OptionGroup> {
+  const res = await apiRequest('/admin/option-groups', {
+    method: 'POST',
+    body: input,
+    schema: optionGroupResponseSchema,
+  });
+  return res.data;
+}
+
+export async function patchAdminOptionGroup(params: {
+  id: string;
+  patch: OptionGroupPatch;
+}): Promise<OptionGroup> {
+  const res = await apiRequest(`/admin/option-groups/${encodeURIComponent(params.id)}`, {
+    method: 'PATCH',
+    body: params.patch,
+    schema: optionGroupResponseSchema,
+  });
+  return res.data;
+}
+
+export async function reorderAdminOptionGroups(orderedIds: string[]): Promise<OptionGroup[]> {
+  const res = await apiRequest('/admin/option-groups/reorder', {
+    method: 'POST',
+    body: { orderedIds },
+    schema: optionGroupsListResponseSchema,
+  });
+  return res.data;
+}
+
+export async function deleteAdminOptionGroup(id: string): Promise<void> {
+  await apiRequest(`/admin/option-groups/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function patchAdminOptionChoiceAvailability(params: {
+  id: string;
+  available: boolean;
+  expectedVersion?: number;
+}): Promise<OptionChoice> {
+  const res = await apiRequest(
+    `/admin/option-choices/${encodeURIComponent(params.id)}/availability`,
+    {
+      method: 'PATCH',
+      body: {
+        available: params.available,
+        ...(params.expectedVersion !== undefined
+          ? { expectedVersion: params.expectedVersion }
+          : {}),
+      },
+      schema: optionChoiceResponseSchema,
+    },
+  );
+  return res.data;
 }
 
 export async function patchAdminDeliveryPricing(

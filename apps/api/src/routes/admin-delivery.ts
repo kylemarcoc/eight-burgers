@@ -1,10 +1,12 @@
-import { deliveryPricingPatchSchema } from '@eight-burgers/contracts';
+import { deliveryPricingPatchSchema } from '@menu-kiosk/contracts';
 import { Hono } from 'hono';
 import { problemResponse, zodFieldErrors } from '../lib/problem';
 import { createRequireAdminRolesMiddleware } from '../middleware/require-admin';
 import type { ApiDeps, ApiEnv } from '../types';
 
-export function createAdminDeliveryRoutes(deps: Pick<ApiDeps, 'gateway'>): Hono<ApiEnv> {
+export function createAdminDeliveryRoutes(
+  deps: Pick<ApiDeps, 'config' | 'gateway' | 'storeProfileCache'>,
+): Hono<ApiEnv> {
   const app = new Hono<ApiEnv>();
   const requireOwner = createRequireAdminRolesMiddleware(['owner']);
 
@@ -59,12 +61,47 @@ export function createAdminDeliveryRoutes(deps: Pick<ApiDeps, 'gateway'>): Hono<
       });
     }
 
+    if (result.status === 'origin_required_for_delivery') {
+      return problemResponse(c, {
+        status: 422,
+        code: 'DELIVERY_ORIGIN_REQUIRED',
+        title: 'Store Location Required',
+        detail: 'Set the store location pin in Store Settings before enabling delivery.',
+        fieldErrors: {
+          deliveryEnabled: [
+            'Set the store location pin in Store Settings before enabling delivery.',
+          ],
+        },
+      });
+    }
+    if (result.status === 'fulfillment_required') {
+      return problemResponse(c, {
+        status: 422,
+        code: 'FULFILLMENT_REQUIRED',
+        title: 'Fulfillment Required',
+        detail: 'Enable Pickup or Dine-in before disabling Delivery.',
+        fieldErrors: {
+          deliveryEnabled: ['At least one fulfillment mode must remain enabled.'],
+        },
+      });
+    }
+
+    deps.storeProfileCache?.invalidate();
     return c.json({ data: result.data }, 200);
   });
 
   app.post('/delivery-pricing/reset', requireOwner, async (c) => {
+    if (!deps.config.enableDemoReset) {
+      return problemResponse(c, {
+        status: 403,
+        code: 'DEMO_RESET_DISABLED',
+        title: 'Forbidden',
+        detail: 'Demo delivery pricing reset is disabled in this environment.',
+      });
+    }
     const accessToken = c.get('adminAccessToken') ?? '';
     const updated = await deps.gateway.resetDeliveryPricing(accessToken);
+    deps.storeProfileCache?.invalidate();
     return c.json({ data: updated }, 200);
   });
 

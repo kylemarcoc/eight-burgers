@@ -4,3 +4,4 @@ export * from './error.schema';
 export * from './menu.schema';
 export * from './order.schema';
 export * from './pricing';
+export * from './store.schema';

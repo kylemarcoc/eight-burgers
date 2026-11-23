@@ -1,9 +1,11 @@
 import {
+  adminOrderPaymentFilterSchema,
   adminOrderRangeSchema,
   adminOrderSortSchema,
   adminOrderStatusFilterSchema,
+  updateOrderPaymentStatusRequestSchema,
   updateOrderStatusRequestSchema,
-} from '@eight-burgers/contracts';
+} from '@menu-kiosk/contracts';
 import { Hono } from 'hono';
 import { problemResponse, zodFieldErrors } from '../lib/problem';
 import type { AdminOrderCursor } from '../lib/supabase';
@@ -30,10 +32,12 @@ function parseCompositeCursor(raw: string): AdminOrderCursor | null {
 export function createAdminOrderRoutes(deps: Pick<ApiDeps, 'gateway'>): Hono<ApiEnv> {
   const app = new Hono<ApiEnv>();
   const requireStaffPortal = createRequireAdminRolesMiddleware(['owner', 'cashier', 'staff']);
+  const requirePaymentVerifier = createRequireAdminRolesMiddleware(['owner', 'cashier']);
 
   app.get('/orders', requireStaffPortal, async (c) => {
     const accessToken = c.get('adminAccessToken') ?? '';
     const statusParam = c.req.query('status');
+    const paymentStatusParam = c.req.query('paymentStatus');
     const rangeParam = c.req.query('range');
     const sortParam = c.req.query('sort');
     const searchParam = c.req.query('q');
@@ -50,11 +54,28 @@ export function createAdminOrderRoutes(deps: Pick<ApiDeps, 'gateway'>): Hono<Api
           title: 'Bad Request',
           detail: 'Unsupported order status filter.',
           fieldErrors: {
-            status: ['Must be all, active, received, grilling, ready, completed, or cancelled.'],
+            status: ['Must be all, active, received, preparing, ready, completed, or cancelled.'],
           },
         });
       }
       status = parsed.data;
+    }
+
+    let paymentStatus: ReturnType<typeof adminOrderPaymentFilterSchema.parse> | undefined;
+    if (paymentStatusParam) {
+      const parsed = adminOrderPaymentFilterSchema.safeParse(paymentStatusParam);
+      if (!parsed.success) {
+        return problemResponse(c, {
+          status: 400,
+          code: 'INVALID_QUERY',
+          title: 'Bad Request',
+          detail: 'Unsupported payment status filter.',
+          fieldErrors: {
+            paymentStatus: ['Must be all, unpaid, pending_verification, or paid.'],
+          },
+        });
+      }
+      paymentStatus = parsed.data;
     }
 
     let range: ReturnType<typeof adminOrderRangeSchema.parse> | undefined;
@@ -139,6 +160,7 @@ export function createAdminOrderRoutes(deps: Pick<ApiDeps, 'gateway'>): Hono<Api
 
     const { orders, nextCursor, counts } = await deps.gateway.listAdminOrders(accessToken, {
       ...(status ? { status } : {}),
+      ...(paymentStatus ? { paymentStatus } : {}),
       ...(range ? { range } : {}),
       ...(sort ? { sort } : {}),
       ...(q ? { q } : {}),
@@ -195,6 +217,58 @@ export function createAdminOrderRoutes(deps: Pick<ApiDeps, 'gateway'>): Hono<Api
         code: 'CONFLICT',
         title: 'Conflict',
         detail: 'This order status was updated on another device. Refresh and try again.',
+      });
+    }
+
+    return c.json({ data: result.data }, 200);
+  });
+
+  app.patch('/orders/:id/payment-status', requirePaymentVerifier, async (c) => {
+    const accessToken = c.get('adminAccessToken') ?? '';
+    const orderId = c.req.param('id');
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch {
+      return problemResponse(c, {
+        status: 400,
+        code: 'INVALID_JSON',
+        title: 'Bad Request',
+        detail: 'Request body must be valid JSON.',
+      });
+    }
+
+    const parsed = updateOrderPaymentStatusRequestSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return problemResponse(c, {
+        status: 400,
+        code: 'VALIDATION_ERROR',
+        title: 'Validation Failed',
+        detail: 'Invalid payment status update payload.',
+        fieldErrors: zodFieldErrors(parsed.error),
+      });
+    }
+
+    const result = await deps.gateway.updateOrderPaymentStatus(
+      accessToken,
+      orderId,
+      parsed.data.paymentStatus,
+      parsed.data.expectedVersion,
+    );
+    if (result.status === 'not_found') {
+      return problemResponse(c, {
+        status: 404,
+        code: 'ORDER_NOT_FOUND',
+        title: 'Not Found',
+        detail: 'Order could not be found.',
+      });
+    }
+    if (result.status === 'conflict') {
+      return problemResponse(c, {
+        status: 409,
+        code: 'CONFLICT',
+        title: 'Conflict',
+        detail: 'This order was updated on another device. Refresh and try again.',
       });
     }
 

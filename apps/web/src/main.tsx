@@ -4,7 +4,7 @@ import App from './app/App';
 import { ThemeProvider } from './app/providers/ThemeProvider';
 import './app/styles/globals.css';
 
-const PRELOAD_RETRY_KEY = 'eight-burgers:preload-retried';
+const PRELOAD_RETRY_KEY = 'menu-kiosk:preload-retried';
 
 window.addEventListener('vite:preloadError', (event) => {
   event.preventDefault();

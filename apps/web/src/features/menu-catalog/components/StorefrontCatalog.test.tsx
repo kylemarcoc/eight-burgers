@@ -65,7 +65,7 @@ describe('StorefrontCatalog', () => {
     expect(screen.getByRole('heading', { level: 3, name: 'Burger Deluxe' })).toBeTruthy();
   });
 
-  it('prioritizes in-page ordering CTA and keeps Foodpanda and Facebook links subtle', async () => {
+  it('prioritizes in-page ordering CTA and renders store external links cleanly', async () => {
     installMockShopApi();
     render(
       <TestQueryWrapper>
@@ -95,12 +95,54 @@ describe('StorefrontCatalog', () => {
     );
 
     await screen.findByAltText('Mini Cheese Burger Deluxe');
-    const heroImage = screen.getByAltText('8Burgers Chino Roces Avenue signature burger showcase');
+    const heroImage = screen.getByAltText('8Burgers Chino Roces Avenue, Makati showcase');
     expect(heroImage.getAttribute('loading')).toBe('eager');
     expect(heroImage.getAttribute('fetchpriority')).toBe('high');
 
     const cardImage = screen.getByAltText('Mini Cheese Burger Deluxe');
     expect(cardImage.getAttribute('loading')).toBe('lazy');
+  });
+
+  it('renders a clean typographic hero fallback and paused banner while keeping bag building active', async () => {
+    installMockShopApi({
+      initialStore: {
+        storeName: 'Kape Kanto',
+        branchLabel: 'Cebu IT Park',
+        monogram: 'KK',
+        heroHeadline: 'Small-batch coffee brewed to order.',
+        heroSubtext: 'Order ahead for counter pickup.',
+        heroBadgeLabel: '',
+        address: 'W. Geonzon St., Apas, Cebu City',
+        landmark: '',
+        pickupSpotLabel: 'IT Park Counter',
+        heroImageUrl: '',
+        externalLinks: [],
+        acceptingOrders: false,
+        closedNotice: 'Baristas are restocking — back at 2:00 PM.',
+      },
+    });
+
+    render(
+      <TestQueryWrapper>
+        <StorefrontCatalog />
+      </TestQueryWrapper>,
+    );
+
+    expect(
+      await screen.findByRole('heading', {
+        level: 1,
+        name: /small-batch coffee brewed to order\./i,
+      }),
+    ).toBeTruthy();
+    expect(screen.getByText('Ordering is currently paused')).toBeTruthy();
+    expect(screen.getByText('Baristas are restocking — back at 2:00 PM.')).toBeTruthy();
+    expect(screen.getByText('KK')).toBeTruthy();
+    expect(screen.queryByAltText(/showcase/i)).toBeNull();
+    expect(screen.queryByText(/8burgers|chino roces/i)).toBeNull();
+
+    // Customers can still browse and add items to their bag while paused
+    fireEvent.click(screen.getByRole('button', { name: /quick add burger deluxe/i }));
+    expect(screen.getByRole('button', { name: /review order \(1 · ₱148\)/i })).toBeTruthy();
   });
 
   it('distinguishes an empty menu catalog from an empty filter match', async () => {

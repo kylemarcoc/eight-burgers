@@ -1,19 +1,64 @@
+import { DEFAULT_OPTION_GROUPS, type MenuItem, type OptionGroup } from '@menu-kiosk/contracts';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { MenuItem } from '@/shared/shop/types';
 import { MenuCard } from './MenuCard';
 
-const SAMPLE_BURGER: MenuItem = {
+const SIMPLE_FRIES: MenuItem = {
+  id: 'crinkle-cut-fries',
+  name: 'Crinkle Cut Fries',
+  category: 'sides-snacks',
+  pricePhp: 78,
+  specLabel: 'Crispy Cut',
+  description: 'Golden fried crinkle-cut potato ridges.',
+  imageUrl: '',
+  available: true,
+  featured: false,
+  optionGroupIds: [],
+};
+
+const CUSTOMIZABLE_BURGER: MenuItem = {
   id: 'burger-deluxe',
   name: 'Burger Deluxe',
   category: 'classic-burgers',
   pricePhp: 148,
-  pattySpec: '100g Pure Beef',
+  specLabel: '100g Pure Beef',
   description: '100g pure beef patty with signature sauce.',
   imageUrl: '',
   available: true,
   featured: true,
-  allowAddons: true,
+  optionGroupIds: ['add-ons'],
+};
+
+const REQUIRED_UPCHARGE_GROUP: OptionGroup = {
+  id: 'size',
+  name: 'Size',
+  description: '',
+  selectionMode: 'single',
+  required: true,
+  minSelect: 1,
+  maxSelect: 1,
+  sortOrder: 1,
+  active: true,
+  choices: [
+    {
+      id: 'medium',
+      groupId: 'size',
+      name: 'Medium',
+      priceDeltaPhp: 20,
+      available: true,
+      isDefault: true,
+      sortOrder: 1,
+    },
+    {
+      id: 'large',
+      groupId: 'size',
+      name: 'Large',
+      priceDeltaPhp: 40,
+      available: true,
+      isDefault: false,
+      sortOrder: 2,
+    },
+  ],
 };
 
 afterEach(() => {
@@ -22,59 +67,97 @@ afterEach(() => {
 });
 
 describe('MenuCard', () => {
-  it('customizes and clears add-ons and passes selected add-on IDs to onAddToCart', () => {
-    const onAddToCart = vi.fn();
-    render(<MenuCard item={SAMPLE_BURGER} qtyInCart={0} onAddToCart={onAddToCart} />);
-
-    fireEvent.click(screen.getByRole('button', { name: /customize add-ons/i }));
-    fireEvent.click(screen.getByLabelText(/sliced cheese/i));
-    fireEvent.click(screen.getByLabelText(/crispy bacon/i));
-
-    const addButton = screen.getByRole('button', { name: /add · ₱188/i });
-    fireEvent.click(addButton);
-
-    expect(onAddToCart).toHaveBeenCalledWith('burger-deluxe', ['sliced-cheese', 'bacon']);
-
-    fireEvent.click(screen.getByRole('button', { name: /clear add-ons/i }));
-    expect(screen.getByRole('status').textContent).toContain('Added Burger Deluxe to cart.');
-  });
-
-  it('resets feedback state cleanly and clears timer on unmount', () => {
+  it('supports 1-tap add and Customize / Note link for items with zero option groups and clears timer on unmount', () => {
     vi.useFakeTimers();
     const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout');
     const onAddToCart = vi.fn();
+    const onOpenCustomizer = vi.fn();
 
     const { unmount } = render(
-      <MenuCard item={SAMPLE_BURGER} qtyInCart={1} onAddToCart={onAddToCart} />,
+      <MenuCard
+        item={SIMPLE_FRIES}
+        optionGroups={DEFAULT_OPTION_GROUPS}
+        qtyInCart={1}
+        onAddToCart={onAddToCart}
+        onOpenCustomizer={onOpenCustomizer}
+      />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /add · ₱148/i }));
+    fireEvent.click(screen.getByRole('button', { name: /add · ₱78/i }));
+    expect(onAddToCart).toHaveBeenCalledWith('crinkle-cut-fries');
     expect(screen.getByRole('button', { name: /added to cart/i })).toBeTruthy();
 
     act(() => {
       vi.advanceTimersByTime(1100);
     });
-    expect(screen.getByRole('button', { name: /add · ₱148/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /add · ₱78/i })).toBeTruthy();
 
-    // Trigger again and unmount before timer elapses
-    fireEvent.click(screen.getByRole('button', { name: /add · ₱148/i }));
+    fireEvent.click(screen.getByRole('button', { name: /customize \/ note/i }));
+    expect(onOpenCustomizer).toHaveBeenCalledWith(SIMPLE_FRIES);
+
+    fireEvent.click(screen.getByRole('button', { name: /add · ₱78/i }));
     unmount();
     expect(clearTimeoutSpy).toHaveBeenCalled();
     clearTimeoutSpy.mockRestore();
   });
 
-  it('disables ordering and hides add-ons when sold out', () => {
+  it('opens customizer for items with option groups and displays From ₱X when required choices add a fee', () => {
+    const onOpenCustomizer = vi.fn();
+    const latte: MenuItem = {
+      ...CUSTOMIZABLE_BURGER,
+      id: 'iced-latte',
+      name: 'Iced Latte',
+      pricePhp: 120,
+      optionGroupIds: ['size'],
+    };
+
     render(
       <MenuCard
-        item={{ ...SAMPLE_BURGER, available: false }}
+        item={latte}
+        optionGroups={[REQUIRED_UPCHARGE_GROUP]}
         qtyInCart={0}
         onAddToCart={vi.fn()}
+        onOpenCustomizer={onOpenCustomizer}
+      />,
+    );
+
+    expect(screen.getByText('From ₱140')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /customize · from ₱140/i }));
+    expect(onOpenCustomizer).toHaveBeenCalledWith(latte);
+  });
+
+  it('disables ordering when sold out or when required options are all sold out', () => {
+    const { rerender } = render(
+      <MenuCard
+        item={{ ...CUSTOMIZABLE_BURGER, available: false }}
+        optionGroups={DEFAULT_OPTION_GROUPS}
+        qtyInCart={0}
+        onAddToCart={vi.fn()}
+        onOpenCustomizer={vi.fn()}
       />,
     );
 
     expect(screen.getByText('Sold out')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /customize add-ons/i })).toBeNull();
-    const unavailableBtn = screen.getByRole('button', { name: /unavailable/i });
-    expect((unavailableBtn as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (screen.getByRole('button', { name: /unavailable/i }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    const soldOutSizeGroup: OptionGroup = {
+      ...REQUIRED_UPCHARGE_GROUP,
+      choices: REQUIRED_UPCHARGE_GROUP.choices.map((choice) => ({ ...choice, available: false })),
+    };
+    rerender(
+      <MenuCard
+        item={{ ...CUSTOMIZABLE_BURGER, optionGroupIds: ['size'] }}
+        optionGroups={[soldOutSizeGroup]}
+        qtyInCart={0}
+        onAddToCart={vi.fn()}
+        onOpenCustomizer={vi.fn()}
+      />,
+    );
+
+    expect(
+      (screen.getByRole('button', { name: /options unavailable/i }) as HTMLButtonElement).disabled,
+    ).toBe(true);
   });
 });

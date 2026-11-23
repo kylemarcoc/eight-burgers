@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
 const apiProxyTarget = process.env.VITE_DEV_API_PROXY_TARGET ?? 'http://127.0.0.1:8787';
-const supabaseProxyTarget = process.env.VITE_DEV_SUPABASE_PROXY_TARGET ?? 'http://127.0.0.1:54321';
+const supabaseProxyTarget = process.env.VITE_DEV_SUPABASE_PROXY_TARGET ?? 'http://127.0.0.1:55321';
 
 export default defineConfig({
   base: '/',

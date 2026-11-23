@@ -1,4 +1,4 @@
-import type { CreateAdminUserRequest, UpdateAdminUserRequest } from '@eight-burgers/contracts';
+import type { CreateAdminUserRequest, UpdateAdminUserRequest } from '@menu-kiosk/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { adminTeamKeys, createAdminUser, fetchAdminTeam, updateAdminUser } from '../api/team-api';
 

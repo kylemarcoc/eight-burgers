@@ -103,9 +103,7 @@ describe('AdminCatalogManager', () => {
     fireEvent.click(screen.getByRole('button', { name: /confirm restore/i }));
 
     expect(await screen.findByRole('heading', { level: 3, name: 'Burger Deluxe' })).toBeTruthy();
-    expect(screen.getByRole('status').textContent).toContain(
-      'Restored the default 8Burgers Chino Roces menu.',
-    );
+    expect(screen.getByRole('status').textContent).toContain('Restored the default catalog menu.');
   });
 
   it('validates and updates distance-formula delivery pricing, live preview, conflicts, and defaults reset in admin panel', async () => {
@@ -241,7 +239,7 @@ describe('AdminCatalogManager', () => {
     fireEvent.click(saveBtn);
     await waitFor(() => {
       expect(screen.getByRole('status').textContent).toContain(
-        'Delivery paused. Only Kiosk Pickup orders will be accepted.',
+        'Delivery paused. Only pickup orders will be accepted.',
       );
     });
     expect(screen.getByText('Paused')).toBeTruthy();
@@ -411,6 +409,86 @@ describe('AdminCatalogManager', () => {
     fireEvent.click(screen.getByRole('button', { name: /edit burger deluxe/i }));
     await waitFor(() => {
       expect(state.uploadedImages.size).toBe(0);
+    });
+  });
+
+  it('blocks enabling delivery in AdminDeliverySettings until a shop location pin is configured', async () => {
+    installMockShopApi({
+      authenticated: true,
+      initialStore: { originCoords: null },
+      initialDeliveryPricing: {
+        deliveryEnabled: false,
+        baseFeePhp: 35,
+        perKmRatePhp: 10,
+        maxDistanceKm: 25,
+        freeDeliveryMinSubtotalPhp: 500,
+        originCoords: null,
+      },
+    });
+    render(
+      <TestQueryWrapper>
+        <AdminCatalogManager />
+      </TestQueryWrapper>,
+    );
+
+    await screen.findByRole('heading', { level: 3, name: 'Burger Deluxe' });
+    const enabledCheckbox = screen.getByLabelText(/accepting delivery orders/i) as HTMLInputElement;
+    expect(enabledCheckbox.disabled).toBe(true);
+    expect(enabledCheckbox.checked).toBe(false);
+    expect(screen.getByText('Origin pin required')).toBeTruthy();
+    expect(
+      screen.getByText(/set your shop location pin in store settings before enabling delivery/i),
+    ).toBeTruthy();
+  });
+
+  it('handles empty categories safely without crashing and disables item submit until a category exists', async () => {
+    installMockShopApi({
+      authenticated: true,
+      initialCategories: [],
+      initialMenu: [],
+    });
+    render(
+      <TestQueryWrapper>
+        <AdminCatalogManager />
+      </TestQueryWrapper>,
+    );
+
+    expect(await screen.findByText('No menu listings yet.')).toBeTruthy();
+    const categorySelect = screen.getByLabelText(/^category$/i) as HTMLSelectElement;
+    expect(categorySelect.disabled).toBe(true);
+    expect(
+      (screen.getByRole('button', { name: /add item to menu/i }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it('surfaces a clear alert when demo catalog or delivery reset returns 403 DEMO_RESET_DISABLED', async () => {
+    installMockShopApi({
+      authenticated: true,
+      enableDemoReset: false,
+    });
+    render(
+      <TestQueryWrapper>
+        <AdminCatalogManager />
+      </TestQueryWrapper>,
+    );
+
+    await screen.findByRole('heading', { level: 3, name: 'Burger Deluxe' });
+
+    fireEvent.click(screen.getByRole('button', { name: /restore default menu/i }));
+    fireEvent.click(screen.getByRole('button', { name: /confirm restore/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain(
+        'Demo catalog reset is disabled in this environment.',
+      );
+    });
+    expect(screen.getByRole('button', { name: /restore default menu/i })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /restore defaults/i }));
+    fireEvent.click(screen.getByRole('button', { name: /confirm restore/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain(
+        'Demo delivery pricing reset is disabled in this environment.',
+      );
     });
   });
 });

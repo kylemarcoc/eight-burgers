@@ -3,7 +3,7 @@ import {
   locationSearchResponseSchema,
   type GeoCoordinates,
   type LocationSuggestion,
-} from '@eight-burgers/contracts';
+} from '@menu-kiosk/contracts';
 import { apiRequest } from '@/shared/lib/http-client';
 
 export async function searchDeliveryAddresses(

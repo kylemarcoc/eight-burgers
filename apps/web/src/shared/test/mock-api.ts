@@ -1,11 +1,21 @@
 import {
   DEFAULT_DELIVERY_PRICING,
+  DEFAULT_MENU_CATEGORIES,
   DEFAULT_MENU_ITEMS,
-  MENU_ADDONS,
+  DEFAULT_OPTION_GROUPS,
+  DEFAULT_PAYMENT_METHODS,
+  STORE_ORIGIN_COORDS,
+  buildCartLineId,
   calculateDeliveryQuote,
+  canCustomerCancelOrder,
   normalizeContactDigits,
+  normalizeItemNote,
   normalizeQueueNumber,
+  slugifyCategoryId,
   slugifyMenuId,
+  slugifyOptionChoiceId,
+  slugifyOptionGroupId,
+  validateItemOptionSelections,
   type AdminRole,
   type AdminTeamMember,
   type AdminUser,
@@ -15,27 +25,94 @@ import {
   type DeliveryPricingPatch,
   type GeoCoordinates,
   type LocationSuggestion,
+  type MenuCategory,
+  type MenuCategoryInput,
+  type MenuCategoryPatch,
   type MenuItem,
   type MenuItemInput,
+  type OptionChoice,
+  type OptionGroup,
+  type OptionGroupInput,
+  type OptionGroupPatch,
   type OrderRecord,
   type OrderStatus,
+  type PaymentStatus,
   type PlaceOrderRequest,
   type PublicOrderTracker,
+  type ReorderIdsRequest,
+  type StoreAssetUploadPurpose,
+  type StoreOrderingStatusPatch,
+  type StoreProfile,
+  type StoreProfilePatch,
   type UpdateAdminUserRequest,
-} from '@eight-burgers/contracts';
+} from '@menu-kiosk/contracts';
 import { vi } from 'vitest';
+
+const DEFAULT_DEMO_STORE_PROFILE: StoreProfile = {
+  storeName: '8Burgers',
+  branchLabel: 'Chino Roces Avenue, Makati',
+  monogram: '8B',
+  heroHeadline: '100g pure beef griddle burgers, made fresh on Chino Roces.',
+  heroSubtext:
+    'Walk up beside Pickup Coffee near Eton WestEnd Square or place an order for delivery.',
+  heroBadgeLabel: '100g Pure Beef',
+  address: 'Chino Roces Avenue, Makati',
+  landmark: 'Beside Pickup Coffee, near Eton WestEnd Square',
+  contactPhone: '(0916) 520-5707',
+  hoursText: 'Daily · 10:00 AM – 11:00 PM',
+  pickupSpotLabel: 'Chino Roces Pickup',
+  logoUrl: '',
+  heroImageUrl: '/images/menu/hero-banner.webp',
+  externalLinks: [
+    {
+      label: 'Foodpanda',
+      url: 'https://www.foodpanda.ph/restaurant/om5p/8burgers-chino-roces-avenue',
+    },
+    {
+      label: 'Facebook',
+      url: 'https://www.facebook.com/p/8Burgers-61556691506190/',
+    },
+  ],
+  queuePrefix: '8B',
+  preparingStageLabel: 'On the Grill',
+  themeAccentPreset: 'ember',
+  themeAccentHex: null,
+  acceptingOrders: true,
+  closedNotice: '',
+  pickupEnabled: true,
+  deliveryEnabled: true,
+  dineInEnabled: false,
+  dineInTableRequired: true,
+  paymentMethods: {
+    cash: { ...DEFAULT_PAYMENT_METHODS.cash, enabled: true },
+    gcash: { ...DEFAULT_PAYMENT_METHODS.gcash, enabled: true },
+    maya: { ...DEFAULT_PAYMENT_METHODS.maya, enabled: true },
+    bank_transfer: { ...DEFAULT_PAYMENT_METHODS.bank_transfer, enabled: false },
+  },
+  originCoords: STORE_ORIGIN_COORDS,
+  version: 1,
+};
 
 function toPublicOrderTracker(order: OrderRecord): PublicOrderTracker {
   return {
     queueNumber: order.queueNumber,
     fulfillment: order.fulfillment,
+    tableNumber: order.tableNumber ?? '',
+    paymentStatus: order.paymentStatus ?? 'unpaid',
     ...(order.deliveryEtaMinutes ? { deliveryEtaMinutes: order.deliveryEtaMinutes } : {}),
-    lines: order.lines.map((line) => ({
-      lineId: line.lineId,
-      name: line.name,
-      quantity: line.quantity,
-      addonNames: line.addonNames,
-    })),
+    lines: order.lines.map((line) => {
+      const optionNames =
+        line.selectedOptions && line.selectedOptions.length > 0
+          ? line.selectedOptions.map((option) => option.choiceName)
+          : line.addonNames;
+      return {
+        lineId: line.lineId,
+        name: line.name,
+        quantity: line.quantity,
+        addonNames: optionNames,
+        selectedOptionNames: optionNames,
+      };
+    }),
     status: order.status,
     createdAtIso: order.createdAtIso,
     ...(order.updatedAt ? { updatedAt: order.updatedAt } : {}),
@@ -46,9 +123,13 @@ export type MockApiOptions = {
   authenticated?: boolean;
   role?: AdminRole;
   user?: AdminUser;
+  initialStore?: Partial<StoreProfile>;
+  initialCategories?: MenuCategory[];
+  initialOptionGroups?: OptionGroup[];
   initialMenu?: MenuItem[];
   initialDeliveryPricing?: DeliveryPricingConfig;
   initialOrders?: OrderRecord[];
+  enableDemoReset?: boolean;
   locationSuggestions?: LocationSuggestion[];
   onLocationSearch?: (query: string) => Response | Promise<Response>;
   onLocationReverse?: (coords: GeoCoordinates) => Response | Promise<Response>;
@@ -120,7 +201,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 function problemJson(status: number, code: string, detail: string): Response {
   return new Response(
     JSON.stringify({
-      type: `https://eight-burgers.local/problems/${code.toLowerCase()}`,
+      type: `https://api.menu-kiosk.local/problems/${code.toLowerCase()}`,
       title: code,
       status,
       code,
@@ -135,10 +216,44 @@ function problemJson(status: number, code: string, detail: string): Response {
 
 export function installMockShopApi(options: MockApiOptions = {}) {
   const initialUser = options.user ?? TEST_ADMIN_USERS[options.role ?? 'owner'];
+  const initialOriginCoords =
+    options.initialDeliveryPricing?.originCoords !== undefined
+      ? options.initialDeliveryPricing.originCoords
+      : options.initialStore?.originCoords !== undefined
+        ? options.initialStore.originCoords
+        : DEFAULT_DEMO_STORE_PROFILE.originCoords;
+  const initialDeliveryEnabled =
+    options.initialDeliveryPricing?.deliveryEnabled !== undefined
+      ? options.initialDeliveryPricing.deliveryEnabled
+      : options.initialStore?.deliveryEnabled !== undefined
+        ? options.initialStore.deliveryEnabled
+        : DEFAULT_DEMO_STORE_PROFILE.deliveryEnabled;
+  const initialPaymentMethods = {
+    cash: {
+      ...DEFAULT_DEMO_STORE_PROFILE.paymentMethods.cash,
+      ...options.initialStore?.paymentMethods?.cash,
+    },
+    gcash: {
+      ...DEFAULT_DEMO_STORE_PROFILE.paymentMethods.gcash,
+      ...options.initialStore?.paymentMethods?.gcash,
+    },
+    maya: {
+      ...DEFAULT_DEMO_STORE_PROFILE.paymentMethods.maya,
+      ...options.initialStore?.paymentMethods?.maya,
+    },
+    bank_transfer: {
+      ...DEFAULT_DEMO_STORE_PROFILE.paymentMethods.bank_transfer,
+      ...options.initialStore?.paymentMethods?.bank_transfer,
+    },
+  };
+
   const state: {
     authenticated: boolean;
     activeUser: AdminUser | null;
     team: AdminTeamMember[];
+    store: StoreProfile;
+    categories: MenuCategory[];
+    optionGroups: OptionGroup[];
     menu: MenuItem[];
     deliveryPricing: DeliveryPricingConfig;
     orders: OrderRecord[];
@@ -155,21 +270,52 @@ export function installMockShopApi(options: MockApiOptions = {}) {
       createdAt: '2026-11-22T01:00:00.000Z',
       updatedAt: '2026-11-22T01:00:00.000Z',
     })),
+    store: {
+      ...DEFAULT_DEMO_STORE_PROFILE,
+      ...options.initialStore,
+      deliveryEnabled: initialDeliveryEnabled,
+      paymentMethods: initialPaymentMethods,
+      externalLinks: (
+        options.initialStore?.externalLinks ?? DEFAULT_DEMO_STORE_PROFILE.externalLinks
+      ).map((link) => ({ ...link })),
+      originCoords: initialOriginCoords ? { ...initialOriginCoords } : null,
+      version: options.initialStore?.version ?? 1,
+    },
+    categories: (options.initialCategories ?? DEFAULT_MENU_CATEGORIES).map((category) => ({
+      ...category,
+      version: category.version ?? 1,
+    })),
+    optionGroups: (options.initialOptionGroups ?? DEFAULT_OPTION_GROUPS).map((group) => ({
+      ...group,
+      version: group.version ?? 1,
+      choices: group.choices.map((choice) => ({
+        ...choice,
+        version: choice.version ?? 1,
+      })),
+    })),
     menu: (options.initialMenu ?? DEFAULT_MENU_ITEMS).map((item) => ({
       ...item,
+      optionGroupIds: [...item.optionGroupIds],
       version: item.version ?? 1,
     })),
     deliveryPricing: options.initialDeliveryPricing
       ? {
           ...options.initialDeliveryPricing,
+          deliveryEnabled: initialDeliveryEnabled,
+          originCoords: initialOriginCoords ? { ...initialOriginCoords } : null,
           version: options.initialDeliveryPricing.version ?? 1,
         }
       : {
           ...DEFAULT_DELIVERY_PRICING,
+          deliveryEnabled: initialDeliveryEnabled,
+          originCoords: initialOriginCoords ? { ...initialOriginCoords } : null,
           version: 1,
         },
     orders: (options.initialOrders ?? []).map((order) => ({
       ...order,
+      tableNumber: order.tableNumber ?? '',
+      paymentStatus: order.paymentStatus ?? 'unpaid',
+      paymentReference: order.paymentReference ?? '',
       version: order.version ?? 1,
     })),
     uploadedImages: new Set<string>(),
@@ -196,8 +342,10 @@ export function installMockShopApi(options: MockApiOptions = {}) {
     if (method === 'GET' && path === '/catalog') {
       return jsonResponse({
         data: {
+          store: state.store,
+          categories: state.categories,
+          optionGroups: state.optionGroups,
           menu: state.menu,
-          addons: [...MENU_ADDONS],
           deliveryPricing: state.deliveryPricing,
         },
       });
@@ -248,6 +396,30 @@ export function installMockShopApi(options: MockApiOptions = {}) {
 
     if (method === 'POST' && path === '/orders') {
       const req = body as PlaceOrderRequest;
+      if (!state.store.acceptingOrders) {
+        return problemJson(
+          422,
+          'STORE_CLOSED',
+          state.store.closedNotice || 'The store is currently paused and not accepting new orders.',
+        );
+      }
+      if (req.fulfillment === 'pickup' && !state.store.pickupEnabled) {
+        return problemJson(422, 'FULFILLMENT_UNAVAILABLE', 'Pickup is currently unavailable.');
+      }
+      if (req.fulfillment === 'dine-in' && !state.store.dineInEnabled) {
+        return problemJson(422, 'FULFILLMENT_UNAVAILABLE', 'Dine-in is currently unavailable.');
+      }
+      const trimmedTableNumber = (req.tableNumber ?? '').trim();
+      if (req.fulfillment === 'dine-in' && state.store.dineInTableRequired && !trimmedTableNumber) {
+        return problemJson(400, 'TABLE_NUMBER_REQUIRED', 'Enter your table number for dine-in.');
+      }
+      if (!state.store.paymentMethods[req.paymentMethod]?.enabled) {
+        return problemJson(
+          422,
+          'PAYMENT_METHOD_UNAVAILABLE',
+          'Selected payment method is currently unavailable.',
+        );
+      }
       if (req.fulfillment === 'delivery' && !req.deliveryPin) {
         return problemJson(
           400,
@@ -262,35 +434,44 @@ export function installMockShopApi(options: MockApiOptions = {}) {
         if (!item || !item.available) {
           return problemJson(409, 'ITEM_UNAVAILABLE', `Item ${line.itemId} is sold out.`);
         }
-        const addons = item.allowAddons
-          ? MENU_ADDONS.filter((addon) => line.addonIds.includes(addon.id))
-          : [];
-        const addonsPricePhp = addons.reduce((sum, addon) => sum + addon.pricePhp, 0);
-        const lineTotalPhp = (item.pricePhp + addonsPricePhp) * line.quantity;
+        const optionCheck = validateItemOptionSelections(
+          item,
+          line.selectedOptionIds ?? [],
+          state.optionGroups,
+        );
+        if (!optionCheck.valid) {
+          const firstIssue = optionCheck.issues[0];
+          return problemJson(
+            422,
+            firstIssue?.code ?? 'INVALID_OPTION_SELECTION',
+            firstIssue?.message ?? 'Invalid option selection.',
+          );
+        }
+        const trimmedNote = normalizeItemNote(line.itemNote);
+        const lineTotalPhp = (item.pricePhp + optionCheck.addonsPricePhp) * line.quantity;
         subtotalPhp += lineTotalPhp;
         lines.push({
-          lineId:
-            addons.length > 0
-              ? `${item.id}__${addons
-                  .map((a) => a.id)
-                  .sort()
-                  .join('+')}`
-              : item.id,
+          lineId: buildCartLineId(item.id, line.selectedOptionIds ?? [], trimmedNote),
           itemId: item.id,
           name: item.name,
           unitPricePhp: item.pricePhp,
-          addonNames: addons.map((a) => a.name),
-          addonsPricePhp,
+          selectedOptions: optionCheck.selectedOptions,
+          addonNames: optionCheck.selectedOptions.map((opt) => opt.choiceName),
+          itemNote: trimmedNote,
+          addonsPricePhp: optionCheck.addonsPricePhp,
           quantity: line.quantity,
           lineTotalPhp,
         });
       }
 
-      if (req.fulfillment === 'delivery' && !state.deliveryPricing.deliveryEnabled) {
+      if (
+        req.fulfillment === 'delivery' &&
+        (!state.deliveryPricing.deliveryEnabled || !state.deliveryPricing.originCoords)
+      ) {
         return problemJson(
           422,
           'DELIVERY_UNAVAILABLE',
-          'Delivery is currently paused. Switch to Chino Roces Pickup to continue.',
+          'Delivery is currently paused. Switch to pickup to continue.',
         );
       }
 
@@ -299,6 +480,7 @@ export function installMockShopApi(options: MockApiOptions = {}) {
         subtotalPhp,
         deliveryPricing: state.deliveryPricing,
         pin: req.deliveryPin,
+        storeOrigin: state.deliveryPricing.originCoords,
       });
 
       if (req.fulfillment === 'delivery' && (!quote.available || quote.outOfRange)) {
@@ -312,12 +494,19 @@ export function installMockShopApi(options: MockApiOptions = {}) {
 
       const seq = state.nextQueueSeq;
       state.nextQueueSeq += 1;
+      const trimmedPaymentRef =
+        req.paymentMethod !== 'cash' ? (req.paymentReference ?? '').trim() : '';
+      const initialPaymentStatus: PaymentStatus =
+        req.paymentMethod !== 'cash' && trimmedPaymentRef.length > 0
+          ? 'pending_verification'
+          : 'unpaid';
       const order: OrderRecord = {
         id: `00000000-0000-4000-8000-${String(seq).padStart(12, '0')}`,
-        queueNumber: `#8B-${seq}`,
+        queueNumber: `#${state.store.queuePrefix}-${seq}`,
         customerName: req.customerName,
         contactNumber: req.contactNumber,
         fulfillment: req.fulfillment,
+        tableNumber: req.fulfillment === 'dine-in' ? trimmedTableNumber : '',
         ...(req.fulfillment === 'delivery' && quote.etaMinutes
           ? { deliveryEtaMinutes: quote.etaMinutes }
           : {}),
@@ -328,6 +517,8 @@ export function installMockShopApi(options: MockApiOptions = {}) {
         ...(quote.isFreeDelivery ? { deliveryFeeWaived: true } : {}),
         addressOrNotes: req.addressOrNotes,
         paymentMethod: req.paymentMethod,
+        paymentStatus: initialPaymentStatus,
+        paymentReference: trimmedPaymentRef,
         lines,
         subtotalPhp,
         deliveryFeePhp: quote.feePhp,
@@ -345,9 +536,9 @@ export function installMockShopApi(options: MockApiOptions = {}) {
 
     if (method === 'GET' && path.startsWith('/orders/track/')) {
       const rawQueue = decodeURIComponent(path.slice('/orders/track/'.length));
-      const normalized = normalizeQueueNumber(rawQueue);
+      const normalized = normalizeQueueNumber(rawQueue, state.store.queuePrefix);
       const order = state.orders.find(
-        (entry) => normalizeQueueNumber(entry.queueNumber) === normalized,
+        (entry) => normalizeQueueNumber(entry.queueNumber, state.store.queuePrefix) === normalized,
       );
       if (!order)
         return problemJson(404, 'ORDER_NOT_FOUND', 'No order found for that queue number.');
@@ -356,9 +547,9 @@ export function installMockShopApi(options: MockApiOptions = {}) {
 
     if (method === 'POST' && path.startsWith('/orders/track/') && path.endsWith('/cancel')) {
       const rawQueue = decodeURIComponent(path.slice('/orders/track/'.length, -'/cancel'.length));
-      const normalized = normalizeQueueNumber(rawQueue);
+      const normalized = normalizeQueueNumber(rawQueue, state.store.queuePrefix);
       const order = state.orders.find(
-        (entry) => normalizeQueueNumber(entry.queueNumber) === normalized,
+        (entry) => normalizeQueueNumber(entry.queueNumber, state.store.queuePrefix) === normalized,
       );
       if (!order)
         return problemJson(404, 'ORDER_NOT_FOUND', 'No order found for that queue number.');
@@ -385,11 +576,11 @@ export function installMockShopApi(options: MockApiOptions = {}) {
         );
       }
 
-      if (order.status !== 'received' && order.status !== 'cancelled') {
+      if (order.status !== 'cancelled' && !canCustomerCancelOrder(order)) {
         return problemJson(
           409,
           'ORDER_NOT_CANCELLABLE',
-          'This order is already being prepared and can no longer be cancelled online.',
+          'This order can no longer be cancelled online.',
         );
       }
 
@@ -398,15 +589,47 @@ export function installMockShopApi(options: MockApiOptions = {}) {
       return jsonResponse({ data: toPublicOrderTracker(order) });
     }
 
+    if (method === 'POST' && path.startsWith('/orders/') && path.endsWith('/payment-reference')) {
+      const orderId = path.slice('/orders/'.length, -'/payment-reference'.length);
+      const order = state.orders.find((entry) => entry.id === orderId);
+      if (!order) return problemJson(404, 'ORDER_NOT_FOUND', 'Order not found.');
+      if (order.status === 'cancelled') {
+        return problemJson(
+          409,
+          'ORDER_CANCELLED',
+          'Cannot submit payment reference for a cancelled order.',
+        );
+      }
+      if (order.paymentMethod === 'cash') {
+        return problemJson(
+          400,
+          'PAYMENT_REFERENCE_NOT_SUPPORTED',
+          'Cash orders do not accept payment references.',
+        );
+      }
+      if (order.paymentStatus === 'paid') {
+        return problemJson(409, 'ORDER_ALREADY_PAID', 'Order is already marked paid.');
+      }
+      const payload = (body ?? {}) as { paymentReference?: string };
+      const trimmedRef = (payload.paymentReference ?? '').trim();
+      if (!trimmedRef) {
+        return problemJson(400, 'VALIDATION_ERROR', 'Enter your payment reference number.');
+      }
+      order.paymentReference = trimmedRef;
+      order.paymentStatus = 'pending_verification';
+      order.version = (order.version ?? 1) + 1;
+      return jsonResponse({ data: order });
+    }
+
     if (method === 'POST' && path.startsWith('/orders/') && path.endsWith('/cancel')) {
       const orderId = path.slice('/orders/'.length, -'/cancel'.length);
       const order = state.orders.find((entry) => entry.id === orderId);
       if (!order) return problemJson(404, 'ORDER_NOT_FOUND', 'Order not found.');
-      if (order.status !== 'received' && order.status !== 'cancelled') {
+      if (order.status !== 'cancelled' && !canCustomerCancelOrder(order)) {
         return problemJson(
           409,
           'ORDER_NOT_CANCELLABLE',
-          'This order is already being prepared and can no longer be cancelled online.',
+          'This order can no longer be cancelled online.',
         );
       }
       order.status = 'cancelled';
@@ -453,12 +676,22 @@ export function installMockShopApi(options: MockApiOptions = {}) {
       }
 
       const isOwner = state.activeUser.role === 'owner';
+      const isCashier = state.activeUser.role === 'cashier';
       const isAvailabilityPatch =
         method === 'PATCH' &&
-        path.startsWith('/admin/menu-items/') &&
-        path.endsWith('/availability');
-      const isOrderRoute = path === '/admin/orders' || path.startsWith('/admin/orders/');
-      if (!isOwner && !isOrderRoute && !isAvailabilityPatch) {
+        ((path.startsWith('/admin/menu-items/') && path.endsWith('/availability')) ||
+          (path.startsWith('/admin/option-choices/') && path.endsWith('/availability')));
+      const isOrderingStatusPatch = method === 'PATCH' && path === '/admin/store-ordering-status';
+      const isPaymentStatusPatch =
+        method === 'PATCH' && path.startsWith('/admin/orders/') && path.endsWith('/payment-status');
+      const isOrderRoute =
+        (path === '/admin/orders' || path.startsWith('/admin/orders/')) && !isPaymentStatusPatch;
+      if (
+        !isOwner &&
+        !isOrderRoute &&
+        !isAvailabilityPatch &&
+        !(isCashier && (isOrderingStatusPatch || isPaymentStatusPatch))
+      ) {
         return problemJson(
           403,
           'INSUFFICIENT_ROLE',
@@ -466,10 +699,329 @@ export function installMockShopApi(options: MockApiOptions = {}) {
         );
       }
 
+      if (method === 'POST' && path === '/admin/categories/reorder') {
+        const payload = body as ReorderIdsRequest;
+        const byId = new Map(state.categories.map((cat) => [cat.id, cat]));
+        const reordered: MenuCategory[] = [];
+        payload.orderedIds.forEach((id, index) => {
+          const cat = byId.get(id);
+          if (cat) {
+            cat.sortOrder = index + 1;
+            cat.version = (cat.version ?? 1) + 1;
+            reordered.push(cat);
+            byId.delete(id);
+          }
+        });
+        for (const remaining of byId.values()) {
+          remaining.sortOrder = reordered.length + 1;
+          reordered.push(remaining);
+        }
+        state.categories = reordered;
+        return jsonResponse({ data: state.categories });
+      }
+
+      if (method === 'POST' && path === '/admin/categories') {
+        const input = body as MenuCategoryInput;
+        const id =
+          input.id ?? slugifyCategoryId(input.name, new Set(state.categories.map((cat) => cat.id)));
+        if (state.categories.some((cat) => cat.id === id)) {
+          return problemJson(409, 'CATEGORY_ALREADY_EXISTS', 'Category already exists.');
+        }
+        const created: MenuCategory = {
+          id,
+          name: input.name.trim(),
+          description: (input.description ?? '').trim(),
+          sortOrder: input.sortOrder ?? state.categories.length + 1,
+          active: input.active ?? true,
+          version: 1,
+        };
+        state.categories.push(created);
+        return jsonResponse({ data: created }, 201);
+      }
+
+      if (method === 'PATCH' && path.startsWith('/admin/categories/')) {
+        const id = decodeURIComponent(path.slice('/admin/categories/'.length));
+        const category = state.categories.find((cat) => cat.id === id);
+        if (!category) return problemJson(404, 'CATEGORY_NOT_FOUND', 'Category not found.');
+        const patch = body as MenuCategoryPatch;
+        if (patch.expectedVersion !== undefined && category.version !== patch.expectedVersion) {
+          return problemJson(409, 'CONFLICT', 'Category was updated on another device.');
+        }
+        if (patch.name !== undefined) category.name = patch.name.trim();
+        if (patch.description !== undefined) category.description = patch.description.trim();
+        if (patch.sortOrder !== undefined) category.sortOrder = patch.sortOrder;
+        if (patch.active !== undefined) category.active = patch.active;
+        category.version = (category.version ?? 1) + 1;
+        return jsonResponse({ data: category });
+      }
+
+      if (method === 'DELETE' && path.startsWith('/admin/categories/')) {
+        const id = decodeURIComponent(path.slice('/admin/categories/'.length));
+        if (!state.categories.some((cat) => cat.id === id)) {
+          return problemJson(404, 'CATEGORY_NOT_FOUND', 'Category not found.');
+        }
+        if (state.menu.some((item) => item.category === id)) {
+          return problemJson(
+            409,
+            'CATEGORY_IN_USE',
+            'Move or delete menu items assigned to this category before deleting it.',
+          );
+        }
+        state.categories = state.categories.filter((cat) => cat.id !== id);
+        return new Response(null, { status: 204 });
+      }
+
+      if (method === 'POST' && path === '/admin/option-groups/reorder') {
+        const payload = body as ReorderIdsRequest;
+        const byId = new Map(state.optionGroups.map((group) => [group.id, group]));
+        const reordered: OptionGroup[] = [];
+        payload.orderedIds.forEach((id, index) => {
+          const group = byId.get(id);
+          if (group) {
+            group.sortOrder = index + 1;
+            group.version = (group.version ?? 1) + 1;
+            reordered.push(group);
+            byId.delete(id);
+          }
+        });
+        for (const remaining of byId.values()) {
+          remaining.sortOrder = reordered.length + 1;
+          reordered.push(remaining);
+        }
+        state.optionGroups = reordered;
+        return jsonResponse({ data: state.optionGroups });
+      }
+
+      if (method === 'POST' && path === '/admin/option-groups') {
+        const input = body as OptionGroupInput;
+        const id =
+          input.id ??
+          slugifyOptionGroupId(input.name, new Set(state.optionGroups.map((group) => group.id)));
+        const existingChoiceIds = new Set<string>(
+          state.optionGroups.flatMap((group) => group.choices.map((choice) => choice.id)),
+        );
+        const choices: OptionChoice[] = (input.choices ?? []).map((choice, idx) => {
+          const choiceId = choice.id ?? slugifyOptionChoiceId(choice.name, existingChoiceIds);
+          existingChoiceIds.add(choiceId);
+          return {
+            id: choiceId,
+            groupId: id,
+            name: choice.name.trim(),
+            priceDeltaPhp: choice.priceDeltaPhp ?? 0,
+            available: choice.available ?? true,
+            isDefault: choice.isDefault ?? false,
+            sortOrder: choice.sortOrder ?? idx + 1,
+            version: 1,
+          };
+        });
+        const created: OptionGroup = {
+          id,
+          name: input.name.trim(),
+          description: (input.description ?? '').trim(),
+          selectionMode: input.selectionMode ?? 'multi',
+          required: input.required ?? false,
+          minSelect: input.minSelect ?? 0,
+          maxSelect: input.maxSelect ?? null,
+          sortOrder: input.sortOrder ?? state.optionGroups.length + 1,
+          active: input.active ?? true,
+          choices,
+          version: 1,
+        };
+        state.optionGroups.push(created);
+        return jsonResponse({ data: created }, 201);
+      }
+
+      if (method === 'PATCH' && path.startsWith('/admin/option-groups/')) {
+        const id = decodeURIComponent(path.slice('/admin/option-groups/'.length));
+        const group = state.optionGroups.find((entry) => entry.id === id);
+        if (!group) return problemJson(404, 'OPTION_GROUP_NOT_FOUND', 'Option group not found.');
+        const patch = body as OptionGroupPatch;
+        if (patch.expectedVersion !== undefined && group.version !== patch.expectedVersion) {
+          return problemJson(409, 'CONFLICT', 'Option group was updated on another device.');
+        }
+        if (patch.name !== undefined) group.name = patch.name.trim();
+        if (patch.description !== undefined) group.description = patch.description.trim();
+        if (patch.selectionMode !== undefined) group.selectionMode = patch.selectionMode;
+        if (patch.required !== undefined) group.required = patch.required;
+        if (patch.minSelect !== undefined) group.minSelect = patch.minSelect;
+        if (patch.maxSelect !== undefined) group.maxSelect = patch.maxSelect;
+        if (patch.sortOrder !== undefined) group.sortOrder = patch.sortOrder;
+        if (patch.active !== undefined) group.active = patch.active;
+        if (patch.choices !== undefined) {
+          const existingChoiceIds = new Set<string>(
+            state.optionGroups
+              .filter((entry) => entry.id !== id)
+              .flatMap((entry) => entry.choices.map((choice) => choice.id)),
+          );
+          group.choices = patch.choices.map((choice, idx) => {
+            const choiceId = choice.id ?? slugifyOptionChoiceId(choice.name, existingChoiceIds);
+            existingChoiceIds.add(choiceId);
+            return {
+              id: choiceId,
+              groupId: id,
+              name: choice.name.trim(),
+              priceDeltaPhp: choice.priceDeltaPhp ?? 0,
+              available: choice.available ?? true,
+              isDefault: choice.isDefault ?? false,
+              sortOrder: choice.sortOrder ?? idx + 1,
+              version: 1,
+            };
+          });
+        }
+        group.version = (group.version ?? 1) + 1;
+        return jsonResponse({ data: group });
+      }
+
+      if (method === 'DELETE' && path.startsWith('/admin/option-groups/')) {
+        const id = decodeURIComponent(path.slice('/admin/option-groups/'.length));
+        if (!state.optionGroups.some((group) => group.id === id)) {
+          return problemJson(404, 'OPTION_GROUP_NOT_FOUND', 'Option group not found.');
+        }
+        if (state.menu.some((item) => item.optionGroupIds.includes(id))) {
+          return problemJson(
+            409,
+            'OPTION_GROUP_IN_USE',
+            'Detach this option group from menu items before deleting it, or pause it instead.',
+          );
+        }
+        state.optionGroups = state.optionGroups.filter((group) => group.id !== id);
+        return new Response(null, { status: 204 });
+      }
+
+      if (
+        method === 'PATCH' &&
+        path.startsWith('/admin/option-choices/') &&
+        path.endsWith('/availability')
+      ) {
+        const choiceId = decodeURIComponent(
+          path.slice('/admin/option-choices/'.length, -'/availability'.length),
+        );
+        let targetChoice: OptionChoice | null = null;
+        for (const group of state.optionGroups) {
+          const match = group.choices.find((choice) => choice.id === choiceId);
+          if (match) {
+            targetChoice = match;
+            break;
+          }
+        }
+        if (!targetChoice) {
+          return problemJson(404, 'OPTION_CHOICE_NOT_FOUND', 'Option choice not found.');
+        }
+        const payload = body as { available: boolean; expectedVersion?: number };
+        if (
+          payload.expectedVersion !== undefined &&
+          targetChoice.version !== payload.expectedVersion
+        ) {
+          return problemJson(409, 'CONFLICT', 'Option choice was updated on another device.');
+        }
+        targetChoice.available = Boolean(payload.available);
+        targetChoice.version = (targetChoice.version ?? 1) + 1;
+        return jsonResponse({ data: targetChoice });
+      }
+
+      if (method === 'PATCH' && path === '/admin/store-profile') {
+        const payload = body as StoreProfilePatch;
+        if (
+          payload.expectedVersion !== undefined &&
+          state.store.version !== payload.expectedVersion
+        ) {
+          return problemJson(409, 'CONFLICT', 'Store profile was updated on another device.');
+        }
+        if (payload.originCoords === null && state.deliveryPricing.deliveryEnabled) {
+          return problemJson(
+            422,
+            'ORIGIN_PIN_REQUIRED',
+            'Pause delivery before clearing the shop location pin.',
+          );
+        }
+        const { expectedVersion: _expectedVersion, ...updates } = payload;
+        state.store = {
+          ...state.store,
+          ...updates,
+          version: (state.store.version ?? 1) + 1,
+        };
+        if (updates.originCoords !== undefined) {
+          state.deliveryPricing.originCoords = updates.originCoords
+            ? { ...updates.originCoords }
+            : null;
+          state.deliveryPricing.version = state.store.version;
+        }
+        if (updates.deliveryEnabled !== undefined) {
+          state.deliveryPricing.deliveryEnabled = updates.deliveryEnabled;
+          state.deliveryPricing.version = state.store.version;
+        }
+        return jsonResponse({ data: state.store });
+      }
+
+      if (method === 'PATCH' && path === '/admin/store-ordering-status') {
+        const payload = body as StoreOrderingStatusPatch;
+        if (
+          payload.expectedVersion !== undefined &&
+          state.store.version !== payload.expectedVersion
+        ) {
+          return problemJson(409, 'CONFLICT', 'Store status was updated on another device.');
+        }
+        state.store = {
+          ...state.store,
+          acceptingOrders: payload.acceptingOrders,
+          ...(payload.closedNotice !== undefined ? { closedNotice: payload.closedNotice } : {}),
+          version: (state.store.version ?? 1) + 1,
+        };
+        state.deliveryPricing.version = state.store.version;
+        return jsonResponse({ data: state.store });
+      }
+
+      if (method === 'POST' && path === '/admin/store-assets') {
+        const formData = init?.body;
+        if (!(formData instanceof FormData) || !(formData.get('file') instanceof File)) {
+          return problemJson(400, 'IMAGE_FILE_REQUIRED', 'Attach an image file.');
+        }
+        const rawPurpose = String(formData.get('purpose') ?? 'logo') as StoreAssetUploadPurpose;
+        const seq = state.nextImageSeq;
+        state.nextImageSeq += 1;
+        const uuid = `00000000-0000-4000-8000-${String(seq).padStart(12, '0')}`;
+        const folder = rawPurpose === 'payment-qr' ? 'payment-qr' : 'branding';
+        const objectPath = `${folder}/${uuid}.webp`;
+        const imageUrl = `/storage/v1/object/public/menu-images/${objectPath}`;
+        state.uploadedImages.add(imageUrl);
+        return jsonResponse(
+          {
+            data: {
+              imageUrl,
+              path: objectPath,
+              purpose: rawPurpose,
+              sizeBytes: 24_800,
+              width: rawPurpose === 'hero' ? 1600 : 512,
+              height: rawPurpose === 'hero' ? 900 : 512,
+              contentType: 'image/webp',
+            },
+          },
+          201,
+        );
+      }
+
+      if (method === 'DELETE' && path === '/admin/store-assets') {
+        const payload = body as { imageUrl?: string } | undefined;
+        const targetUrl = payload?.imageUrl;
+        const inUseByPaymentQr = Object.values(state.store.paymentMethods).some(
+          (cfg) => cfg.qrImageUrl === targetUrl,
+        );
+        if (
+          targetUrl &&
+          state.store.logoUrl !== targetUrl &&
+          state.store.heroImageUrl !== targetUrl &&
+          !inUseByPaymentQr
+        ) {
+          state.uploadedImages.delete(targetUrl);
+        }
+        return new Response(null, { status: 204 });
+      }
+
       if (method === 'GET' && path === '/admin/orders') {
         const queryString = rawUrl.includes('?') ? rawUrl.slice(rawUrl.indexOf('?') + 1) : '';
         const params = new URLSearchParams(queryString);
         const statusParam = params.get('status') ?? 'all';
+        const paymentStatusParam = params.get('paymentStatus') ?? 'all';
         const rangeParam = params.get('range') ?? 'all';
         const sortParam = params.get('sort') ?? 'desc';
         const qParam = (params.get('q') ?? '').trim().toLowerCase();
@@ -501,25 +1053,37 @@ export function installMockShopApi(options: MockApiOptions = {}) {
               order.queueNumber.toLowerCase().includes(qParam) ||
               order.customerName.toLowerCase().includes(qParam) ||
               order.contactNumber.toLowerCase().includes(qParam) ||
-              order.addressOrNotes.toLowerCase().includes(qParam);
+              order.addressOrNotes.toLowerCase().includes(qParam) ||
+              (order.tableNumber ?? '').toLowerCase().includes(qParam) ||
+              (order.paymentReference ?? '').toLowerCase().includes(qParam);
             if (!matches) return false;
           }
           return true;
         });
 
+        const paymentFiltered = baseFiltered.filter((order) => {
+          if (paymentStatusParam === 'all') return true;
+          return (order.paymentStatus ?? 'unpaid') === paymentStatusParam;
+        });
+
         const counts = {
-          all: baseFiltered.length,
-          active: baseFiltered.filter(
+          all: paymentFiltered.length,
+          active: paymentFiltered.filter(
             (order) => order.status !== 'completed' && order.status !== 'cancelled',
           ).length,
-          received: baseFiltered.filter((order) => order.status === 'received').length,
-          grilling: baseFiltered.filter((order) => order.status === 'grilling').length,
-          ready: baseFiltered.filter((order) => order.status === 'ready').length,
-          completed: baseFiltered.filter((order) => order.status === 'completed').length,
-          cancelled: baseFiltered.filter((order) => order.status === 'cancelled').length,
+          received: paymentFiltered.filter((order) => order.status === 'received').length,
+          preparing: paymentFiltered.filter((order) => order.status === 'preparing').length,
+          ready: paymentFiltered.filter((order) => order.status === 'ready').length,
+          completed: paymentFiltered.filter((order) => order.status === 'completed').length,
+          cancelled: paymentFiltered.filter((order) => order.status === 'cancelled').length,
+          pendingVerification: baseFiltered.filter(
+            (order) =>
+              (order.paymentStatus ?? 'unpaid') === 'pending_verification' &&
+              order.status !== 'cancelled',
+          ).length,
         };
 
-        const statusFiltered = baseFiltered.filter((order) => {
+        const statusFiltered = paymentFiltered.filter((order) => {
           if (statusParam === 'all') return true;
           if (statusParam === 'active') {
             return order.status !== 'completed' && order.status !== 'cancelled';
@@ -566,6 +1130,27 @@ export function installMockShopApi(options: MockApiOptions = {}) {
         return jsonResponse({ data: order });
       }
 
+      if (
+        method === 'PATCH' &&
+        path.startsWith('/admin/orders/') &&
+        path.endsWith('/payment-status')
+      ) {
+        const orderId = path.slice('/admin/orders/'.length, -'/payment-status'.length);
+        const order = state.orders.find((entry) => entry.id === orderId);
+        if (!order) return problemJson(404, 'ORDER_NOT_FOUND', 'Order not found.');
+        const payload = body as { paymentStatus: PaymentStatus; expectedVersion?: number };
+        if (payload.expectedVersion !== undefined && order.version !== payload.expectedVersion) {
+          return problemJson(
+            409,
+            'CONFLICT',
+            'Order payment status was updated on another device.',
+          );
+        }
+        order.paymentStatus = payload.paymentStatus;
+        order.version = (order.version ?? 1) + 1;
+        return jsonResponse({ data: order });
+      }
+
       if (method === 'POST' && path === '/admin/menu-images') {
         const formData = init?.body;
         if (!(formData instanceof FormData) || !(formData.get('file') instanceof File)) {
@@ -602,6 +1187,13 @@ export function installMockShopApi(options: MockApiOptions = {}) {
       }
 
       if (method === 'POST' && path === '/admin/menu-items/reset') {
+        if (options.enableDemoReset === false) {
+          return problemJson(
+            403,
+            'DEMO_RESET_DISABLED',
+            'Demo catalog reset is disabled in this environment.',
+          );
+        }
         state.menu = DEFAULT_MENU_ITEMS.map((item) => ({ ...item, version: 1 }));
         state.uploadedImages.clear();
         return jsonResponse({ data: state.menu });
@@ -660,8 +1252,16 @@ export function installMockShopApi(options: MockApiOptions = {}) {
         ) {
           return problemJson(409, 'CONFLICT', 'Delivery pricing was updated on another device.');
         }
+        if (payload.deliveryEnabled === true && !state.deliveryPricing.originCoords) {
+          return problemJson(
+            422,
+            'ORIGIN_PIN_REQUIRED',
+            'Set your shop location pin in Store Settings before enabling delivery.',
+          );
+        }
         if (payload.deliveryEnabled !== undefined) {
           state.deliveryPricing.deliveryEnabled = payload.deliveryEnabled;
+          state.store.deliveryEnabled = payload.deliveryEnabled;
         }
         if (payload.baseFeePhp !== undefined) {
           state.deliveryPricing.baseFeePhp = payload.baseFeePhp;
@@ -680,6 +1280,13 @@ export function installMockShopApi(options: MockApiOptions = {}) {
       }
 
       if (method === 'POST' && path === '/admin/delivery-pricing/reset') {
+        if (options.enableDemoReset === false) {
+          return problemJson(
+            403,
+            'DEMO_RESET_DISABLED',
+            'Demo delivery pricing reset is disabled in this environment.',
+          );
+        }
         state.deliveryPricing = {
           ...DEFAULT_DELIVERY_PRICING,
           version: (state.deliveryPricing.version ?? 1) + 1,

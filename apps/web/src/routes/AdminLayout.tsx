@@ -1,4 +1,4 @@
-import { ADMIN_ROLE_LABELS, getAdminPermissions } from '@eight-burgers/contracts';
+import { ADMIN_ROLE_LABELS, getAdminPermissions } from '@menu-kiosk/contracts';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   AdminAuthGuard,
@@ -42,6 +42,20 @@ function AdminShell() {
           >
             Customer Orders
           </NavLink>
+          {permissions?.canManageCatalog ? (
+            <NavLink
+              to="/admin/settings"
+              className={({ isActive }) =>
+                `rounded-xl px-3.5 py-2 text-sm font-semibold transition-colors motion-reduce:transition-none ${
+                  isActive
+                    ? 'bg-ui-accent text-ui-on-accent'
+                    : 'text-ui-text hover:bg-ui-surface-muted'
+                }`
+              }
+            >
+              Store Settings
+            </NavLink>
+          ) : null}
           {permissions?.canManageTeam ? (
             <NavLink
               to="/admin/team"

@@ -52,8 +52,8 @@ export function AdminLoginForm() {
           Staff Portal Sign-In
         </h1>
         <p className="text-sm text-ui-text-muted">
-          Sign in with an Owner, Cashier, or Staff account to manage Chino Roces orders and daily
-          menu availability.
+          Sign in with an Owner, Cashier, or Staff account to manage customer orders and daily menu
+          availability.
         </p>
       </div>
 
@@ -70,7 +70,7 @@ export function AdminLoginForm() {
             autoComplete="username"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            placeholder="owner@eightburgers.local"
+            placeholder="owner@yourshop.com"
             aria-invalid={Boolean(displayedError)}
             aria-describedby={displayedError ? errorId : undefined}
             className="mt-1 w-full rounded-xl border border-ui-border bg-ui-canvas px-3 py-2 text-sm text-ui-text"

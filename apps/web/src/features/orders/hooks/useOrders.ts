@@ -1,12 +1,13 @@
-import {
-  normalizeQueueNumber,
-  type AdminOrderRange,
-  type AdminOrderSort,
-  type AdminOrderStatusFilter,
-  type CancelPublicOrderByQueueRequest,
-  type OrderStatus,
-  type PlaceOrderRequest,
-} from '@eight-burgers/contracts';
+import type {
+  AdminOrderPaymentFilter,
+  AdminOrderRange,
+  AdminOrderSort,
+  AdminOrderStatusFilter,
+  CancelPublicOrderByQueueRequest,
+  OrderStatus,
+  PaymentStatus,
+  PlaceOrderRequest,
+} from '@menu-kiosk/contracts';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isApiError } from '@/shared/lib/api-error';
 import {
@@ -16,8 +17,11 @@ import {
   fetchOrderReceipt,
   fetchPublicOrderTracker,
   orderKeys,
+  patchAdminOrderPaymentStatus,
   patchAdminOrderStatus,
   placeOrderRequest,
+  prepareQueueLookupParam,
+  submitOrderPaymentReferenceRequest,
 } from '../api/orders-api';
 
 export function usePlaceOrderMutation() {
@@ -45,7 +49,17 @@ export function useOrderReceiptQuery(
     queryKey: orderKeys.receipt(orderId ?? 'none'),
     queryFn: ({ signal }) => fetchOrderReceipt(orderId ?? '', receiptToken ?? '', signal),
     enabled: Boolean(enabled && orderId && receiptToken),
+    retry: (failureCount, error) => {
+      if (
+        isApiError(error) &&
+        (error.status === 404 || error.status === 401 || error.status === 403)
+      ) {
+        return false;
+      }
+      return failureCount < 1;
+    },
     refetchInterval: (query) => {
+      if (query.state.error) return false;
       const status = query.state.data?.status;
       return status === 'completed' || status === 'cancelled' ? false : 15_000;
     },
@@ -53,7 +67,7 @@ export function useOrderReceiptQuery(
 }
 
 export function usePublicOrderTrackerQuery(queueNumber: string | null, enabled = true) {
-  const normalized = queueNumber ? normalizeQueueNumber(queueNumber) : '';
+  const normalized = queueNumber ? prepareQueueLookupParam(queueNumber) : '';
   return useQuery({
     queryKey: orderKeys.tracker(normalized || 'none'),
     queryFn: ({ signal }) => fetchPublicOrderTracker(normalized, signal),
@@ -68,6 +82,21 @@ export function usePublicOrderTrackerQuery(queueNumber: string | null, enabled =
       if (query.state.error) return false;
       const status = query.state.data?.status;
       return status === 'completed' || status === 'cancelled' ? false : 15_000;
+    },
+  });
+}
+
+export function useSubmitPaymentReferenceMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: { orderId: string; receiptToken: string; paymentReference: string }) =>
+      submitOrderPaymentReferenceRequest(params),
+    onSuccess: (updatedOrder) => {
+      queryClient.setQueryData(orderKeys.receipt(updatedOrder.id), updatedOrder);
+      void queryClient.invalidateQueries({
+        queryKey: orderKeys.tracker(updatedOrder.queueNumber),
+      });
+      void queryClient.invalidateQueries({ queryKey: orderKeys.adminAll });
     },
   });
 }
@@ -92,8 +121,10 @@ export function useCancelOrderByQueueMutation() {
   return useMutation({
     mutationFn: (params: { queueNumber: string; verification: CancelPublicOrderByQueueRequest }) =>
       cancelOrderByQueueRequest(params),
-    onSuccess: (updatedTracker) => {
+    onSuccess: (updatedTracker, variables) => {
       queryClient.setQueryData(orderKeys.tracker(updatedTracker.queueNumber), updatedTracker);
+      queryClient.setQueryData(orderKeys.tracker(variables.queueNumber), updatedTracker);
+      void queryClient.invalidateQueries({ queryKey: [...orderKeys.all, 'tracker'] });
       void queryClient.invalidateQueries({ queryKey: orderKeys.adminAll });
     },
   });
@@ -105,6 +136,7 @@ export type AdminOrdersQueryOptions = {
   pauseAutoRefreshWhenPaginated?: boolean;
   limit?: number;
   status?: AdminOrderStatusFilter;
+  paymentStatus?: AdminOrderPaymentFilter;
   q?: string;
   range?: AdminOrderRange;
   sort?: AdminOrderSort;
@@ -117,6 +149,9 @@ export function useAdminOrdersQuery(options: boolean | AdminOrdersQueryOptions =
   const filters = {
     limit,
     ...(normalized.status ? { status: normalized.status } : {}),
+    ...(normalized.paymentStatus && normalized.paymentStatus !== 'all'
+      ? { paymentStatus: normalized.paymentStatus }
+      : {}),
     ...(trimmedQ ? { q: trimmedQ } : {}),
     ...(normalized.range ? { range: normalized.range } : {}),
     ...(normalized.sort ? { sort: normalized.sort } : {}),
@@ -136,6 +171,9 @@ export function useInfiniteAdminOrdersQuery(options: AdminOrdersQueryOptions = {
   const filters = {
     limit,
     ...(options.status ? { status: options.status } : {}),
+    ...(options.paymentStatus && options.paymentStatus !== 'all'
+      ? { paymentStatus: options.paymentStatus }
+      : {}),
     ...(trimmedQ ? { q: trimmedQ } : {}),
     ...(options.range ? { range: options.range } : {}),
     ...(options.sort ? { sort: options.sort } : {}),
@@ -166,6 +204,32 @@ export function useUpdateOrderStatusMutation() {
   return useMutation({
     mutationFn: (params: { orderId: string; status: OrderStatus; expectedVersion?: number }) =>
       patchAdminOrderStatus(params),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: orderKeys.adminAll });
+    },
+    onError: (error) => {
+      if (isApiError(error) && error.status === 401) {
+        void queryClient.cancelQueries({ queryKey: ['admin'] });
+        queryClient.removeQueries({ queryKey: orderKeys.adminAll });
+        queryClient.setQueryData(['admin', 'auth', 'session'], {
+          authenticated: false,
+          user: null,
+        });
+      } else if (isApiError(error) && error.status === 409) {
+        void queryClient.invalidateQueries({ queryKey: orderKeys.adminAll });
+      }
+    },
+  });
+}
+
+export function useUpdateOrderPaymentStatusMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: {
+      orderId: string;
+      paymentStatus: PaymentStatus;
+      expectedVersion?: number;
+    }) => patchAdminOrderPaymentStatus(params),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: orderKeys.adminAll });
     },

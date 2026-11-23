@@ -16,7 +16,7 @@ serve(
   },
   (info) => {
     console.log(
-      `[eight-burgers-api] listening on http://127.0.0.1:${info.port} (supabase: ${config.supabaseUrl})`,
+      `[menu-kiosk-api] listening on http://127.0.0.1:${info.port} (supabase: ${config.supabaseUrl})`,
     );
   },
 );

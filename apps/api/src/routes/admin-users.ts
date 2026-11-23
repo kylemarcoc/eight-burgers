@@ -1,7 +1,4 @@
-import {
-  createAdminUserRequestSchema,
-  updateAdminUserRequestSchema,
-} from '@eight-burgers/contracts';
+import { createAdminUserRequestSchema, updateAdminUserRequestSchema } from '@menu-kiosk/contracts';
 import { Hono } from 'hono';
 import { problemResponse, zodFieldErrors } from '../lib/problem';
 import { createRequireAdminRolesMiddleware } from '../middleware/require-admin';

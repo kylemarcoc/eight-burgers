@@ -4,6 +4,7 @@ import {
   orderReceiptResponseSchema,
   placeOrderResponseSchema,
   publicOrderTrackerResponseSchema,
+  type AdminOrderPaymentFilter,
   type AdminOrderRange,
   type AdminOrderSort,
   type AdminOrderStatusFilter,
@@ -11,25 +12,36 @@ import {
   type CancelPublicOrderByQueueRequest,
   type OrderRecord,
   type OrderStatus,
+  type PaymentStatus,
   type PlaceOrderRequest,
   type PlaceOrderResponse,
   type PublicOrderTracker,
-} from '@eight-burgers/contracts';
+} from '@menu-kiosk/contracts';
 import { apiRequest } from '@/shared/lib/http-client';
 
 export type AdminOrdersFilterParams = {
   status?: AdminOrderStatusFilter;
+  paymentStatus?: AdminOrderPaymentFilter;
   q?: string;
   range?: AdminOrderRange;
   sort?: AdminOrderSort;
   limit?: number;
 };
 
+export function prepareQueueLookupParam(queueNumber: string): string {
+  const trimmed = queueNumber.trim();
+  if (!trimmed) return '';
+  if (/^#?\d+$/.test(trimmed)) {
+    return trimmed.replace(/^#/, '');
+  }
+  return normalizeQueueNumber(trimmed);
+}
+
 export const orderKeys = {
   all: ['orders'] as const,
   receipt: (orderId: string) => [...orderKeys.all, 'receipt', orderId] as const,
   tracker: (queueNumber: string) =>
-    [...orderKeys.all, 'tracker', normalizeQueueNumber(queueNumber)] as const,
+    [...orderKeys.all, 'tracker', prepareQueueLookupParam(queueNumber)] as const,
   adminAll: ['admin', 'orders'] as const,
   adminList: (filters?: AdminOrdersFilterParams) =>
     [...orderKeys.adminAll, 'list', filters ?? {}] as const,
@@ -70,10 +82,28 @@ export async function fetchPublicOrderTracker(
   queueNumber: string,
   signal?: AbortSignal,
 ): Promise<PublicOrderTracker> {
-  const normalized = normalizeQueueNumber(queueNumber);
+  const normalized = prepareQueueLookupParam(queueNumber);
   const res = await apiRequest(`/orders/track/${encodeURIComponent(normalized)}`, {
     signal,
     schema: publicOrderTrackerResponseSchema,
+  });
+  return res.data;
+}
+
+export async function submitOrderPaymentReferenceRequest(params: {
+  orderId: string;
+  receiptToken: string;
+  paymentReference: string;
+}): Promise<OrderRecord> {
+  const res = await apiRequest(`/orders/${encodeURIComponent(params.orderId)}/payment-reference`, {
+    method: 'POST',
+    headers: {
+      'X-Order-Receipt-Token': params.receiptToken,
+    },
+    body: {
+      paymentReference: params.paymentReference,
+    },
+    schema: orderReceiptResponseSchema,
   });
   return res.data;
 }
@@ -96,7 +126,7 @@ export async function cancelOrderByQueueRequest(params: {
   queueNumber: string;
   verification: CancelPublicOrderByQueueRequest;
 }): Promise<PublicOrderTracker> {
-  const normalized = normalizeQueueNumber(params.queueNumber);
+  const normalized = prepareQueueLookupParam(params.queueNumber);
   const res = await apiRequest(`/orders/track/${encodeURIComponent(normalized)}/cancel`, {
     method: 'POST',
     body: params.verification,
@@ -111,6 +141,9 @@ export async function fetchAdminOrders(
 ): Promise<AdminOrdersResponse> {
   const search = new URLSearchParams();
   if (params.status) search.set('status', params.status);
+  if (params.paymentStatus && params.paymentStatus !== 'all') {
+    search.set('paymentStatus', params.paymentStatus);
+  }
   if (params.q?.trim()) search.set('q', params.q.trim());
   if (params.range) search.set('range', params.range);
   if (params.sort) search.set('sort', params.sort);
@@ -137,5 +170,26 @@ export async function patchAdminOrderStatus(params: {
     },
     schema: orderReceiptResponseSchema,
   });
+  return res.data;
+}
+
+export async function patchAdminOrderPaymentStatus(params: {
+  orderId: string;
+  paymentStatus: PaymentStatus;
+  expectedVersion?: number;
+}): Promise<OrderRecord> {
+  const res = await apiRequest(
+    `/admin/orders/${encodeURIComponent(params.orderId)}/payment-status`,
+    {
+      method: 'PATCH',
+      body: {
+        paymentStatus: params.paymentStatus,
+        ...(params.expectedVersion !== undefined
+          ? { expectedVersion: params.expectedVersion }
+          : {}),
+      },
+      schema: orderReceiptResponseSchema,
+    },
+  );
   return res.data;
 }

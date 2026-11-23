@@ -1,14 +1,30 @@
-import type { DeliveryPricingPatch, MenuItemInput } from '@eight-burgers/contracts';
+import type {
+  DeliveryPricingPatch,
+  MenuCategoryInput,
+  MenuCategoryPatch,
+  MenuItemInput,
+  OptionGroupInput,
+  OptionGroupPatch,
+} from '@menu-kiosk/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isApiError } from '@/shared/lib/api-error';
 import {
   catalogKeys,
+  createAdminCategory,
   createAdminMenuItem,
+  createAdminOptionGroup,
+  deleteAdminCategory,
   deleteAdminMenuItem,
+  deleteAdminOptionGroup,
   deleteUnusedAdminMenuImage,
   fetchCatalog,
+  patchAdminCategory,
   patchAdminDeliveryPricing,
   patchAdminMenuAvailability,
+  patchAdminOptionChoiceAvailability,
+  patchAdminOptionGroup,
+  reorderAdminCategories,
+  reorderAdminOptionGroups,
   resetAdminDeliveryPricing,
   resetAdminMenuCatalog,
   updateAdminMenuItem,
@@ -92,6 +108,90 @@ export function useMenuMutations() {
     resetCatalog,
     uploadMenuImage,
     deleteUnusedMenuImage,
+  };
+}
+
+export function useCategoryMutations() {
+  const queryClient = useQueryClient();
+
+  const invalidateCatalog = () => queryClient.invalidateQueries({ queryKey: catalogKeys.all });
+  const onError = (error: unknown) => handleAdminMutationError(queryClient, error);
+
+  const createCategory = useMutation({
+    mutationFn: (input: MenuCategoryInput) => createAdminCategory(input),
+    onSuccess: invalidateCatalog,
+    onError,
+  });
+
+  const updateCategory = useMutation({
+    mutationFn: (params: { id: string; patch: MenuCategoryPatch }) => patchAdminCategory(params),
+    onSuccess: invalidateCatalog,
+    onError,
+  });
+
+  const reorderCategories = useMutation({
+    mutationFn: (orderedIds: string[]) => reorderAdminCategories(orderedIds),
+    onSuccess: invalidateCatalog,
+    onError,
+  });
+
+  const deleteCategory = useMutation({
+    mutationFn: (id: string) => deleteAdminCategory(id),
+    onSuccess: invalidateCatalog,
+    onError,
+  });
+
+  return {
+    createCategory,
+    updateCategory,
+    reorderCategories,
+    deleteCategory,
+  };
+}
+
+export function useOptionGroupMutations() {
+  const queryClient = useQueryClient();
+
+  const invalidateCatalog = () => queryClient.invalidateQueries({ queryKey: catalogKeys.all });
+  const onError = (error: unknown) => handleAdminMutationError(queryClient, error);
+
+  const createOptionGroup = useMutation({
+    mutationFn: (input: OptionGroupInput) => createAdminOptionGroup(input),
+    onSuccess: invalidateCatalog,
+    onError,
+  });
+
+  const updateOptionGroup = useMutation({
+    mutationFn: (params: { id: string; patch: OptionGroupPatch }) => patchAdminOptionGroup(params),
+    onSuccess: invalidateCatalog,
+    onError,
+  });
+
+  const reorderOptionGroups = useMutation({
+    mutationFn: (orderedIds: string[]) => reorderAdminOptionGroups(orderedIds),
+    onSuccess: invalidateCatalog,
+    onError,
+  });
+
+  const deleteOptionGroup = useMutation({
+    mutationFn: (id: string) => deleteAdminOptionGroup(id),
+    onSuccess: invalidateCatalog,
+    onError,
+  });
+
+  const setOptionChoiceAvailability = useMutation({
+    mutationFn: (params: { id: string; available: boolean; expectedVersion?: number }) =>
+      patchAdminOptionChoiceAvailability(params),
+    onSuccess: invalidateCatalog,
+    onError,
+  });
+
+  return {
+    createOptionGroup,
+    updateOptionGroup,
+    reorderOptionGroups,
+    deleteOptionGroup,
+    setOptionChoiceAvailability,
   };
 }
 

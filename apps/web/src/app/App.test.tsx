@@ -26,7 +26,7 @@ describe('8Burgers Storefront, Bottom-Right Cart Portal, and Admin', () => {
     );
 
     expect(
-      screen.getByRole('heading', {
+      await screen.findByRole('heading', {
         level: 1,
         name: /100g pure beef griddle burgers, made fresh on Chino Roces/i,
       }),
@@ -54,7 +54,9 @@ describe('8Burgers Storefront, Bottom-Right Cart Portal, and Admin', () => {
     expect(burgerCard).toBeTruthy();
     if (!burgerCard) return;
 
-    fireEvent.click(within(burgerCard).getByRole('button', { name: /add · ₱148/i }));
+    fireEvent.click(within(burgerCard).getByRole('button', { name: /customize · ₱148/i }));
+    const customizer = screen.getByRole('dialog', { name: 'Burger Deluxe' });
+    fireEvent.click(within(customizer).getByRole('button', { name: /add to cart · ₱148/i }));
 
     const friesCard = screen
       .getByRole('heading', { level: 3, name: 'Crinkle Cut Fries' })
@@ -80,12 +82,12 @@ describe('8Burgers Storefront, Bottom-Right Cart Portal, and Admin', () => {
     );
 
     expect(within(dialog).queryByText('Crinkle Cut Fries')).toBeNull();
-    expect(within(dialog).getByRole('button', { name: /buy order · ₱296/i })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: /place order · ₱296/i })).toBeTruthy();
 
     fireEvent.change(within(dialog).getByLabelText(/your name/i), {
       target: { value: 'Marco' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: /buy order · ₱296/i }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /place order · ₱296/i }));
 
     expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
     expect(within(dialog).getByText('#8B-101')).toBeTruthy();

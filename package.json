@@ -1,5 +1,5 @@
 {
-  "name": "eight-burgers",
+  "name": "menu-kiosk",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -12,20 +12,21 @@
   ],
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "dev:web": "npm run dev --workspace=@eight-burgers/web",
-    "dev:api": "npm run dev --workspace=@eight-burgers/api",
+    "dev:web": "npm run dev --workspace=@menu-kiosk/web",
+    "dev:api": "npm run dev --workspace=@menu-kiosk/api",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "oxlint .",
     "test": "npm run test --workspaces --if-present",
     "format": "prettier --write .",
     "format:check": "prettier --check . --ignore-path .gitignore --ignore-path .prettierignore",
-    "preview": "npm run preview --workspace=@eight-burgers/web",
+    "preview": "npm run preview --workspace=@menu-kiosk/web",
     "db:start": "supabase start",
     "db:stop": "supabase stop",
     "db:status": "supabase status",
     "db:reset": "supabase db reset",
-    "db:lint": "supabase db lint"
+    "db:lint": "supabase db lint",
+    "shop:init": "node scripts/init-shop.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

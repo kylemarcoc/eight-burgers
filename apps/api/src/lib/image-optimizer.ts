@@ -1,10 +1,28 @@
-import { MENU_IMAGE_MAX_UPLOAD_BYTES } from '@eight-burgers/contracts';
+import { MENU_IMAGE_MAX_UPLOAD_BYTES, type AssetUploadPurpose } from '@menu-kiosk/contracts';
 import sharp, { type Metadata } from 'sharp';
 
 const ALLOWED_INPUT_FORMATS = new Set(['jpeg', 'png', 'webp', 'avif']);
-const MAX_OUTPUT_WIDTH = 1200;
-const MAX_OUTPUT_HEIGHT = 900;
 const MAX_INPUT_PIXELS = 25_000_000;
+
+type ImageOptimizationProfile =
+  | {
+      maxWidth: number;
+      maxHeight: number;
+      lossless: true;
+    }
+  | {
+      maxWidth: number;
+      maxHeight: number;
+      lossless: false;
+      quality: number;
+    };
+
+const OPTIMIZATION_PROFILES: Record<AssetUploadPurpose, ImageOptimizationProfile> = {
+  item: { maxWidth: 1200, maxHeight: 900, lossless: false, quality: 82 },
+  logo: { maxWidth: 512, maxHeight: 512, lossless: false, quality: 90 },
+  hero: { maxWidth: 1600, maxHeight: 900, lossless: false, quality: 84 },
+  'payment-qr': { maxWidth: 800, maxHeight: 800, lossless: true },
+};
 
 export type OptimizedMenuImage = {
   buffer: Uint8Array;
@@ -32,6 +50,7 @@ export class MenuImageOptimizationError extends Error {
 
 export async function optimizeMenuImageToWebp(
   inputBuffer: Uint8Array,
+  purpose: AssetUploadPurpose = 'item',
 ): Promise<OptimizedMenuImage> {
   if (inputBuffer.byteLength === 0) {
     throw new MenuImageOptimizationError(
@@ -68,17 +87,21 @@ export async function optimizeMenuImageToWebp(
     );
   }
 
+  const profile = OPTIMIZATION_PROFILES[purpose];
+
   try {
-    const { data, info } = await sharp(inputBuffer, { limitInputPixels: MAX_INPUT_PIXELS })
-      .rotate()
-      .resize({
-        width: MAX_OUTPUT_WIDTH,
-        height: MAX_OUTPUT_HEIGHT,
-        fit: 'inside',
-        withoutEnlargement: true,
-      })
-      .webp({ quality: 82, effort: 4 })
-      .toBuffer({ resolveWithObject: true });
+    const pipeline = sharp(inputBuffer, { limitInputPixels: MAX_INPUT_PIXELS }).rotate().resize({
+      width: profile.maxWidth,
+      height: profile.maxHeight,
+      fit: 'inside',
+      withoutEnlargement: true,
+    });
+
+    const webpPipeline = profile.lossless
+      ? pipeline.webp({ lossless: true, effort: 4 })
+      : pipeline.webp({ quality: profile.quality, effort: 4 });
+
+    const { data, info } = await webpPipeline.toBuffer({ resolveWithObject: true });
 
     if (data.byteLength === 0 || info.width <= 0 || info.height <= 0) {
       throw new Error('Empty output buffer');

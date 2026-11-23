@@ -282,4 +282,59 @@ describe('createOsmLocationProvider', () => {
       abortProvider.reverse({ lat: 14.56, lng: 121.01 }, abortedController.signal),
     ).rejects.toBeTruthy();
   });
+
+  it('omits lat/lon when biasOrigin is null, sends dynamic biasOrigin when set, and keys cache by rounded biasOrigin', async () => {
+    const requestedUrls: string[] = [];
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const urlStr = String(input);
+      requestedUrls.push(urlStr);
+      const url = new URL(urlStr);
+      const lat = url.searchParams.get('lat') ?? 'none';
+      return new Response(
+        JSON.stringify({
+          features: [
+            {
+              geometry: { coordinates: [123.8854, 10.3157] },
+              properties: {
+                osm_type: 'N',
+                osm_id: 500,
+                name: `Result for ${lat}`,
+                countrycode: 'PH',
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+
+    const provider = createOsmLocationProvider({ fetchImpl: fetchMock });
+
+    // 1. Null biasOrigin omits lat/lon while retaining PH bbox
+    const noBias = await provider.search('SM City', undefined, null);
+    expect(noBias[0]?.label).toBe('Result for none');
+    const firstUrl = new URL(requestedUrls[0] ?? '');
+    expect(firstUrl.searchParams.get('lat')).toBeNull();
+    expect(firstUrl.searchParams.get('lon')).toBeNull();
+    expect(firstUrl.searchParams.get('bbox')).toBe('116.8,4.5,126.7,21.2');
+
+    // 2. Cebu biasOrigin busts cache for same query and sends Cebu lat/lon
+    const cebuBias = await provider.search('SM City', undefined, { lat: 10.3157, lng: 123.8854 });
+    expect(cebuBias[0]?.label).toBe('Result for 10.3157');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const secondUrl = new URL(requestedUrls[1] ?? '');
+    expect(secondUrl.searchParams.get('lat')).toBe('10.3157');
+    expect(secondUrl.searchParams.get('lon')).toBe('123.8854');
+    expect(secondUrl.searchParams.get('bbox')).toBe('116.8,4.5,126.7,21.2');
+
+    // 3. Repeat search with same Cebu pin hits cache
+    const cebuCached = await provider.search('sm city', undefined, { lat: 10.3157, lng: 123.8854 });
+    expect(cebuCached[0]?.label).toBe('Result for 10.3157');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // 4. Switching to Davao pin busts cache immediately
+    const davaoBias = await provider.search('SM City', undefined, { lat: 7.1907, lng: 125.4553 });
+    expect(davaoBias[0]?.label).toBe('Result for 7.1907');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
 });

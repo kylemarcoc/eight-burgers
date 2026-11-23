@@ -1,18 +1,61 @@
 import { z } from 'zod';
 import { deliveryPricingConfigSchema, geoCoordinatesSchema } from './delivery.schema';
-import { menuAddonIdSchema, menuAddonSchema, menuItemSchema } from './menu.schema';
+import { menuCategorySchema, menuItemSchema, optionGroupSchema, slugIdSchema } from './menu.schema';
+import {
+  PAYMENT_METHOD_LABELS,
+  PAYMENT_METHOD_VALUES,
+  paymentMethodSchema,
+  storeProfileSchema,
+  type PaymentMethod,
+} from './store.schema';
 
-export const FULFILLMENT_MODE_VALUES = ['kiosk-pickup', 'delivery'] as const;
+export { PAYMENT_METHOD_LABELS, PAYMENT_METHOD_VALUES, paymentMethodSchema, type PaymentMethod };
+
+export const ITEM_NOTE_MAX_LENGTH = 140;
+export const TABLE_NUMBER_MAX_LENGTH = 24;
+export const PAYMENT_REFERENCE_MAX_LENGTH = 80;
+
+export const itemNoteSchema = z
+  .string()
+  .trim()
+  .max(ITEM_NOTE_MAX_LENGTH, 'Special instruction must be 140 characters or fewer.');
+
+export const tableNumberSchema = z
+  .string()
+  .trim()
+  .max(TABLE_NUMBER_MAX_LENGTH, 'Table number must be 24 characters or fewer.');
+
+export const paymentReferenceSchema = z
+  .string()
+  .trim()
+  .max(PAYMENT_REFERENCE_MAX_LENGTH, 'Payment reference must be 80 characters or fewer.');
+
+export const FULFILLMENT_MODE_VALUES = ['pickup', 'delivery', 'dine-in'] as const;
 export const fulfillmentModeSchema = z.enum(FULFILLMENT_MODE_VALUES);
 export type FulfillmentMode = z.infer<typeof fulfillmentModeSchema>;
 
-export const PAYMENT_METHOD_VALUES = ['cash', 'gcash', 'maya'] as const;
-export const paymentMethodSchema = z.enum(PAYMENT_METHOD_VALUES);
-export type PaymentMethod = z.infer<typeof paymentMethodSchema>;
+export const PAYMENT_STATUS_VALUES = ['unpaid', 'pending_verification', 'paid'] as const;
+export const paymentStatusSchema = z.enum(PAYMENT_STATUS_VALUES);
+export type PaymentStatus = z.infer<typeof paymentStatusSchema>;
+
+export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
+  unpaid: 'Unpaid',
+  pending_verification: 'Pending review',
+  paid: 'Paid',
+};
+
+export const ADMIN_ORDER_PAYMENT_FILTER_VALUES = [
+  'all',
+  'unpaid',
+  'pending_verification',
+  'paid',
+] as const;
+export const adminOrderPaymentFilterSchema = z.enum(ADMIN_ORDER_PAYMENT_FILTER_VALUES);
+export type AdminOrderPaymentFilter = z.infer<typeof adminOrderPaymentFilterSchema>;
 
 export const ORDER_STATUS_VALUES = [
   'received',
-  'grilling',
+  'preparing',
   'ready',
   'completed',
   'cancelled',
@@ -24,7 +67,7 @@ export const ADMIN_ORDER_STATUS_FILTER_VALUES = [
   'all',
   'active',
   'received',
-  'grilling',
+  'preparing',
   'ready',
   'completed',
   'cancelled',
@@ -44,25 +87,37 @@ export const adminOrderCountsSchema = z.object({
   all: z.number().int().min(0),
   active: z.number().int().min(0),
   received: z.number().int().min(0),
-  grilling: z.number().int().min(0),
+  preparing: z.number().int().min(0),
   ready: z.number().int().min(0),
   completed: z.number().int().min(0),
   cancelled: z.number().int().min(0),
+  pendingVerification: z.number().int().min(0),
 });
 export type AdminOrderCounts = z.infer<typeof adminOrderCountsSchema>;
 
+export const selectedOptionSnapshotSchema = z.object({
+  groupId: slugIdSchema,
+  groupName: z.string().min(1).max(80),
+  choiceId: slugIdSchema,
+  choiceName: z.string().min(1).max(80),
+  priceDeltaPhp: z.number().int().min(0).max(100000),
+});
+export type SelectedOptionSnapshot = z.infer<typeof selectedOptionSnapshotSchema>;
+
 export const cartLineItemSchema = z.object({
-  lineId: z.string().min(1).max(200),
+  lineId: z.string().min(1).max(500),
   itemId: z.string().min(1).max(120),
   quantity: z.number().int().min(1).max(50),
-  addonIds: z.array(menuAddonIdSchema).max(10),
+  selectedOptionIds: z.array(slugIdSchema).max(50),
+  itemNote: itemNoteSchema.default(''),
 });
 export type CartLineItem = z.infer<typeof cartLineItemSchema>;
 
 export const placeOrderLineInputSchema = z.strictObject({
   itemId: z.string().trim().min(1).max(120),
   quantity: z.number().int().min(1).max(50),
-  addonIds: z.array(menuAddonIdSchema).max(10).default([]),
+  selectedOptionIds: z.array(slugIdSchema).max(50).default([]),
+  itemNote: itemNoteSchema.default(''),
 });
 export type PlaceOrderLineInput = z.infer<typeof placeOrderLineInputSchema>;
 
@@ -71,9 +126,11 @@ export const placeOrderRequestSchema = z
     customerName: z.string().trim().min(1, 'Customer name is required.').max(120),
     contactNumber: z.string().trim().max(40).default(''),
     fulfillment: fulfillmentModeSchema,
+    tableNumber: tableNumberSchema.default(''),
     deliveryPin: geoCoordinatesSchema.optional(),
     addressOrNotes: z.string().trim().max(500).default(''),
     paymentMethod: paymentMethodSchema,
+    paymentReference: paymentReferenceSchema.default(''),
     items: z
       .array(placeOrderLineInputSchema)
       .min(1, 'At least one item is required.')
@@ -108,14 +165,14 @@ export const placeOrderRequestSchema = z
     for (let index = 0; index < value.items.length; index += 1) {
       const line = value.items[index];
       if (!line) continue;
-      const normalizedAddons = [...new Set(line.addonIds)].sort();
-      const lineKey =
-        normalizedAddons.length > 0 ? `${line.itemId}__${normalizedAddons.join('+')}` : line.itemId;
+      const normalizedOptions = [...new Set(line.selectedOptionIds)].sort();
+      const lineKey = JSON.stringify([line.itemId, normalizedOptions, line.itemNote.trim()]);
       if (seenLineKeys.has(lineKey)) {
         ctx.addIssue({
           code: 'custom',
           path: ['items', index],
-          message: 'Duplicate item with the same add-ons. Combine quantities onto a single line.',
+          message:
+            'Duplicate item with the same options and note. Combine quantities onto a single line.',
         });
       } else {
         seenLineKeys.add(lineKey);
@@ -129,7 +186,9 @@ export const orderLineSnapshotSchema = z.object({
   itemId: z.string().min(1),
   name: z.string().min(1),
   unitPricePhp: z.number().int().min(0),
-  addonNames: z.array(z.string()),
+  selectedOptions: z.array(selectedOptionSnapshotSchema).default([]),
+  addonNames: z.array(z.string()).default([]),
+  itemNote: itemNoteSchema.default(''),
   addonsPricePhp: z.number().int().min(0),
   quantity: z.number().int().positive(),
   lineTotalPhp: z.number().int().min(0),
@@ -140,9 +199,11 @@ export type OrderCustomerInput = {
   customerName: string;
   contactNumber: string;
   fulfillment: FulfillmentMode;
+  tableNumber?: string;
   deliveryPin?: z.infer<typeof geoCoordinatesSchema>;
   addressOrNotes: string;
   paymentMethod: PaymentMethod;
+  paymentReference?: string;
 };
 
 export const orderRecordSchema = z.object({
@@ -151,12 +212,15 @@ export const orderRecordSchema = z.object({
   customerName: z.string(),
   contactNumber: z.string(),
   fulfillment: fulfillmentModeSchema,
+  tableNumber: tableNumberSchema.default(''),
   deliveryEtaMinutes: z.string().optional(),
   deliveryPin: geoCoordinatesSchema.optional(),
   deliveryDistanceKm: z.number().nonnegative().optional(),
   deliveryFeeWaived: z.boolean().optional(),
   addressOrNotes: z.string(),
   paymentMethod: paymentMethodSchema,
+  paymentStatus: paymentStatusSchema.default('unpaid'),
+  paymentReference: paymentReferenceSchema.default(''),
   lines: z.array(orderLineSnapshotSchema),
   subtotalPhp: z.number().int().min(0),
   deliveryFeePhp: z.number().int().min(0),
@@ -191,17 +255,35 @@ export const updateOrderStatusRequestSchema = z.strictObject({
 });
 export type UpdateOrderStatusRequest = z.infer<typeof updateOrderStatusRequestSchema>;
 
+export const submitPaymentReferenceRequestSchema = z.strictObject({
+  paymentReference: z
+    .string()
+    .trim()
+    .min(1, 'Enter a payment reference number.')
+    .max(PAYMENT_REFERENCE_MAX_LENGTH, 'Payment reference must be 80 characters or fewer.'),
+});
+export type SubmitPaymentReferenceRequest = z.infer<typeof submitPaymentReferenceRequestSchema>;
+
+export const updateOrderPaymentStatusRequestSchema = z.strictObject({
+  paymentStatus: paymentStatusSchema,
+  expectedVersion: z.number().int().positive().optional(),
+});
+export type UpdateOrderPaymentStatusRequest = z.infer<typeof updateOrderPaymentStatusRequestSchema>;
+
 export const publicOrderLineSummarySchema = z.object({
-  lineId: z.string().trim().min(1).max(160),
+  lineId: z.string().trim().min(1).max(500),
   name: z.string().trim().min(1).max(120),
   quantity: z.number().int().min(1).max(50),
-  addonNames: z.array(z.string().trim().min(1).max(80)).max(10),
+  addonNames: z.array(z.string().trim().min(1).max(80)).max(50).default([]),
+  selectedOptionNames: z.array(z.string().trim().min(1).max(80)).max(50).default([]),
 });
 export type PublicOrderLineSummary = z.infer<typeof publicOrderLineSummarySchema>;
 
 export const publicOrderTrackerSchema = z.object({
   queueNumber: z.string().trim().min(1).max(20),
   fulfillment: fulfillmentModeSchema,
+  tableNumber: tableNumberSchema.default(''),
+  paymentStatus: paymentStatusSchema.default('unpaid'),
   deliveryEtaMinutes: z.string().trim().min(1).max(40).optional(),
   lines: z.array(publicOrderLineSummarySchema).min(1).max(50),
   status: orderStatusSchema,
@@ -230,16 +312,24 @@ export const cancelPublicOrderByQueueRequestSchema = z
   );
 export type CancelPublicOrderByQueueRequest = z.infer<typeof cancelPublicOrderByQueueRequestSchema>;
 
-export function normalizeQueueNumber(raw: string): string {
+export function canCustomerCancelOrder(order: {
+  status: OrderStatus;
+  paymentStatus?: PaymentStatus;
+}): boolean {
+  return order.status === 'received' && (order.paymentStatus ?? 'unpaid') === 'unpaid';
+}
+
+export function normalizeQueueNumber(raw: string, queuePrefix = 'ORD'): string {
   const trimmed = raw.trim();
   if (!trimmed) return '';
-  const prefixedMatch = /^#?8B-(\d+)$/i.exec(trimmed);
-  if (prefixedMatch?.[1]) {
-    return `#8B-${prefixedMatch[1]}`;
+  const safePrefix = /^[A-Z0-9]{2,4}$/i.test(queuePrefix) ? queuePrefix.toUpperCase() : 'ORD';
+  const explicitPrefixMatch = /^#?([A-Z0-9]{2,4})-(\d+)$/i.exec(trimmed);
+  if (explicitPrefixMatch?.[1] && explicitPrefixMatch[2]) {
+    return `#${explicitPrefixMatch[1].toUpperCase()}-${explicitPrefixMatch[2]}`;
   }
   const numericOnlyMatch = /^#?(\d+)$/.exec(trimmed);
   if (numericOnlyMatch?.[1]) {
-    return `#8B-${numericOnlyMatch[1]}`;
+    return `#${safePrefix}-${numericOnlyMatch[1]}`;
   }
   const upper = trimmed.toUpperCase();
   return upper.startsWith('#') ? upper : `#${upper}`;
@@ -257,8 +347,10 @@ export function normalizeContactDigits(raw: string): string {
 }
 
 export const catalogPayloadSchema = z.object({
+  store: storeProfileSchema,
+  categories: z.array(menuCategorySchema),
+  optionGroups: z.array(optionGroupSchema),
   menu: z.array(menuItemSchema),
-  addons: z.array(menuAddonSchema),
   deliveryPricing: deliveryPricingConfigSchema,
 });
 export type CatalogPayload = z.infer<typeof catalogPayloadSchema>;

@@ -1,17 +1,81 @@
--- Idempotent Chino Roces Avenue catalog & delivery pricing seed
+-- Idempotent 8Burgers Chino Roces Avenue demo catalog, option groups & store profile seed
 -- Safe to run once against fresh staging/production databases (never overwrites live edits).
 
-insert into public.menu_addons (id, name, price_php, sort_order)
+insert into public.menu_categories (id, name, description, sort_order, active)
 values
-  ('sliced-cheese', 'Sliced Cheese', 20, 1),
-  ('bacon', 'Crispy Bacon', 20, 2),
-  ('veggies', 'Extra Veggies', 26, 3),
-  ('pineapple', 'Grilled Pineapple', 26, 4)
+  ('classic-burgers', 'Classic Burgers', 'Pure beef griddle staples with crisp garden toppings.', 1, true),
+  ('specialty-burgers', 'Specialty Burgers', 'Signature sauces, salsa, wasabi mayo, taco beef, and grilled pineapple.', 2, true),
+  ('heavyweights', 'Heavyweights & Sandwiches', 'Double patties, cheesesteaks, and sausage rolls built for big appetites.', 3, true),
+  ('sides-snacks', 'Sides & Snacks', 'Crinkle fries, seasoned potato wedges, and loaded nacho trays.', 4, true)
+on conflict (id) do nothing;
+
+insert into public.option_groups (
+  id,
+  name,
+  description,
+  selection_mode,
+  required,
+  min_select,
+  max_select,
+  sort_order,
+  active
+)
+values (
+  'add-ons',
+  'Add-ons',
+  'Optional extras for your burger or sandwich.',
+  'multi',
+  false,
+  0,
+  null,
+  1,
+  true
+)
+on conflict (id) do nothing;
+
+insert into public.option_choices (
+  id,
+  group_id,
+  name,
+  price_delta_php,
+  available,
+  is_default,
+  sort_order
+)
+values
+  ('sliced-cheese', 'add-ons', 'Sliced Cheese', 20, true, false, 1),
+  ('bacon', 'add-ons', 'Crispy Bacon', 20, true, false, 2),
+  ('veggies', 'add-ons', 'Extra Veggies', 26, true, false, 3),
+  ('pineapple', 'add-ons', 'Grilled Pineapple', 26, true, false, 4)
 on conflict (id) do nothing;
 
 insert into public.store_settings (
   id,
+  store_name,
+  branch_label,
+  monogram,
+  hero_headline,
+  hero_subtext,
+  hero_badge_label,
+  address,
+  landmark,
+  contact_phone,
+  hours_text,
+  pickup_spot_label,
+  logo_url,
+  hero_image_url,
+  external_links,
+  queue_prefix,
+  preparing_stage_label,
+  theme_accent_preset,
+  theme_accent_hex,
+  accepting_orders,
+  closed_notice,
+  pickup_enabled,
   delivery_enabled,
+  dine_in_enabled,
+  dine_in_table_required,
+  payment_methods,
   delivery_base_fee_php,
   delivery_per_km_rate_php,
   delivery_max_distance_km,
@@ -19,7 +83,76 @@ insert into public.store_settings (
   origin_lat,
   origin_lng
 )
-values (1, true, 35, 10, 25.0, 500, 14.5608, 121.0124)
+values (
+  1,
+  '8Burgers',
+  'Chino Roces Avenue, Makati',
+  '8B',
+  '100g pure beef griddle burgers, made fresh on Chino Roces.',
+  'Walk up beside Pickup Coffee near Eton WestEnd Square or place an order for delivery. Pick your burgers below, customize with cheese, bacon, or pineapple, and review your bag from the floating cart button at the bottom right.',
+  '100g Pure Beef',
+  'Chino Roces Avenue, San Antonio, Makati',
+  'Beside Pickup Coffee, near Eton WestEnd Square',
+  '(0916) 520-5707',
+  'Daily · 10:00 AM – 11:00 PM',
+  'Eton WestEnd',
+  '',
+  '/images/menu/hero-banner.webp',
+  '[
+    {"label": "Foodpanda", "url": "https://www.foodpanda.ph/restaurant/om5p/8burgers-chino-roces-avenue"},
+    {"label": "Facebook", "url": "https://www.facebook.com/p/8Burgers-61556691506190/"}
+  ]'::jsonb,
+  '8B',
+  'On the Grill',
+  'ember',
+  null,
+  true,
+  '',
+  true,
+  true,
+  false,
+  true,
+  '{
+    "cash": {
+      "enabled": true,
+      "label": "Cash",
+      "accountName": "",
+      "accountNumber": "",
+      "instructions": "Pay at the counter on pickup or to the rider upon delivery.",
+      "qrImageUrl": ""
+    },
+    "gcash": {
+      "enabled": true,
+      "label": "GCash",
+      "accountName": "8Burgers Chino Roces",
+      "accountNumber": "0916 520 5707",
+      "instructions": "Send your total via GCash and enter the reference number below.",
+      "qrImageUrl": ""
+    },
+    "maya": {
+      "enabled": true,
+      "label": "Maya",
+      "accountName": "8Burgers Chino Roces",
+      "accountNumber": "0916 520 5707",
+      "instructions": "Send your total via Maya and enter the reference number below.",
+      "qrImageUrl": ""
+    },
+    "bank_transfer": {
+      "enabled": false,
+      "label": "Bank Transfer",
+      "accountName": "",
+      "accountNumber": "",
+      "instructions": "",
+      "qrImageUrl": ""
+    }
+  }'::jsonb,
+  35,
+  10,
+  25.0,
+  500,
+  14.5608,
+  121.0124
+)
 on conflict (id) do nothing;
 
 insert into public.menu_items (
@@ -27,12 +160,11 @@ insert into public.menu_items (
   name,
   category,
   price_php,
-  patty_spec,
+  spec_label,
   description,
   image_url,
   available,
   featured,
-  allow_addons,
   sort_order
 )
 values
@@ -46,7 +178,6 @@ values
     '/images/menu/mini-cheese-burger-deluxe.webp',
     true,
     false,
-    true,
     1
   ),
   (
@@ -57,7 +188,6 @@ values
     '100g Pure Beef',
     '100g pure beef patty topped with fresh onion, crisp lettuce, juicy tomato slices, cool cucumber, and creamy mayo on a soft bun.',
     '/images/menu/burger-deluxe.webp',
-    true,
     true,
     true,
     2
@@ -72,7 +202,6 @@ values
     '/images/menu/cheese-burger-deluxe.webp',
     true,
     true,
-    true,
     3
   ),
   (
@@ -83,7 +212,6 @@ values
     '100g Pure Beef',
     '100g pure beef patty finished with creamy mayo, melted cheese sauce, crisp lettuce, and zesty tomato-chili house salsa.',
     '/images/menu/chicano-burger.webp',
-    true,
     true,
     true,
     4
@@ -98,7 +226,6 @@ values
     '/images/menu/mexican-burger.webp',
     true,
     false,
-    true,
     5
   ),
   (
@@ -111,7 +238,6 @@ values
     '/images/menu/japanese-burger.webp',
     true,
     false,
-    true,
     6
   ),
   (
@@ -122,7 +248,6 @@ values
     '100g Beef + Bacon',
     '100g pure beef patty topped with creamy mayo, melted cheese sauce, savory sautéed mushrooms, and crispy bacon strips.',
     '/images/menu/american-burger.webp',
-    true,
     true,
     true,
     7
@@ -137,7 +262,6 @@ values
     '/images/menu/hawaiian-burger.webp',
     true,
     false,
-    true,
     8
   ),
   (
@@ -150,7 +274,6 @@ values
     '/images/menu/hungarian-sandwich.webp',
     true,
     false,
-    true,
     9
   ),
   (
@@ -163,7 +286,6 @@ values
     '/images/menu/philly-cheese-steak.webp',
     true,
     false,
-    true,
     10
   ),
   (
@@ -176,7 +298,6 @@ values
     '/images/menu/ultimate-burger.webp',
     true,
     false,
-    true,
     11
   ),
   (
@@ -189,7 +310,6 @@ values
     '/images/menu/ultimate-cheese-burger.webp',
     true,
     false,
-    true,
     12
   ),
   (
@@ -200,7 +320,6 @@ values
     'Double 100g Beef',
     'Double 100g pure beef patties layered with crispy bacon, spiced taco beef, sautéed mushrooms, double cheese, and full toppings.',
     '/images/menu/overload-burger.webp',
-    true,
     true,
     true,
     13
@@ -215,7 +334,6 @@ values
     '/images/menu/crinkle-cut-fries.webp',
     true,
     false,
-    false,
     14
   ),
   (
@@ -227,7 +345,6 @@ values
     'Thick-cut skin-on potato wedges with crisp seasoned edges and fluffy centers.',
     '/images/menu/potato-wedges.webp',
     true,
-    false,
     false,
     15
   ),
@@ -241,7 +358,23 @@ values
     '/images/menu/nachos-overload.webp',
     true,
     true,
-    false,
     16
   )
 on conflict (id) do nothing;
+
+insert into public.menu_item_option_groups (item_id, group_id, sort_order)
+values
+  ('mini-cheese-burger-deluxe', 'add-ons', 1),
+  ('burger-deluxe', 'add-ons', 1),
+  ('cheese-burger-deluxe', 'add-ons', 1),
+  ('chicano-burger', 'add-ons', 1),
+  ('mexican-burger', 'add-ons', 1),
+  ('japanese-burger', 'add-ons', 1),
+  ('american-burger', 'add-ons', 1),
+  ('hawaiian-burger', 'add-ons', 1),
+  ('hungarian-sandwich', 'add-ons', 1),
+  ('philly-cheese-steak', 'add-ons', 1),
+  ('ultimate-burger', 'add-ons', 1),
+  ('ultimate-cheese-burger', 'add-ons', 1),
+  ('overload-burger', 'add-ons', 1)
+on conflict (item_id, group_id) do nothing;

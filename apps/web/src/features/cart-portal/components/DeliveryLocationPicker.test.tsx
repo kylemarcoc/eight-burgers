@@ -350,6 +350,7 @@ describe('DeliveryLocationPicker', () => {
         pin={{ lat: 14.5608, lng: 121.0124 }}
         outOfRange={false}
         distanceKm={1.2}
+        originLabel="Chino Roces"
         onSelectLocation={vi.fn()}
         onClearLocation={onClearLocation}
       />,
