@@ -58,12 +58,12 @@ export function FloatingCartButton() {
   const receiptQuery = useOrderReceiptQuery(
     hasMatchingReceiptSession ? activeReceiptOrderId : null,
     hasMatchingReceiptSession ? activeReceiptToken : null,
-    hasMatchingReceiptSession,
+    { enabled: hasMatchingReceiptSession, suppressLoadingIndicator: !isCartOpen },
   );
-  const publicTrackerQuery = usePublicOrderTrackerQuery(
-    activeQueueNumber,
-    Boolean(activeQueueNumber && !hasMatchingReceiptSession),
-  );
+  const publicTrackerQuery = usePublicOrderTrackerQuery(activeQueueNumber, {
+    enabled: Boolean(activeQueueNumber && !hasMatchingReceiptSession),
+    suppressLoadingIndicator: !isCartOpen,
+  });
 
   const trackedStatus: OrderStatus | null = hasMatchingReceiptSession
     ? (receiptQuery.data?.status ?? lastPlacedOrderState?.order.status ?? null)

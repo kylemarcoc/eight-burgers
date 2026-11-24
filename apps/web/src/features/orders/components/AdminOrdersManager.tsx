@@ -422,7 +422,13 @@ export function AdminOrdersManager({ role = 'owner' }: AdminOrdersManagerProps) 
               type="search"
               maxLength={100}
               value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
+              onChange={(event) => {
+                const nextValue = event.target.value;
+                setSearchQuery(nextValue);
+                if (!nextValue.trim()) {
+                  setDebouncedSearch('');
+                }
+              }}
               placeholder="Search queue #, name, table, ref..."
               aria-label="Search customer orders"
               className="min-w-0 flex-1 rounded-xl border border-ui-border bg-ui-surface px-3 py-1.5 text-sm text-ui-text sm:w-64 sm:flex-none"

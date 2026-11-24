@@ -1,6 +1,8 @@
 import type { MenuItem, OptionGroup } from '@menu-kiosk/contracts';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { resetOverlayLocks } from '@/shared/lib/overlay-lock';
 import { ItemCustomizerModal } from './ItemCustomizerModal';
 
 const SAMPLE_LATTE: MenuItem = {
@@ -114,6 +116,7 @@ const SAMPLE_OPTION_GROUPS: OptionGroup[] = [
 
 afterEach(() => {
   cleanup();
+  resetOverlayLocks();
   document.body.style.overflow = '';
 });
 
@@ -233,5 +236,49 @@ describe('ItemCustomizerModal', () => {
 
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves user focus and overlay isolation across parent re-renders with inline onClose callbacks', () => {
+    const onCloseCalls: number[] = [];
+    let triggerParentRerender!: () => void;
+
+    function ParentHarness() {
+      const [tick, setTick] = useState(0);
+      triggerParentRerender = () => setTick((prev) => prev + 1);
+      return (
+        <div>
+          <span data-testid="parent-tick">{tick}</span>
+          <ItemCustomizerModal
+            item={SAMPLE_LATTE}
+            optionGroups={SAMPLE_OPTION_GROUPS}
+            onConfirm={vi.fn()}
+            onClose={() => onCloseCalls.push(tick)}
+          />
+        </div>
+      );
+    }
+
+    const { container } = render(<ParentHarness />);
+    const dialog = screen.getByRole('dialog', { name: 'Iced Latte' });
+    const noteInput = within(dialog).getByLabelText(/special instruction/i);
+
+    noteInput.focus();
+    expect(document.activeElement).toBe(noteInput);
+    expect(container.hasAttribute('inert')).toBe(true);
+
+    // Trigger parent re-render passing a new inline onClose closure (e.g. background poll)
+    act(() => {
+      triggerParentRerender();
+    });
+    expect(screen.getByTestId('parent-tick').textContent).toBe('1');
+
+    // Focus must stay on the active input and background must remain isolated
+    expect(document.activeElement).toBe(noteInput);
+    expect(container.hasAttribute('inert')).toBe(true);
+    expect(document.body.style.overflow).toBe('hidden');
+
+    // Escape still calls the latest onClose closure (seeing tick === 1)
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onCloseCalls).toEqual([1]);
   });
 });

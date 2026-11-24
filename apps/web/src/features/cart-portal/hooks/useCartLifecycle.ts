@@ -11,7 +11,7 @@ import {
 } from '@/shared/store/useCartStore';
 import { useResolvedCartSummary } from './useResolvedCartSummary';
 
-export function useCartLifecycle(enabled = true) {
+export function useCartLifecycle(enabled = true, options?: { suppressLoadingIndicator?: boolean }) {
   const catalogQuery = useCatalogQuery();
   const cartSummary = useResolvedCartSummary();
   const lastPlacedOrderState = useLastPlacedOrder();
@@ -39,7 +39,10 @@ export function useCartLifecycle(enabled = true) {
   const liveReceiptQuery = useOrderReceiptQuery(
     hasMatchingReceiptSession ? activeReceiptOrderId : null,
     hasMatchingReceiptSession ? activeReceiptToken : null,
-    enabled && hasMatchingReceiptSession,
+    {
+      enabled: enabled && hasMatchingReceiptSession,
+      ...(options?.suppressLoadingIndicator ? { suppressLoadingIndicator: true } : {}),
+    },
   );
 
   useEffect(() => {

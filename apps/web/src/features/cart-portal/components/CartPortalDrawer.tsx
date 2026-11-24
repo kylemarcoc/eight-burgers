@@ -19,6 +19,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type SubmitEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -36,6 +37,11 @@ import {
 } from '@/features/orders';
 import { FoodImage } from '@/shared/components/FoodImage';
 import { getApiErrorMessage, isApiError } from '@/shared/lib/api-error';
+import {
+  acquireOverlayLock,
+  getTopmostOverlayId,
+  subscribeOverlayLocks,
+} from '@/shared/lib/overlay-lock';
 import {
   buildGoogleMapsPinUrl,
   calculateDeliveryQuote,
@@ -370,6 +376,10 @@ function getFocusableElements(container: HTMLElement): HTMLElement[] {
   );
 }
 
+function getServerTopmostOverlayId(): symbol | string | null {
+  return null;
+}
+
 export function CartPortalDrawer() {
   const catalogQuery = useCatalogQuery();
   const cartLines = useCartLines();
@@ -510,11 +520,19 @@ export function CartPortalDrawer() {
   const effectiveTableNumber = tableNumberDraft !== null ? tableNumberDraft : (dineInTable ?? '');
 
   const titleId = useId();
+  const overlayId = useId();
   const nameErrorId = useId();
   const contactErrorId = useId();
   const tableErrorId = useId();
   const locationErrorId = useId();
   const addressErrorId = useId();
+
+  const topmostOverlayId = useSyncExternalStore(
+    subscribeOverlayLocks,
+    getTopmostOverlayId,
+    getServerTopmostOverlayId,
+  );
+  const isOverlayTopmost = isCartOpen && topmostOverlayId === overlayId;
 
   const portalRootRef = useRef<HTMLDivElement | null>(null);
   const dialogRef = useRef<HTMLElement | null>(null);
@@ -526,6 +544,7 @@ export function CartPortalDrawer() {
   const notesInputRef = useRef<HTMLInputElement | null>(null);
   const receiptHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const focusedReceiptKeyRef = useRef<string | null>(null);
 
   const hasDeliveryPin = fulfillment === 'delivery' && isValidCoordinates(deliveryPin);
 
@@ -624,38 +643,26 @@ export function CartPortalDrawer() {
   useEffect(() => {
     if (!isCartOpen) return;
 
-    previousFocusRef.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-
-    const previousBodyOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
     const portalNode = portalRootRef.current;
-    const isolatedSiblings: Array<{
-      element: HTMLElement;
-      hadInert: boolean;
-      prevAriaHidden: string | null;
-    }> = [];
+    const activeElement =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    previousFocusRef.current =
+      activeElement &&
+      (!portalNode || !portalNode.contains(activeElement)) &&
+      !activeElement.closest('[data-api-loading-backdrop]')
+        ? activeElement
+        : null;
 
-    for (const child of Array.from(document.body.children)) {
-      if (
-        child instanceof HTMLElement &&
-        child !== portalNode &&
-        !child.hasAttribute('data-api-loading-portal')
-      ) {
-        isolatedSiblings.push({
-          element: child,
-          hadInert: child.hasAttribute('inert'),
-          prevAriaHidden: child.getAttribute('aria-hidden'),
-        });
-        child.setAttribute('inert', '');
-        child.setAttribute('aria-hidden', 'true');
-      }
+    const overlayLock = acquireOverlayLock(portalNode, { id: overlayId });
+
+    if (overlayLock.isTopmost()) {
+      closeButtonRef.current?.focus();
     }
 
-    closeButtonRef.current?.focus();
-
     function handleKeyDown(event: KeyboardEvent) {
+      if (!overlayLock.isTopmost()) {
+        return;
+      }
       if (event.key === 'Escape') {
         if (event.defaultPrevented) return;
         event.preventDefault();
@@ -690,32 +697,48 @@ export function CartPortalDrawer() {
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
-      document.body.style.overflow = previousBodyOverflow;
-
-      for (const entry of isolatedSiblings) {
-        if (!entry.hadInert) {
-          entry.element.removeAttribute('inert');
-        }
-        if (entry.prevAriaHidden === null) {
-          entry.element.removeAttribute('aria-hidden');
-        } else {
-          entry.element.setAttribute('aria-hidden', entry.prevAriaHidden);
-        }
-      }
+      focusedReceiptKeyRef.current = null;
+      overlayLock.release();
 
       const previousFocus = previousFocusRef.current;
       previousFocusRef.current = null;
-      if (previousFocus && previousFocus.isConnected) {
+      if (previousFocus && previousFocus.isConnected && !previousFocus.closest('[inert]')) {
         previousFocus.focus();
       }
     };
-  }, [isCartOpen, handleClose]);
+  }, [isCartOpen, handleClose, overlayId]);
+
+  const activeReceiptKey =
+    lastPlacedOrder && cartSummary.lines.length === 0 && cartLines.length === 0
+      ? lastPlacedOrder.id
+      : null;
 
   useEffect(() => {
-    if (isCartOpen && lastPlacedOrder && cartSummary.lines.length === 0 && cartLines.length === 0) {
-      receiptHeadingRef.current?.focus();
+    if (!isCartOpen || !isOverlayTopmost) return;
+
+    if (activeReceiptKey) {
+      if (
+        focusedReceiptKeyRef.current !== activeReceiptKey &&
+        receiptHeadingRef.current &&
+        !receiptHeadingRef.current.closest('[inert]')
+      ) {
+        focusedReceiptKeyRef.current = activeReceiptKey;
+        receiptHeadingRef.current.focus();
+        return;
+      }
+    } else {
+      focusedReceiptKeyRef.current = null;
     }
-  }, [isCartOpen, lastPlacedOrder, cartSummary.lines.length, cartLines.length]);
+
+    const portalNode = portalRootRef.current;
+    const activeElement = document.activeElement;
+    if (
+      portalNode &&
+      (!activeElement || activeElement === document.body || !portalNode.contains(activeElement))
+    ) {
+      (receiptHeadingRef.current ?? closeButtonRef.current ?? dialogRef.current)?.focus();
+    }
+  }, [isCartOpen, isOverlayTopmost, activeReceiptKey]);
 
   if (!isCartOpen) return null;
 
@@ -1984,7 +2007,7 @@ export function CartPortalDrawer() {
 
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
-                          <div className="inline-flex items-center rounded-lg border border-ui-border bg-ui-surface">
+                          <div className="inline-flex shrink-0 items-center rounded-lg border border-ui-border bg-ui-surface">
                             <button
                               type="button"
                               aria-label={`Decrease quantity of ${line.item.name}`}
@@ -1992,7 +2015,7 @@ export function CartPortalDrawer() {
                                 setSubmitError(null);
                                 setLineQuantity(line.lineId, line.quantity - 1);
                               }}
-                              className="px-2.5 py-1 text-sm font-bold text-ui-text hover:bg-ui-surface-muted"
+                              className="rounded-l-[calc(var(--radius-lg)-1px)] px-2.5 py-1 text-sm font-bold text-ui-text transition-colors motion-reduce:transition-none enabled:hover:bg-ui-surface-muted"
                             >
                               -
                             </button>
@@ -2007,7 +2030,7 @@ export function CartPortalDrawer() {
                                 setSubmitError(null);
                                 setLineQuantity(line.lineId, line.quantity + 1);
                               }}
-                              className="px-2.5 py-1 text-sm font-bold text-ui-text hover:bg-ui-surface-muted disabled:cursor-not-allowed disabled:opacity-40"
+                              className="rounded-r-[calc(var(--radius-lg)-1px)] px-2.5 py-1 text-sm font-bold text-ui-text transition-colors motion-reduce:transition-none enabled:hover:bg-ui-surface-muted disabled:cursor-not-allowed disabled:opacity-40"
                             >
                               +
                             </button>

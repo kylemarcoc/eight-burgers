@@ -6,6 +6,7 @@ import {
 } from '@menu-kiosk/contracts';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useMemo, useRef, useState, type SubmitEvent } from 'react';
+import { PasswordInput } from '@/shared/components/PasswordInput';
 import { handleAdminUnauthorizedError } from '@/shared/lib/admin-session-cache';
 import { getApiErrorMessage } from '@/shared/lib/api-error';
 import { useAdminTeamMutations, useAdminTeamQuery } from '../hooks/useAdminTeam';
@@ -87,6 +88,9 @@ export function AdminTeamManager({ currentUserId }: AdminTeamManagerProps) {
 
   async function handleCreateSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (createMember.isPending) {
+      return;
+    }
     const trimmedEmail = email.trim().toLowerCase();
     const nextErrors: FormFieldErrors = {};
 
@@ -267,25 +271,17 @@ export function AdminTeamManager({ currentUserId }: AdminTeamManagerProps) {
             </div>
 
             <div>
-              <div className="flex items-center justify-between gap-2">
-                <label htmlFor={passwordId} className="block text-xs font-semibold text-ui-text">
-                  Password
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((prev) => !prev)}
-                  className="text-xs font-medium text-ui-accent hover:underline"
-                >
-                  {showPassword ? 'Hide password' : 'Show password'}
-                </button>
-              </div>
-              <input
+              <label htmlFor={passwordId} className="block text-xs font-semibold text-ui-text">
+                Password
+              </label>
+              <PasswordInput
                 ref={passwordRef}
                 id={passwordId}
                 name="password"
-                type={showPassword ? 'text' : 'password'}
                 autoComplete="new-password"
                 value={password}
+                visible={showPassword}
+                onVisibleChange={setShowPassword}
                 onChange={(event) => {
                   setPassword(event.target.value);
                   if (formErrors.password) {
@@ -295,7 +291,6 @@ export function AdminTeamManager({ currentUserId }: AdminTeamManagerProps) {
                 placeholder="Minimum 8 characters"
                 aria-invalid={Boolean(formErrors.password)}
                 aria-describedby={formErrors.password ? passwordErrorId : undefined}
-                className="mt-1 w-full rounded-xl border border-ui-border bg-ui-canvas px-3 py-2 text-sm text-ui-text"
               />
               {formErrors.password ? (
                 <p id={passwordErrorId} role="alert" className="mt-1 text-xs text-ui-error">
@@ -333,6 +328,7 @@ export function AdminTeamManager({ currentUserId }: AdminTeamManagerProps) {
             <button
               type="submit"
               disabled={createMember.isPending}
+              aria-busy={createMember.isPending || undefined}
               className="w-full rounded-xl bg-ui-accent px-4 py-2.5 text-sm font-semibold text-ui-on-accent hover:bg-ui-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
             >
               {createMember.isPending ? 'Creating account…' : 'Create Team Account'}

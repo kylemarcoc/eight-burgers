@@ -49,7 +49,7 @@ export function KioskShell() {
   const showAdminNav = import.meta.env.VITE_HIDE_PUBLIC_ADMIN !== 'true';
   const isAdminRoute = Boolean(useMatch('/admin/*'));
   const isCartOpen = useCartOpen();
-  useCartLifecycle(!isAdminRoute);
+  useCartLifecycle(!isAdminRoute, { suppressLoadingIndicator: !isCartOpen });
   const [failedLogoSrc, setFailedLogoSrc] = useState<string | null>(null);
 
   useEffect(() => {

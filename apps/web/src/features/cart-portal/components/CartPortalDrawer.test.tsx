@@ -1130,4 +1130,51 @@ describe('CartPortalDrawer', () => {
       await within(reloadedDialog).findByText(/payment reference updated for cashier review/i),
     ).toBeTruthy();
   });
+
+  it('does not steal focus away from the receipt payment reference input when receipt polling refreshes', async () => {
+    const { state } = installMockShopApi();
+    render(
+      <TestQueryWrapper>
+        <CartDrawerTestHarness />
+      </TestQueryWrapper>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
+
+    const dialog = screen.getByRole('dialog', { name: /your order cart/i });
+    await within(dialog).findByText('Burger Deluxe');
+
+    fireEvent.change(within(dialog).getByLabelText(/your name/i), { target: { value: 'Marco' } });
+    fireEvent.change(within(dialog).getByLabelText(/payment method/i), {
+      target: { value: 'gcash' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /place order/i }));
+
+    expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
+
+    const refInput = within(dialog).getByLabelText(/submit payment reference/i);
+    refInput.focus();
+    fireEvent.change(refInput, { target: { value: 'GC-42' } });
+    expect(document.activeElement).toBe(refInput);
+
+    // Simulate a background 15s receipt poll returning a fresh order snapshot
+    if (state.orders[0]) {
+      state.orders[0] = { ...state.orders[0], status: 'preparing', version: 2 };
+    }
+    fireEvent.click(within(dialog).getByRole('button', { name: /refresh status/i }));
+    await within(dialog).findByText('On the Grill');
+
+    // Focus must stay on the input (unless the user explicitly moved focus to Refresh)
+    refInput.focus();
+    if (state.orders[0]) {
+      state.orders[0] = { ...state.orders[0], status: 'ready', version: 3 };
+    }
+    await waitFor(() => {
+      // Trigger window focus refetch (which runs in background without clicking any button)
+      fireEvent(window, new Event('focus'));
+      expect(within(dialog).queryByText('Ready at Counter')).toBeTruthy();
+    });
+    expect(document.activeElement).toBe(refInput);
+  });
 });

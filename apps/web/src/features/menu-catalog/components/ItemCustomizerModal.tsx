@@ -10,9 +10,18 @@ import {
   type MenuItem,
   type OptionGroup,
 } from '@menu-kiosk/contracts';
-import { useEffect, useId, useMemo, useRef, useState, type SubmitEvent } from 'react';
+import {
+  useEffect,
+  useEffectEvent,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type SubmitEvent,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { FoodImage } from '@/shared/components/FoodImage';
+import { acquireOverlayLock } from '@/shared/lib/overlay-lock';
 
 const FOCUSABLE_SELECTOR = [
   'a[href]',
@@ -130,43 +139,33 @@ export function ItemCustomizerModal({
     [validation.issues],
   );
 
+  const handleCloseEvent = useEffectEvent(onClose);
+
   useEffect(() => {
-    previousFocusRef.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
     const portalNode = portalRootRef.current;
-    const isolatedSiblings: Array<{
-      element: HTMLElement;
-      hadInert: boolean;
-      prevAriaHidden: string | null;
-    }> = [];
+    const activeElement =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    previousFocusRef.current =
+      activeElement &&
+      (!portalNode || !portalNode.contains(activeElement)) &&
+      !activeElement.closest('[data-api-loading-backdrop]')
+        ? activeElement
+        : null;
 
-    for (const child of Array.from(document.body.children)) {
-      if (
-        child instanceof HTMLElement &&
-        child !== portalNode &&
-        !child.hasAttribute('data-api-loading-portal')
-      ) {
-        isolatedSiblings.push({
-          element: child,
-          hadInert: child.hasAttribute('inert'),
-          prevAriaHidden: child.getAttribute('aria-hidden'),
-        });
-        child.setAttribute('inert', '');
-        child.setAttribute('aria-hidden', 'true');
-      }
+    const overlayLock = acquireOverlayLock(portalNode);
+
+    if (overlayLock.isTopmost()) {
+      closeButtonRef.current?.focus();
     }
 
-    closeButtonRef.current?.focus();
-
     function handleKeyDown(event: KeyboardEvent) {
+      if (!overlayLock.isTopmost()) {
+        return;
+      }
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
-        onClose();
+        handleCloseEvent();
         return;
       }
 
@@ -195,19 +194,14 @@ export function ItemCustomizerModal({
     window.addEventListener('keydown', handleKeyDown, true);
     return () => {
       window.removeEventListener('keydown', handleKeyDown, true);
-      document.body.style.overflow = previousOverflow;
-      for (const entry of isolatedSiblings) {
-        if (!entry.hadInert) entry.element.removeAttribute('inert');
-        if (entry.prevAriaHidden === null) entry.element.removeAttribute('aria-hidden');
-        else entry.element.setAttribute('aria-hidden', entry.prevAriaHidden);
-      }
+      overlayLock.release();
       const prev = previousFocusRef.current;
       previousFocusRef.current = null;
-      if (prev && prev.isConnected) {
+      if (prev && prev.isConnected && !prev.closest('[inert]')) {
         prev.focus();
       }
     };
-  }, [onClose]);
+  }, []);
 
   function handleSelectSingle(group: OptionGroup, choiceId: string | null) {
     const groupChoiceIds = new Set(group.choices.map((choice) => choice.id));
@@ -494,13 +488,13 @@ export function ItemCustomizerModal({
           </div>
 
           <footer className="flex items-center justify-between gap-3 border-t border-ui-border bg-ui-surface px-5 py-4">
-            <div className="inline-flex items-center rounded-xl border border-ui-border bg-ui-surface-muted">
+            <div className="inline-flex shrink-0 items-center rounded-xl border border-ui-border bg-ui-surface-muted">
               <button
                 type="button"
                 aria-label="Decrease quantity"
                 disabled={quantity <= 1}
                 onClick={() => setQuantity((prev) => Math.max(1, prev - 1))}
-                className="px-3 py-2 text-sm font-bold text-ui-text hover:bg-ui-canvas disabled:opacity-40"
+                className="rounded-l-[calc(var(--radius-xl)-1px)] px-3 py-2 text-sm font-bold text-ui-text transition-colors motion-reduce:transition-none enabled:hover:bg-ui-canvas disabled:cursor-not-allowed disabled:opacity-40"
               >
                 -
               </button>
@@ -512,7 +506,7 @@ export function ItemCustomizerModal({
                 aria-label="Increase quantity"
                 disabled={quantity >= 50}
                 onClick={() => setQuantity((prev) => Math.min(50, prev + 1))}
-                className="px-3 py-2 text-sm font-bold text-ui-text hover:bg-ui-canvas disabled:opacity-40"
+                className="rounded-r-[calc(var(--radius-xl)-1px)] px-3 py-2 text-sm font-bold text-ui-text transition-colors motion-reduce:transition-none enabled:hover:bg-ui-canvas disabled:cursor-not-allowed disabled:opacity-40"
               >
                 +
               </button>

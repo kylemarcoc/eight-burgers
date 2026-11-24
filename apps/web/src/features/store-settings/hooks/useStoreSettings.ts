@@ -1,5 +1,6 @@
 import {
   DEFAULT_STORE_PROFILE,
+  type CatalogPayload,
   type StoreAssetUploadPurpose,
   type StoreOrderingStatusPatch,
   type StoreProfilePatch,
@@ -48,7 +49,12 @@ export function useUpdateStoreProfileMutation() {
       blockingBackdrop: true,
       loadingLabel: 'Saving store settings…',
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: catalogKeys.all }),
+    onSuccess: (updatedStore) => {
+      queryClient.setQueryData<CatalogPayload>(catalogKeys.all, (prev) =>
+        prev ? { ...prev, store: updatedStore } : prev,
+      );
+      void queryClient.invalidateQueries({ queryKey: catalogKeys.all });
+    },
     onError: (error) => handleAdminStoreMutationError(queryClient, error),
   });
 }
@@ -58,7 +64,15 @@ export function useUpdateStoreOrderingStatusMutation() {
 
   return useMutation({
     mutationFn: (patch: StoreOrderingStatusPatch) => patchAdminStoreOrderingStatus(patch),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: catalogKeys.all }),
+    meta: {
+      loadingLabel: 'Updating store status…',
+    },
+    onSuccess: (updatedStore) => {
+      queryClient.setQueryData<CatalogPayload>(catalogKeys.all, (prev) =>
+        prev ? { ...prev, store: updatedStore } : prev,
+      );
+      void queryClient.invalidateQueries({ queryKey: catalogKeys.all });
+    },
     onError: (error) => handleAdminStoreMutationError(queryClient, error),
   });
 }
@@ -82,6 +96,9 @@ export function useDeleteUnusedStoreAssetMutation() {
 
   return useMutation({
     mutationFn: (imageUrl: string) => deleteUnusedAdminStoreAsset(imageUrl),
+    meta: {
+      suppressLoadingIndicator: true,
+    },
     onError: (error) => handleAdminStoreMutationError(queryClient, error),
   });
 }

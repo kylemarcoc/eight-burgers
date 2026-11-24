@@ -41,11 +41,16 @@ function handleAdminMutationError(queryClient: ReturnType<typeof useQueryClient>
   }
 }
 
+const CATALOG_QUERY_META = {
+  loadingLabel: 'Loading menu…',
+} as const;
+
 export function useCatalogQuery() {
   return useQuery({
     queryKey: catalogKeys.all,
     queryFn: ({ signal }) => fetchCatalog(signal),
     staleTime: 30_000,
+    meta: CATALOG_QUERY_META,
   });
 }
 
@@ -57,6 +62,7 @@ export function useMenuMutations() {
 
   const createMenuItem = useMutation({
     mutationFn: (input: MenuItemInput) => createAdminMenuItem(input),
+    meta: { loadingLabel: 'Adding menu item…' },
     onSuccess: invalidateCatalog,
     onError,
   });
@@ -64,6 +70,7 @@ export function useMenuMutations() {
   const updateMenuItem = useMutation({
     mutationFn: (params: { id: string; input: MenuItemInput; expectedVersion?: number }) =>
       updateAdminMenuItem(params),
+    meta: { loadingLabel: 'Saving menu item…' },
     onSuccess: invalidateCatalog,
     onError,
   });
@@ -71,12 +78,14 @@ export function useMenuMutations() {
   const setItemAvailability = useMutation({
     mutationFn: (params: { id: string; available: boolean; expectedVersion?: number }) =>
       patchAdminMenuAvailability(params),
+    meta: { loadingLabel: 'Updating item availability…' },
     onSuccess: invalidateCatalog,
     onError,
   });
 
   const deleteMenuItem = useMutation({
     mutationFn: (id: string) => deleteAdminMenuItem(id),
+    meta: { loadingLabel: 'Deleting menu item…' },
     onSuccess: invalidateCatalog,
     onError,
   });
@@ -102,6 +111,7 @@ export function useMenuMutations() {
 
   const deleteUnusedMenuImage = useMutation({
     mutationFn: (imageUrl: string) => deleteUnusedAdminMenuImage(imageUrl),
+    meta: { suppressLoadingIndicator: true },
     onError,
   });
 
@@ -124,24 +134,28 @@ export function useCategoryMutations() {
 
   const createCategory = useMutation({
     mutationFn: (input: MenuCategoryInput) => createAdminCategory(input),
+    meta: { loadingLabel: 'Adding category…' },
     onSuccess: invalidateCatalog,
     onError,
   });
 
   const updateCategory = useMutation({
     mutationFn: (params: { id: string; patch: MenuCategoryPatch }) => patchAdminCategory(params),
+    meta: { loadingLabel: 'Updating category…' },
     onSuccess: invalidateCatalog,
     onError,
   });
 
   const reorderCategories = useMutation({
     mutationFn: (orderedIds: string[]) => reorderAdminCategories(orderedIds),
+    meta: { loadingLabel: 'Reordering categories…' },
     onSuccess: invalidateCatalog,
     onError,
   });
 
   const deleteCategory = useMutation({
     mutationFn: (id: string) => deleteAdminCategory(id),
+    meta: { loadingLabel: 'Deleting category…' },
     onSuccess: invalidateCatalog,
     onError,
   });
@@ -162,24 +176,28 @@ export function useOptionGroupMutations() {
 
   const createOptionGroup = useMutation({
     mutationFn: (input: OptionGroupInput) => createAdminOptionGroup(input),
+    meta: { loadingLabel: 'Adding option group…' },
     onSuccess: invalidateCatalog,
     onError,
   });
 
   const updateOptionGroup = useMutation({
     mutationFn: (params: { id: string; patch: OptionGroupPatch }) => patchAdminOptionGroup(params),
+    meta: { loadingLabel: 'Updating option group…' },
     onSuccess: invalidateCatalog,
     onError,
   });
 
   const reorderOptionGroups = useMutation({
     mutationFn: (orderedIds: string[]) => reorderAdminOptionGroups(orderedIds),
+    meta: { loadingLabel: 'Reordering option groups…' },
     onSuccess: invalidateCatalog,
     onError,
   });
 
   const deleteOptionGroup = useMutation({
     mutationFn: (id: string) => deleteAdminOptionGroup(id),
+    meta: { loadingLabel: 'Deleting option group…' },
     onSuccess: invalidateCatalog,
     onError,
   });
@@ -187,6 +205,7 @@ export function useOptionGroupMutations() {
   const setOptionChoiceAvailability = useMutation({
     mutationFn: (params: { id: string; available: boolean; expectedVersion?: number }) =>
       patchAdminOptionChoiceAvailability(params),
+    meta: { loadingLabel: 'Updating option availability…' },
     onSuccess: invalidateCatalog,
     onError,
   });
@@ -208,12 +227,17 @@ export function useDeliveryPricingMutations() {
 
   const updateDeliveryPricing = useMutation({
     mutationFn: (params: DeliveryPricingPatch) => patchAdminDeliveryPricing(params),
+    meta: { loadingLabel: 'Saving delivery settings…' },
     onSuccess: invalidateCatalog,
     onError,
   });
 
   const resetDeliveryPricing = useMutation({
     mutationFn: () => resetAdminDeliveryPricing(),
+    meta: {
+      blockingBackdrop: true,
+      loadingLabel: 'Resetting delivery settings…',
+    },
     onSuccess: invalidateCatalog,
     onError,
   });

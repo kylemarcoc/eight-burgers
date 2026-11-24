@@ -411,4 +411,44 @@ describe('AdminOrdersManager', () => {
     expect(screen.queryByRole('button', { name: /pause orders/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /mark #8b-104 paid/i })).toBeNull();
   });
+
+  it('clears stale debounced search so typing after clearing never re-queries the old search term', async () => {
+    installMockShopApi({ authenticated: true, initialOrders: SAMPLE_ORDERS });
+    const requestedQueries: Array<string | null> = [];
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const mockFetchImpl = fetchMock.getMockImplementation();
+    expect(mockFetchImpl).toBeTruthy();
+    if (!mockFetchImpl) return;
+    fetchMock.mockImplementation((input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('/api/v1/admin/orders')) {
+        const parsed = new URL(url, 'http://localhost');
+        requestedQueries.push(parsed.searchParams.get('q'));
+      }
+      return mockFetchImpl(input, init);
+    });
+
+    render(
+      <TestQueryWrapper>
+        <AdminOrdersManager />
+      </TestQueryWrapper>,
+    );
+
+    expect(await screen.findByRole('heading', { level: 3, name: 'Marco Santos' })).toBeTruthy();
+
+    const searchInput = screen.getByLabelText(/search customer orders/i);
+    fireEvent.change(searchInput, { target: { value: 'nonexistent-old' } });
+    expect(await screen.findByText('No orders match your current filter.')).toBeTruthy();
+
+    fireEvent.change(searchInput, { target: { value: '' } });
+    expect(await screen.findByRole('heading', { level: 3, name: 'Marco Santos' })).toBeTruthy();
+
+    requestedQueries.length = 0;
+    fireEvent.change(searchInput, { target: { value: 'm' } });
+
+    await waitFor(() => {
+      expect(requestedQueries).toContain('m');
+    });
+    expect(requestedQueries).not.toContain('nonexistent-old');
+  });
 });

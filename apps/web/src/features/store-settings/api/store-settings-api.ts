@@ -67,7 +67,6 @@ export async function searchStoreOriginAddresses(
   const res = await apiRequest(`/location/search?${params.toString()}`, {
     method: 'GET',
     schema: locationSearchResponseSchema,
-    trackForeground: true,
     ...(signal ? { signal } : {}),
   });
   return res.data;

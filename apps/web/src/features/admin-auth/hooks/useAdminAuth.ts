@@ -3,12 +3,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clearAdminSessionCache } from '@/shared/lib/admin-session-cache';
 import { adminAuthKeys, fetchAdminSession, loginAdmin, logoutAdmin } from '../api/auth-api';
 
+const ADMIN_SESSION_QUERY_META = {
+  loadingLabel: 'Checking Staff Portal session…',
+} as const;
+
 export function useAdminSessionQuery() {
   return useQuery({
     queryKey: adminAuthKeys.session(),
     queryFn: ({ signal }) => fetchAdminSession(signal),
     staleTime: 60_000,
     retry: false,
+    meta: ADMIN_SESSION_QUERY_META,
   });
 }
 

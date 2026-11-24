@@ -44,9 +44,11 @@ describe('StoreSettingsManager', () => {
     fireEvent.click(screen.getByRole('button', { name: /save store profile/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole('status').textContent).toContain(
-        'Saved store profile for Kape Kanto.',
-      );
+      expect(
+        screen
+          .getAllByRole('status')
+          .some((node) => node.textContent?.includes('Saved store profile for Kape Kanto.')),
+      ).toBe(true);
     });
     expect(state.store.storeName).toBe('Kape Kanto');
     expect(state.store.branchLabel).toBe('Cebu IT Park');

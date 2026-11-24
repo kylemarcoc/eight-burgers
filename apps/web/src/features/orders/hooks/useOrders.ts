@@ -25,6 +25,38 @@ import {
   submitOrderPaymentReferenceRequest,
 } from '../api/orders-api';
 
+export type OrderLookupQueryOptions = {
+  enabled?: boolean;
+  suppressLoadingIndicator?: boolean;
+};
+
+const RECEIPT_QUERY_META = {
+  loadingLabel: 'Loading order receipt…',
+} as const;
+
+const RECEIPT_QUERY_SUPPRESSED_META = {
+  suppressLoadingIndicator: true,
+  loadingLabel: 'Loading order receipt…',
+} as const;
+
+const TRACKER_QUERY_META = {
+  loadingLabel: 'Looking up order…',
+} as const;
+
+const TRACKER_QUERY_SUPPRESSED_META = {
+  suppressLoadingIndicator: true,
+  loadingLabel: 'Looking up order…',
+} as const;
+
+const ADMIN_ORDERS_QUERY_META = {
+  loadingLabel: 'Loading customer orders…',
+} as const;
+
+const ADMIN_ORDERS_SEARCH_QUERY_META = {
+  suppressInitialLoadingIndicator: true,
+  loadingLabel: 'Loading customer orders…',
+} as const;
+
 export function usePlaceOrderMutation() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -48,13 +80,17 @@ export function usePlaceOrderMutation() {
 export function useOrderReceiptQuery(
   orderId: string | null,
   receiptToken: string | null,
-  enabled = true,
+  options: boolean | OrderLookupQueryOptions = true,
 ) {
+  const normalizedOptions = typeof options === 'boolean' ? { enabled: options } : options;
+  const enabled = normalizedOptions.enabled ?? true;
   return useQuery({
     queryKey: orderKeys.receipt(orderId ?? 'none'),
     queryFn: ({ signal }) => fetchOrderReceipt(orderId ?? '', receiptToken ?? '', signal),
     enabled: Boolean(enabled && orderId && receiptToken),
-    meta: { isPolling: true },
+    meta: normalizedOptions.suppressLoadingIndicator
+      ? RECEIPT_QUERY_SUPPRESSED_META
+      : RECEIPT_QUERY_META,
     retry: (failureCount, error) => {
       if (
         isApiError(error) &&
@@ -72,13 +108,20 @@ export function useOrderReceiptQuery(
   });
 }
 
-export function usePublicOrderTrackerQuery(queueNumber: string | null, enabled = true) {
+export function usePublicOrderTrackerQuery(
+  queueNumber: string | null,
+  options: boolean | OrderLookupQueryOptions = true,
+) {
   const normalized = queueNumber ? prepareQueueLookupParam(queueNumber) : '';
+  const normalizedOptions = typeof options === 'boolean' ? { enabled: options } : options;
+  const enabled = normalizedOptions.enabled ?? true;
   return useQuery({
     queryKey: orderKeys.tracker(normalized || 'none'),
     queryFn: ({ signal }) => fetchPublicOrderTracker(normalized, signal),
     enabled: Boolean(enabled && normalized),
-    meta: { isPolling: true },
+    meta: normalizedOptions.suppressLoadingIndicator
+      ? TRACKER_QUERY_SUPPRESSED_META
+      : TRACKER_QUERY_META,
     retry: (failureCount, error) => {
       if (isApiError(error) && error.status === 404) {
         return false;
@@ -98,6 +141,10 @@ export function useSubmitPaymentReferenceMutation() {
   return useMutation({
     mutationFn: (params: { orderId: string; receiptToken: string; paymentReference: string }) =>
       submitOrderPaymentReferenceRequest(params),
+    meta: {
+      blockingBackdrop: true,
+      loadingLabel: 'Submitting payment reference…',
+    },
     onSuccess: (updatedOrder) => {
       queryClient.setQueryData(orderKeys.receipt(updatedOrder.id), updatedOrder);
       void queryClient.invalidateQueries({
@@ -113,6 +160,10 @@ export function useCancelOrderByReceiptMutation() {
   return useMutation({
     mutationFn: (params: { orderId: string; receiptToken: string }) =>
       cancelOrderByReceiptRequest(params),
+    meta: {
+      blockingBackdrop: true,
+      loadingLabel: 'Cancelling your order…',
+    },
     onSuccess: (updatedOrder) => {
       queryClient.setQueryData(orderKeys.receipt(updatedOrder.id), updatedOrder);
       void queryClient.invalidateQueries({
@@ -128,6 +179,10 @@ export function useCancelOrderByQueueMutation() {
   return useMutation({
     mutationFn: (params: { queueNumber: string; verification: CancelPublicOrderByQueueRequest }) =>
       cancelOrderByQueueRequest(params),
+    meta: {
+      blockingBackdrop: true,
+      loadingLabel: 'Cancelling your order…',
+    },
     onSuccess: (updatedTracker, variables) => {
       queryClient.setQueryData(orderKeys.tracker(updatedTracker.queueNumber), updatedTracker);
       queryClient.setQueryData(orderKeys.tracker(variables.queueNumber), updatedTracker);
@@ -168,6 +223,7 @@ export function useAdminOrdersQuery(options: boolean | AdminOrdersQueryOptions =
     queryFn: ({ signal }) => fetchAdminOrders(filters, signal),
     enabled: normalized.enabled ?? true,
     staleTime: 10_000,
+    meta: trimmedQ ? ADMIN_ORDERS_SEARCH_QUERY_META : ADMIN_ORDERS_QUERY_META,
     refetchInterval: normalized.refetchInterval ?? false,
   });
 }
@@ -199,7 +255,7 @@ export function useInfiniteAdminOrdersQuery(options: AdminOrdersQueryOptions = {
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     enabled: options.enabled ?? true,
     staleTime: 10_000,
-    meta: { isPolling: true },
+    meta: trimmedQ ? ADMIN_ORDERS_SEARCH_QUERY_META : ADMIN_ORDERS_QUERY_META,
     refetchInterval:
       typeof options.refetchInterval === 'number' && options.pauseAutoRefreshWhenPaginated
         ? (query) => ((query.state.data?.pages.length ?? 0) > 1 ? false : options.refetchInterval)
@@ -212,6 +268,7 @@ export function useUpdateOrderStatusMutation() {
   return useMutation({
     mutationFn: (params: { orderId: string; status: OrderStatus; expectedVersion?: number }) =>
       patchAdminOrderStatus(params),
+    meta: { loadingLabel: 'Updating order status…' },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: orderKeys.adminAll });
     },
@@ -234,6 +291,7 @@ export function useUpdateOrderPaymentStatusMutation() {
       paymentStatus: PaymentStatus;
       expectedVersion?: number;
     }) => patchAdminOrderPaymentStatus(params),
+    meta: { loadingLabel: 'Updating payment status…' },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: orderKeys.adminAll });
     },

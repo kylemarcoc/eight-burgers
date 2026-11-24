@@ -152,4 +152,47 @@ describe('8Burgers Storefront, Bottom-Right Cart Portal, and Admin', () => {
 
     expect(await screen.findByRole('heading', { level: 1, name: /page not found/i })).toBeTruthy();
   });
+
+  it('restores focus to the receipt heading and keeps focus inside the cart drawer across blocking submit and cancel transitions', async () => {
+    installMockShopApi();
+    render(
+      <ThemeProvider>
+        <App />
+      </ThemeProvider>,
+    );
+
+    const friesCard = (
+      await screen.findByRole('heading', { level: 3, name: 'Crinkle Cut Fries' })
+    ).closest('article');
+    expect(friesCard).toBeTruthy();
+    if (!friesCard) return;
+
+    fireEvent.click(within(friesCard).getByRole('button', { name: /add · ₱78/i }));
+    fireEvent.click(screen.getByRole('button', { name: /open cart with 1 item, subtotal ₱78/i }));
+
+    const dialog = await screen.findByRole('dialog', { name: /your order cart/i });
+    fireEvent.change(within(dialog).getByLabelText(/your name/i), { target: { value: 'Marco' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /place order · ₱78/i }));
+
+    const receiptHeading = await within(dialog).findByRole('heading', {
+      level: 3,
+      name: '#8B-101',
+    });
+    await waitFor(() => {
+      expect(document.querySelector('[data-api-loading-backdrop]')).toBeNull();
+      expect(dialog.closest('[inert]')).toBeNull();
+      expect(document.activeElement).toBe(receiptHeading);
+    });
+
+    // Now cancel the order via the blocking Confirm Cancel mutation (trigger button unmounts on success)
+    fireEvent.click(within(dialog).getByRole('button', { name: /^cancel order$/i }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /confirm cancel/i }));
+
+    await within(dialog).findByText(/this order was cancelled/i);
+    await waitFor(() => {
+      expect(document.querySelector('[data-api-loading-backdrop]')).toBeNull();
+      expect(dialog.closest('[inert]')).toBeNull();
+      expect(dialog.contains(document.activeElement)).toBe(true);
+    });
+  });
 });

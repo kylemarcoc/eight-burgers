@@ -1,12 +1,19 @@
 import { useId, useRef, useState, type SubmitEvent } from 'react';
+import { PasswordInput } from '@/shared/components/PasswordInput';
 import { getApiErrorMessage } from '@/shared/lib/api-error';
 import { useAdminLoginMutation } from '../hooks/useAdminAuth';
+
+type LoginFieldError = {
+  field: 'email' | 'password';
+  message: string;
+};
 
 export function AdminLoginForm() {
   const loginMutation = useAdminLoginMutation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [fieldError, setFieldError] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [fieldError, setFieldError] = useState<LoginFieldError | null>(null);
 
   const emailId = useId();
   const passwordId = useId();
@@ -14,16 +21,35 @@ export function AdminLoginForm() {
   const emailRef = useRef<HTMLInputElement | null>(null);
   const passwordRef = useRef<HTMLInputElement | null>(null);
 
+  function clearErrorsForField(field: 'email' | 'password') {
+    if (fieldError?.field === field) {
+      setFieldError(null);
+    }
+    if (loginMutation.error) {
+      loginMutation.reset();
+    }
+  }
+
   async function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (loginMutation.isPending) {
+      return;
+    }
+
     const trimmedEmail = email.trim();
     if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
-      setFieldError('Enter a valid Staff Portal email address.');
+      setFieldError({
+        field: 'email',
+        message: 'Enter a valid Staff Portal email address.',
+      });
       emailRef.current?.focus();
       return;
     }
     if (!password) {
-      setFieldError('Enter your Staff Portal password.');
+      setFieldError({
+        field: 'password',
+        message: 'Enter your Staff Portal password.',
+      });
       passwordRef.current?.focus();
       return;
     }
@@ -32,6 +58,7 @@ export function AdminLoginForm() {
     try {
       await loginMutation.mutateAsync({ email: trimmedEmail, password });
       setPassword('');
+      setShowPassword(false);
     } catch {
       // Error surfaced cleanly via loginMutation.error
     }
@@ -40,7 +67,9 @@ export function AdminLoginForm() {
   const serverError = loginMutation.error
     ? getApiErrorMessage(loginMutation.error, 'Sign-in failed. Check your credentials.')
     : null;
-  const displayedError = fieldError ?? serverError;
+  const displayedError = fieldError?.message ?? serverError;
+  const emailInvalid = fieldError ? fieldError.field === 'email' : Boolean(serverError);
+  const passwordInvalid = fieldError ? fieldError.field === 'password' : Boolean(serverError);
 
   return (
     <section
@@ -68,11 +97,16 @@ export function AdminLoginForm() {
             name="email"
             type="email"
             autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
             value={email}
-            onChange={(event) => setEmail(event.target.value)}
+            onChange={(event) => {
+              setEmail(event.target.value);
+              clearErrorsForField('email');
+            }}
             placeholder="owner@yourshop.com"
-            aria-invalid={Boolean(displayedError)}
-            aria-describedby={displayedError ? errorId : undefined}
+            aria-invalid={emailInvalid}
+            aria-describedby={emailInvalid ? errorId : undefined}
             className="mt-1 w-full rounded-xl border border-ui-border bg-ui-canvas px-3 py-2 text-sm text-ui-text"
           />
         </div>
@@ -81,17 +115,20 @@ export function AdminLoginForm() {
           <label htmlFor={passwordId} className="block text-xs font-semibold text-ui-text">
             Password
           </label>
-          <input
+          <PasswordInput
             ref={passwordRef}
             id={passwordId}
             name="password"
-            type="password"
             autoComplete="current-password"
             value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            aria-invalid={Boolean(displayedError)}
-            aria-describedby={displayedError ? errorId : undefined}
-            className="mt-1 w-full rounded-xl border border-ui-border bg-ui-canvas px-3 py-2 text-sm text-ui-text"
+            visible={showPassword}
+            onVisibleChange={setShowPassword}
+            onChange={(event) => {
+              setPassword(event.target.value);
+              clearErrorsForField('password');
+            }}
+            aria-invalid={passwordInvalid}
+            aria-describedby={passwordInvalid ? errorId : undefined}
           />
         </div>
 
@@ -108,6 +145,7 @@ export function AdminLoginForm() {
         <button
           type="submit"
           disabled={loginMutation.isPending}
+          aria-busy={loginMutation.isPending || undefined}
           className="w-full rounded-xl bg-ui-accent px-4 py-2.5 text-sm font-semibold text-ui-on-accent hover:bg-ui-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
         >
           {loginMutation.isPending ? 'Signing in…' : 'Sign in to Staff Portal'}
