@@ -287,6 +287,18 @@ export function createOrderRoutes(deps: ApiDeps): Hono<ApiEnv> {
       });
     }
 
+    if (result.status === 'payment_reference_required') {
+      return problemResponse(c, {
+        status: 400,
+        code: 'VALIDATION_ERROR',
+        title: 'Validation Failed',
+        detail: 'Enter the payment reference number from your transfer receipt.',
+        fieldErrors: {
+          paymentReference: ['Enter the payment reference number from your transfer receipt.'],
+        },
+      });
+    }
+
     if (result.status === 'invalid_payment_reference') {
       return problemResponse(c, {
         status: 400,

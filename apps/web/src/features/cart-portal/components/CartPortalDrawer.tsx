@@ -345,6 +345,7 @@ type CheckoutFieldErrors = {
   tableNumber?: string;
   deliveryPin?: string;
   addressOrNotes?: string;
+  paymentReference?: string;
 };
 
 const FOCUSABLE_SELECTOR = [
@@ -526,6 +527,7 @@ export function CartPortalDrawer() {
   const tableErrorId = useId();
   const locationErrorId = useId();
   const addressErrorId = useId();
+  const paymentRefErrorId = useId();
 
   const topmostOverlayId = useSyncExternalStore(
     subscribeOverlayLocks,
@@ -542,6 +544,7 @@ export function CartPortalDrawer() {
   const tableInputRef = useRef<HTMLInputElement | null>(null);
   const locationInputRef = useRef<HTMLInputElement | null>(null);
   const notesInputRef = useRef<HTMLInputElement | null>(null);
+  const paymentRefInputRef = useRef<HTMLInputElement | null>(null);
   const receiptHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const focusedReceiptKeyRef = useRef<string | null>(null);
@@ -830,13 +833,18 @@ export function CartPortalDrawer() {
     if (fulfillment === 'delivery' && !composedAddressOrNotes) {
       nextErrors.addressOrNotes = 'Enter your street, building, unit, or landmark for the rider.';
     }
+    if (paymentMethod !== 'cash' && !checkoutPaymentRef.trim()) {
+      nextErrors.paymentReference =
+        'Enter the payment reference number from your transfer receipt.';
+    }
 
     if (
       nextErrors.customerName ||
       nextErrors.contactNumber ||
       nextErrors.tableNumber ||
       nextErrors.deliveryPin ||
-      nextErrors.addressOrNotes
+      nextErrors.addressOrNotes ||
+      nextErrors.paymentReference
     ) {
       setFieldErrors(nextErrors);
       if (nextErrors.customerName) {
@@ -849,6 +857,8 @@ export function CartPortalDrawer() {
         locationInputRef.current?.focus();
       } else if (nextErrors.addressOrNotes) {
         notesInputRef.current?.focus();
+      } else if (nextErrors.paymentReference) {
+        paymentRefInputRef.current?.focus();
       }
       return;
     }
@@ -1502,18 +1512,25 @@ export function CartPortalDrawer() {
               <button
                 type="button"
                 onClick={() => {
+                  const isTerminal =
+                    lastPlacedOrder.status === 'completed' ||
+                    lastPlacedOrder.status === 'cancelled';
                   setCopyStatus('idle');
                   setConfirmCancelOrder(false);
                   setCancelOrderError(null);
                   setReceiptRefDraft(null);
                   setReceiptRefError(null);
                   setReceiptRefSuccess(null);
-                  dismissLastOrder();
+                  if (isTerminal) {
+                    dismissLastOrder();
+                  }
                   handleClose();
                 }}
                 className="w-full rounded-xl bg-ui-accent px-4 py-2.5 text-sm font-semibold text-ui-on-accent hover:bg-ui-accent-hover"
               >
-                Done · Back to Menu
+                {lastPlacedOrder.status === 'completed' || lastPlacedOrder.status === 'cancelled'
+                  ? 'Done · Back to Menu'
+                  : 'Back to Menu'}
               </button>
             </div>
           ) : showTrackerView && activeQueueNumber ? (
@@ -2481,9 +2498,13 @@ export function CartPortalDrawer() {
                     id="checkout-payment"
                     name="paymentMethod"
                     value={paymentMethod}
-                    onChange={(event) =>
-                      setSelectedPaymentMethod(event.target.value as PaymentMethod)
-                    }
+                    onChange={(event) => {
+                      const nextMethod = event.target.value as PaymentMethod;
+                      setSelectedPaymentMethod(nextMethod);
+                      if (nextMethod === 'cash' && fieldErrors.paymentReference) {
+                        setFieldErrors((prev) => ({ ...prev, paymentReference: undefined }));
+                      }
+                    }}
                     className="mt-1 w-full rounded-xl border border-ui-border bg-ui-canvas px-3 py-2 text-sm text-ui-text"
                   >
                     {enabledPaymentMethods.map((method) => (
@@ -2507,21 +2528,43 @@ export function CartPortalDrawer() {
                         htmlFor="checkout-payment-reference"
                         className="block text-xs font-semibold text-ui-text"
                       >
-                        Payment Reference (optional)
+                        Payment Reference
                       </label>
                       <input
+                        ref={paymentRefInputRef}
                         id="checkout-payment-reference"
                         name="paymentReference"
                         type="text"
+                        required
                         maxLength={PAYMENT_REFERENCE_MAX_LENGTH}
                         value={checkoutPaymentRef}
-                        onChange={(event) => setCheckoutPaymentRef(event.target.value)}
+                        aria-invalid={Boolean(fieldErrors.paymentReference)}
+                        aria-describedby={
+                          fieldErrors.paymentReference ? paymentRefErrorId : undefined
+                        }
+                        onChange={(event) => {
+                          setCheckoutPaymentRef(event.target.value);
+                          if (fieldErrors.paymentReference && event.target.value.trim()) {
+                            setFieldErrors((prev) => ({ ...prev, paymentReference: undefined }));
+                          }
+                        }}
                         placeholder="e.g. Ref # 1234 5678 9012"
-                        className="mt-1 w-full rounded-xl border border-ui-border bg-ui-canvas px-3 py-2 font-mono text-xs text-ui-text"
+                        className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 font-mono text-xs text-ui-text ${
+                          fieldErrors.paymentReference ? 'border-ui-error' : 'border-ui-border'
+                        }`}
                       />
+                      {fieldErrors.paymentReference ? (
+                        <p
+                          id={paymentRefErrorId}
+                          role="alert"
+                          className="mt-1 text-xs font-semibold text-ui-error"
+                        >
+                          {fieldErrors.paymentReference}
+                        </p>
+                      ) : null}
                       <p className="mt-1 text-[11px] text-ui-text-muted">
-                        Already paid? Enter your reference now, or submit it on the receipt screen
-                        after placing your order.
+                        Send your total using the details above, then enter the reference number
+                        from your receipt before placing your order.
                       </p>
                     </div>
                   </div>

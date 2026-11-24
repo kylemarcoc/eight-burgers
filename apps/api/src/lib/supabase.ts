@@ -119,6 +119,7 @@ export type PlaceOrderRpcResult =
   | { status: 'table_number_required' }
   | { status: 'invalid_table_number' }
   | { status: 'payment_method_unavailable' }
+  | { status: 'payment_reference_required' }
   | { status: 'invalid_payment_reference' }
   | { status: 'item_unavailable'; itemId: string }
   | { status: 'invalid_option_selection'; optionId?: string }
@@ -1635,6 +1636,9 @@ export function createSupabaseGateway(config: ApiConfig): ShopBackendGateway {
         }
         if (msg.includes('PAYMENT_METHOD_UNAVAILABLE')) {
           return { status: 'payment_method_unavailable' };
+        }
+        if (msg.includes('PAYMENT_REFERENCE_REQUIRED')) {
+          return { status: 'payment_reference_required' };
         }
         if (msg.includes('INVALID_PAYMENT_REFERENCE')) {
           return { status: 'invalid_payment_reference' };

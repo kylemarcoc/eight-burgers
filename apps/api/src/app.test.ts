@@ -642,10 +642,13 @@ function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
         return { status: 'price_changed', latestTotalPhp: totalPhp };
       }
 
-      const seq = state.seq;
-      state.seq += 1;
       const cleanPaymentRef =
         request.paymentMethod !== 'cash' ? request.paymentReference.trim() : '';
+      if (request.paymentMethod !== 'cash' && !cleanPaymentRef) {
+        return { status: 'payment_reference_required' };
+      }
+      const seq = state.seq;
+      state.seq += 1;
       const order: OrderRecord = {
         id: `00000000-0000-4000-8000-${String(seq).padStart(12, '0')}`,
         queueNumber: `#${state.storeProfile.queuePrefix || 'ORD'}-${seq}`,
@@ -1211,6 +1214,7 @@ describe('Eight Burgers REST BFF', () => {
       fulfillment: 'pickup',
       addressOrNotes: '',
       paymentMethod: 'gcash',
+      paymentReference: 'GCASH-101',
       items: [{ itemId: 'burger-deluxe', quantity: 2, selectedOptionIds: [] }],
     };
 
@@ -1856,6 +1860,7 @@ describe('Eight Burgers REST BFF', () => {
         deliveryPin: { lat: 14.5572, lng: 121.0236 },
         addressOrNotes: 'Ayala Triangle Gardens, Makati',
         paymentMethod: 'gcash',
+        paymentReference: 'GCASH-PAUSE-1',
         items: [{ itemId: 'overload-burger', quantity: 3, selectedOptionIds: [] }],
       }),
     });
@@ -1931,6 +1936,7 @@ describe('Eight Burgers REST BFF', () => {
         deliveryPin: { lat: 14.5572, lng: 121.0236 },
         addressOrNotes: 'Ayala Triangle Gardens, Makati',
         paymentMethod: 'gcash',
+        paymentReference: 'GCASH-RETRY-1',
         items: [{ itemId: 'burger-deluxe', quantity: 1, selectedOptionIds: [] }],
       }),
     });
@@ -2020,7 +2026,7 @@ describe('Eight Burgers REST BFF', () => {
         fulfillment: 'delivery',
         deliveryPin: { lat: 14.5608, lng: 121.0124 },
         addressOrNotes: 'Unit 402 Chino Roces',
-        paymentMethod: 'gcash',
+        paymentMethod: 'cash',
         items: [{ itemId: 'burger-deluxe', quantity: 2, selectedOptionIds: [] }],
       }),
     });
@@ -3433,6 +3439,7 @@ describe('Eight Burgers REST BFF', () => {
         fulfillment: 'pickup',
         addressOrNotes: '',
         paymentMethod: 'bank_transfer',
+        paymentReference: 'BPI-123456',
         items: [{ itemId: 'burger-deluxe', quantity: 1, selectedOptionIds: [], itemNote: '' }],
       }),
     });
@@ -3550,13 +3557,32 @@ describe('Eight Burgers REST BFF', () => {
         tableNumber: '',
         addressOrNotes: '',
         paymentMethod: 'gcash',
+        paymentReference: 'GCASH-NO-TABLE-1',
         items: [{ itemId: 'burger-deluxe', quantity: 1, selectedOptionIds: [], itemNote: '' }],
       }),
     });
     expect(missingTableRes.status).toBe(422);
     expect(((await missingTableRes.json()) as { code: string }).code).toBe('TABLE_NUMBER_REQUIRED');
 
-    // Place dine-in GCash order without initial reference (starts unpaid, mobile used for Tier 2 cancel check)
+    // Non-cash orders (GCash / Maya / Bank Transfer) require a payment reference at checkout
+    const missingRefRes = await app.request('/api/v1/orders', {
+      method: 'POST',
+      headers: { ...CSRF_HEADERS, 'Idempotency-Key': 'phase3-gcash-missing-ref-1' },
+      body: JSON.stringify({
+        customerName: 'Ana',
+        contactNumber: '09175551234',
+        fulfillment: 'dine-in',
+        tableNumber: '7',
+        addressOrNotes: '',
+        paymentMethod: 'gcash',
+        paymentReference: '   ',
+        items: [{ itemId: 'burger-deluxe', quantity: 1, selectedOptionIds: [], itemNote: '' }],
+      }),
+    });
+    expect(missingRefRes.status).toBe(400);
+    expect(((await missingRefRes.json()) as { code: string }).code).toBe('VALIDATION_ERROR');
+
+    // Place dine-in GCash order with initial reference (starts pending_verification)
     const dineInGcashRes = await app.request('/api/v1/orders', {
       method: 'POST',
       headers: { ...CSRF_HEADERS, 'Idempotency-Key': 'phase3-dinein-gcash-order-1' },
@@ -3567,6 +3593,7 @@ describe('Eight Burgers REST BFF', () => {
         tableNumber: '7',
         addressOrNotes: '',
         paymentMethod: 'gcash',
+        paymentReference: 'GCASH-TYPO-001',
         items: [{ itemId: 'burger-deluxe', quantity: 1, selectedOptionIds: [], itemNote: '' }],
       }),
     });
@@ -3577,8 +3604,8 @@ describe('Eight Burgers REST BFF', () => {
     };
     expect(dineInOrder.data.fulfillment).toBe('dine-in');
     expect(dineInOrder.data.tableNumber).toBe('7');
-    expect(dineInOrder.data.paymentStatus).toBe('unpaid');
-    expect(dineInOrder.data.paymentReference).toBe('');
+    expect(dineInOrder.data.paymentStatus).toBe('pending_verification');
+    expect(dineInOrder.data.paymentReference).toBe('GCASH-TYPO-001');
 
     // Place a Cash order too so we verify Cash payment-status confirmation & payment-reference rejection
     const cashOrderRes = await app.request('/api/v1/orders', {
@@ -3596,7 +3623,7 @@ describe('Eight Burgers REST BFF', () => {
     expect(cashOrderRes.status).toBe(201);
     const cashOrder = (await cashOrderRes.json()) as { data: OrderRecord; receiptToken: string };
 
-    // 4. POST /orders/:id/payment-reference: rejects missing/wrong token (404), rejects Cash (422), supports initial + typo correction
+    // 4. POST /orders/:id/payment-reference: rejects missing/wrong token (404), rejects Cash (422), supports typo correction
     const unauthRefRes = await app.request(
       `/api/v1/orders/${dineInOrder.data.id}/payment-reference`,
       {
@@ -3616,19 +3643,6 @@ describe('Eight Burgers REST BFF', () => {
     expect(((await cashRefRes.json()) as { code: string }).code).toBe(
       'PAYMENT_REFERENCE_NOT_APPLICABLE',
     );
-
-    const submitRefRes = await app.request(
-      `/api/v1/orders/${dineInOrder.data.id}/payment-reference`,
-      {
-        method: 'POST',
-        headers: { ...CSRF_HEADERS, 'X-Order-Receipt-Token': dineInOrder.receiptToken },
-        body: JSON.stringify({ paymentReference: 'GCASH-TYPO-001' }),
-      },
-    );
-    expect(submitRefRes.status).toBe(200);
-    const submittedOrder = ((await submitRefRes.json()) as { data: OrderRecord }).data;
-    expect(submittedOrder.paymentReference).toBe('GCASH-TYPO-001');
-    expect(submittedOrder.paymentStatus).toBe('pending_verification');
 
     // Typo correction while pending_verification succeeds
     const fixRefRes = await app.request(`/api/v1/orders/${dineInOrder.data.id}/payment-reference`, {
@@ -3704,7 +3718,7 @@ describe('Eight Burgers REST BFF', () => {
       {
         method: 'PATCH',
         headers: cashierHeaders,
-        body: JSON.stringify({ paymentStatus: 'paid', expectedVersion: 3 }),
+        body: JSON.stringify({ paymentStatus: 'paid', expectedVersion: 2 }),
       },
     );
     expect(cashierMarkPaid.status).toBe(200);

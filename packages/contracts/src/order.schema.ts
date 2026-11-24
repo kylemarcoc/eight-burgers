@@ -161,6 +161,13 @@ export const placeOrderRequestSchema = z
         });
       }
     }
+    if (value.paymentMethod !== 'cash' && !value.paymentReference.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['paymentReference'],
+        message: 'Enter the payment reference number from your transfer receipt.',
+      });
+    }
     const seenLineKeys = new Set<string>();
     for (let index = 0; index < value.items.length; index += 1) {
       const line = value.items[index];

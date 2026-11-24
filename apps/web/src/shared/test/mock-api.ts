@@ -494,9 +494,16 @@ export function installMockShopApi(options: MockApiOptions = {}) {
       }
 
       const seq = state.nextQueueSeq;
-      state.nextQueueSeq += 1;
       const trimmedPaymentRef =
         req.paymentMethod !== 'cash' ? (req.paymentReference ?? '').trim() : '';
+      if (req.paymentMethod !== 'cash' && !trimmedPaymentRef) {
+        return problemJson(
+          400,
+          'VALIDATION_ERROR',
+          'Enter the payment reference number from your transfer receipt.',
+        );
+      }
+      state.nextQueueSeq += 1;
       const initialPaymentStatus: PaymentStatus =
         req.paymentMethod !== 'cash' && trimmedPaymentRef.length > 0
           ? 'pending_verification'

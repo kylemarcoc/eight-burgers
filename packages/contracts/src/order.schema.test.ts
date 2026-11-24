@@ -186,6 +186,37 @@ describe('order.schema', () => {
     });
     expect(dineInValid.success).toBe(true);
 
+    const gcashMissingRef = placeOrderRequestSchema.safeParse({
+      customerName: 'Ana',
+      contactNumber: '',
+      fulfillment: 'pickup',
+      addressOrNotes: '',
+      paymentMethod: 'gcash',
+      paymentReference: '   ',
+      items: [{ itemId: 'burger-deluxe', quantity: 1, selectedOptionIds: [] }],
+    });
+    expect(gcashMissingRef.success).toBe(false);
+    if (!gcashMissingRef.success) {
+      expect(gcashMissingRef.error.issues.map((issue) => issue.path.join('.'))).toContain(
+        'paymentReference',
+      );
+    }
+
+    const mayaMissingRef = placeOrderRequestSchema.safeParse({
+      customerName: 'Ana',
+      contactNumber: '',
+      fulfillment: 'pickup',
+      addressOrNotes: '',
+      paymentMethod: 'maya',
+      items: [{ itemId: 'burger-deluxe', quantity: 1, selectedOptionIds: [] }],
+    });
+    expect(mayaMissingRef.success).toBe(false);
+    if (!mayaMissingRef.success) {
+      expect(mayaMissingRef.error.issues.map((issue) => issue.path.join('.'))).toContain(
+        'paymentReference',
+      );
+    }
+
     const dineInMissingName = placeOrderRequestSchema.safeParse({
       customerName: '   ',
       contactNumber: '',

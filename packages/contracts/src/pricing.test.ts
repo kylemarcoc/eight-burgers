@@ -200,6 +200,7 @@ describe('contracts schemas and pricing math', () => {
       fulfillment: 'delivery',
       addressOrNotes: '',
       paymentMethod: 'gcash',
+      paymentReference: 'GCASH-DEL-1',
       items: [{ itemId: 'burger-deluxe', quantity: 1, selectedOptionIds: [] }],
     });
     expect(parsed.success).toBe(false);
@@ -217,6 +218,7 @@ describe('contracts schemas and pricing math', () => {
       deliveryPin: { lat: 14.5547, lng: 121.0244 },
       addressOrNotes: 'Ayala Avenue, Makati',
       paymentMethod: 'gcash',
+      paymentReference: 'GCASH-DEL-2',
       items: [{ itemId: 'burger-deluxe', quantity: 1, selectedOptionIds: [] }],
     });
     expect(validDelivery.success).toBe(true);

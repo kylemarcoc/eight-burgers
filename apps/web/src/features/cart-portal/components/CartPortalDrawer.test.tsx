@@ -214,6 +214,17 @@ describe('CartPortalDrawer', () => {
     fireEvent.change(within(dialog).getByLabelText(/payment method/i), {
       target: { value: 'gcash' },
     });
+    // Non-cash orders require a payment reference at checkout before submitting
+    fireEvent.click(within(dialog).getByRole('button', { name: /place order · ₱183/i }));
+    expect(
+      await within(dialog).findByText(
+        /enter the payment reference number from your transfer receipt/i,
+      ),
+    ).toBeTruthy();
+    const checkoutRefInput = within(dialog).getByLabelText(/^payment reference$/i);
+    expect(document.activeElement).toBe(checkoutRefInput);
+
+    fireEvent.change(checkoutRefInput, { target: { value: 'GC-1010' } });
     fireEvent.click(within(dialog).getByRole('button', { name: /place order · ₱183/i }));
 
     expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
@@ -223,7 +234,7 @@ describe('CartPortalDrawer', () => {
     ).toBeTruthy();
     expect(within(dialog).queryByText(/^zone:/i)).toBeNull();
     expect(within(dialog).getByText(/^gcash payment details$/i)).toBeTruthy();
-    expect(within(dialog).getByLabelText(/submit payment reference/i)).toBeTruthy();
+    expect(within(dialog).getByLabelText(/update payment reference/i)).toBeTruthy();
     const mapLink = within(dialog).getByRole('link', { name: /open in google maps/i });
     expect(mapLink.getAttribute('href')).toContain('https://maps.google.com/?q=14.56080,121.01240');
 
@@ -235,8 +246,14 @@ describe('CartPortalDrawer', () => {
     expect(writeText.mock.calls[0]?.[0]).toContain('8Burgers Order #8B-101');
     expect(writeText.mock.calls[0]?.[0]).toContain('Total Due: ₱183');
 
-    fireEvent.click(within(dialog).getByRole('button', { name: /done · back to menu/i }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /^back to menu$/i }));
     expect(screen.queryByRole('dialog')).toBeNull();
+
+    // Active receipt session stays intact when returning to menu, so reopening still shows Order Confirmed
+    fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
+    const reopenedDialog = screen.getByRole('dialog', { name: /your order cart/i });
+    expect(await within(reopenedDialog).findByText('Order Confirmed')).toBeTruthy();
+    expect(within(reopenedDialog).getByText('GC-1010')).toBeTruthy();
   });
 
   it('quotes fees dynamically from searched address, blocks out-of-range locations with recovery, unlocks free delivery, and requires manual address when GPS reverse lookup is null', async () => {
@@ -758,7 +775,7 @@ describe('CartPortalDrawer', () => {
   });
 
   it('omits deliveryZoneId, clamps composed addressOrNotes to 500 chars, and resets delivery state for the next order', async () => {
-    const { spy } = installMockShopApi();
+    const { spy, state } = installMockShopApi();
     render(
       <TestQueryWrapper>
         <CartDrawerTestHarness />
@@ -798,7 +815,18 @@ describe('CartPortalDrawer', () => {
     expect(typeof sentPayload.addressOrNotes).toBe('string');
     expect((sentPayload.addressOrNotes as string).length).toBeLessThanOrEqual(500);
 
-    // Dismiss receipt and start a fresh order -> delivery state must be reset
+    // Wait for initial receipt sync to settle, then mark completed to dismiss receipt and verify delivery state was reset
+    const refreshBtn = await within(dialog).findByRole('button', { name: /refresh status/i });
+    await waitFor(() => {
+      expect((refreshBtn as HTMLButtonElement).disabled).toBe(false);
+    });
+    if (state.orders[0]) {
+      state.orders[0] = { ...state.orders[0], status: 'completed', version: 2 };
+    }
+    fireEvent.click(refreshBtn);
+    await within(dialog).findByText('Completed');
+
+    // Dismiss completed receipt and start a fresh order -> delivery state must be reset
     fireEvent.click(within(dialog).getByRole('button', { name: /done · back to menu/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
@@ -1074,11 +1102,18 @@ describe('CartPortalDrawer', () => {
     expect(within(dialog).getByAltText('GCash Instant QR code')).toBeTruthy();
 
     fireEvent.change(within(dialog).getByLabelText(/your name/i), { target: { value: 'Bianca' } });
+    fireEvent.change(within(dialog).getByLabelText(/^payment reference$/i), {
+      target: { value: 'GC-1111' },
+    });
     fireEvent.click(within(dialog).getByRole('button', { name: /place order · ₱148/i }));
 
     expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
     expect(within(dialog).getByText('Dine-in · Table 7')).toBeTruthy();
-    expect(within(dialog).getByRole('button', { name: /^cancel order$/i })).toBeTruthy();
+    expect(within(dialog).getByText('Pending review')).toBeTruthy();
+    expect(within(dialog).queryByRole('button', { name: /^cancel order$/i })).toBeNull();
+    expect(
+      within(dialog).getByText(/online cancellation is unavailable once a payment reference/i),
+    ).toBeTruthy();
 
     // Verify opaque sessionStorage receipt token has zero PII
     const storedReceipt = window.sessionStorage.getItem(RECEIPT_SESSION_STORAGE_KEY) ?? '';
@@ -1101,22 +1136,6 @@ describe('CartPortalDrawer', () => {
     const reloadedDialog = screen.getByRole('dialog', { name: /your order cart/i });
     expect(await within(reloadedDialog).findByText('Order Confirmed')).toBeTruthy();
     expect(within(reloadedDialog).getByText('Dine-in · Table 7')).toBeTruthy();
-
-    // Submit payment reference post-checkout -> status becomes pending_verification and self-cancel is blocked
-    const refInput = within(reloadedDialog).getByLabelText(/submit payment reference/i);
-    fireEvent.change(refInput, { target: { value: 'GC-1111' } });
-    fireEvent.click(within(reloadedDialog).getByRole('button', { name: /submit ref/i }));
-
-    expect(
-      await within(reloadedDialog).findByText(/payment reference submitted for cashier review/i),
-    ).toBeTruthy();
-    expect(within(reloadedDialog).getByText('Pending review')).toBeTruthy();
-    expect(within(reloadedDialog).queryByRole('button', { name: /^cancel order$/i })).toBeNull();
-    expect(
-      within(reloadedDialog).getByText(
-        /online cancellation is unavailable once a payment reference/i,
-      ),
-    ).toBeTruthy();
 
     // Correct typo in payment reference while still pending_verification
     const updateRefInput = within(reloadedDialog).getByLabelText(/update payment reference/i);
@@ -1149,11 +1168,14 @@ describe('CartPortalDrawer', () => {
     fireEvent.change(within(dialog).getByLabelText(/payment method/i), {
       target: { value: 'gcash' },
     });
+    fireEvent.change(within(dialog).getByLabelText(/^payment reference$/i), {
+      target: { value: 'GC-1111' },
+    });
     fireEvent.click(within(dialog).getByRole('button', { name: /place order/i }));
 
     expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
 
-    const refInput = within(dialog).getByLabelText(/submit payment reference/i);
+    const refInput = within(dialog).getByLabelText(/update payment reference/i);
     refInput.focus();
     fireEvent.change(refInput, { target: { value: 'GC-42' } });
     expect(document.activeElement).toBe(refInput);
