@@ -13,11 +13,15 @@ const externalDependencies = new Set([
 
 export default defineConfig({
   build: {
-    ssr: 'src/index.ts',
+    ssr: true,
     outDir: 'dist',
     target: 'node22',
     sourcemap: true,
     rolldownOptions: {
+      input: {
+        index: 'src/index.ts',
+        vercel: 'src/vercel.ts',
+      },
       external: (id) =>
         nodeBuiltins.has(id) ||
         externalDependencies.has(id) ||

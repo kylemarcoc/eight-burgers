@@ -56,7 +56,7 @@ See [Feature structure](feature-structure.md) for folder conventions, [Component
 
 - Scripts in root [package.json](../package.json) run lint, formatting checks, tests, type-checking, and production builds across workspaces.
 - **`apps/web` output:** Static client assets write to `apps/web/dist/`.
-- **`apps/api` output:** The Node 22 server bundle writes to `apps/api/dist/index.js` via Vite 8 `build.rolldownOptions` (externalizing Node built-ins and runtime dependencies such as `sharp`).
+- **`apps/api` output:** The Node 22 server bundle writes to `apps/api/dist/index.js` (and serverless entry `apps/api/dist/vercel.js` when configured for single-project hosting via root `api/index.js` + `vercel.json`) via Vite 8 `build.rolldownOptions` (externalizing Node built-ins and runtime dependencies such as `sharp`).
 - Treat client build-time variables (`VITE_*`) as public and keep runtime secrets strictly in server runtime environment variables. See [Security](security.md#secrets-and-deployment) for configuration boundaries and [Testing strategy](testing-strategy.md#choosing-checks) for build checks.
 
 ## Routing and deployment
