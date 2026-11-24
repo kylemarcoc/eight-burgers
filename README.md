@@ -138,15 +138,16 @@ Deploy a brand-new white-label storefront without editing any application source
 
    - Use `--seed=demo` instead of `--seed=blank` if you want to preload the 8Burgers sample catalog for staging or evaluation.
 
-3. **Configure Production Environment Variables**
+3. **Configure Production Environment Variables & Hosting (Vercel or Node 22)**
    - Set all server-only secrets in your API hosting environment (see [.env.example](./.env.example)):
      - `NODE_ENV=production`
      - `APP_ORIGIN=https://order.yourshop.ph`
      - `COOKIE_SECURE=true` (and optional `COOKIE_DOMAIN=.yourshop.ph`)
      - `RECEIPT_SIGNING_SECRET`: **required** in production (minimum 32 random characters; never reuse `SUPABASE_SERVICE_ROLE_KEY`)
-     - `TRUST_PROXY=true` only when deployed behind a trusted reverse proxy that strips client-supplied `X-Forwarded-For` / `X-Real-IP` headers (defaults to `false`)
+     - `TRUST_PROXY=true` when deployed behind a trusted reverse proxy (such as Vercel) that sets `X-Forwarded-For` / `X-Real-IP` headers (defaults to `false`)
      - `ENABLE_DEMO_RESET=false` (default; keeps demo reset endpoints blocked with `403 DEMO_RESET_DISABLED`)
      - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
+   - **Vercel single-project deployment:** Root [vercel.json](./vercel.json) and [api/index.js](./api/index.js) serve `apps/web/dist` and route `/api/*`, `/healthz`, and `/readyz` through `apps/api/dist/vercel.js` on the same origin (required for `SameSite=Lax` `/api` auth cookies). Set Vercel's Node.js version to `22.x`, and note Vercel Functions enforce a `4.5 MB` request payload limit on image uploads (`apps/api` validates up to `5 MB`).
 
 4. **Finish Setup in `/admin`**
    - Sign in as the Owner at `/admin` and follow the built-in **Shop Setup Checklist**:
@@ -169,6 +170,8 @@ Environment variables are documented in [.env.example](./.env.example):
 ## Project Structure
 
 ```text
+api/
+  index.js              Vercel Serverless Function bridge to `apps/api/dist/vercel.js`
 apps/
   api/                  Hono REST BFF (@menu-kiosk/api) on :8787
   web/                  Vite + React 19 storefront & admin SPA (@menu-kiosk/web) on :5173
@@ -183,6 +186,7 @@ supabase/
   seeds/                Split catalog.sql (demo), blank.sql (production blank), and dev_admin.sql (local-only)
 docs/                   Domain-agnostic engineering guides for this stack
 .agents/skills/         Stack- and repo-agnostic workflow skills (+ conditional stack checklists)
+vercel.json             Single-project Vercel build, security headers, and SPA/API rewrites
 ```
 
 ## Checks and Builds
