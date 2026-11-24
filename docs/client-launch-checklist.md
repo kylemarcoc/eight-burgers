@@ -47,7 +47,7 @@ Use this per-client runbook when launching a new shop (e.g. coffee shop, burger 
 - [ ] Bootstrap the initial shop profile and **Owner** account using [scripts/init-shop.mjs](../scripts/init-shop.mjs) (`--seed=blank` for production; `--seed=demo` only for demos):
   ```sh
   SUPABASE_URL=https://<project-ref>.supabase.co \
-  SUPABASE_SERVICE_ROLE_KEY=<service-role-key> \
+  SUPABASE_SECRET_KEY=<secret-key> \
   npm run shop:init -- \
     --non-interactive \
     --owner-email owner@clientshop.ph \
@@ -89,8 +89,8 @@ Use this per-client runbook when launching a new shop (e.g. coffee shop, burger 
 - [ ] `TRUST_PROXY=true` _(only behind a trusted reverse proxy; otherwise `false`)_
 - [ ] `ENABLE_DEMO_RESET=false`
 - [ ] `SUPABASE_URL=https://<project-ref>.supabase.co`
-- [ ] `SUPABASE_ANON_KEY=<project-anon-key>`
-- [ ] `SUPABASE_SERVICE_ROLE_KEY=<project-service-role-key>`
+- [ ] `SUPABASE_PUBLISHABLE_KEY=<project-publishable-key>` _(legacy `SUPABASE_ANON_KEY` also supported)_
+- [ ] `SUPABASE_SECRET_KEY=<project-secret-key>` _(legacy `SUPABASE_SERVICE_ROLE_KEY` also supported)_
 - [ ] Save the complete non-git env block + Supabase details in your password manager.
 
 ---
