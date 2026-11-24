@@ -19,21 +19,29 @@ Each shop deploys its own instance and Supabase project configured entirely thro
 
 ## Screenshots (8Burgers Demo Seed)
 
-| Cart & Delivery Address Search                                                                             | Order Receipt & Live Tracker                                                             |
-| ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| ![Cart drawer with address autocomplete and distance quote](./docs/screenshots/cart-delivery-address.webp) | ![Order receipt and live 4-stage tracker](./docs/screenshots/order-receipt-tracker.webp) |
+| Item Customizer Modal                                                                                           | Cart & Delivery Address Search                                                                                                     |
+| --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| ![Item customizer modal with optional add-ons and special notes](./docs/screenshots/item-customizer-modal.webp) | ![Cart drawer with address autocomplete, distance quote, and GCash payment details](./docs/screenshots/cart-delivery-address.webp) |
 
-| Owner — Menu & Delivery Console                                                 | Owner — Distance-Formula Delivery Pricing                                                                   |
-| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| ![Owner menu and delivery manager](./docs/screenshots/admin-menu-delivery.webp) | ![Owner distance-formula delivery pricing and live preview](./docs/screenshots/admin-delivery-pricing.webp) |
+| Order Receipt & Live Tracker                                                                                               | Checkout — Pickup-Only Mode & Active Order Tab                                                                         |
+| -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| ![Order receipt with live 4-stage tracker and payment reference submission](./docs/screenshots/order-receipt-tracker.webp) | ![Cart drawer in pickup-only mode alongside an active tracked order tab](./docs/screenshots/cart-delivery-paused.webp) |
 
-| Staff Portal — Live Customer Orders                                       | Cashier — Menu Stock Manager                                              |
+| Owner — Store Branding & WCAG-AA Theme (`/admin/settings`)                                                        | Owner — Dine-in Table QR Generator (`/admin/settings`)                                     |
+| ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| ![Owner store branding, accent theme presets, and contrast preview](./docs/screenshots/admin-store-settings.webp) | ![Owner printable dine-in table QR code generator](./docs/screenshots/admin-table-qr.webp) |
+
+| Owner — Menu & Delivery Console (`/admin`)                                      | Owner — Categories & Option Groups (`/admin`)                                                                 |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| ![Owner menu and delivery manager](./docs/screenshots/admin-menu-delivery.webp) | ![Owner menu categories and reusable option groups manager](./docs/screenshots/admin-categories-options.webp) |
+
+| Owner — Distance-Formula Delivery Pricing                                                                   | Staff Portal — Live Customer Orders (`/admin/orders`)                                                                  |
+| ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| ![Owner distance-formula delivery pricing and live preview](./docs/screenshots/admin-delivery-pricing.webp) | ![Live customer orders queue with open/pause controls and payment filters](./docs/screenshots/admin-orders-queue.webp) |
+
+| Cashier — Menu Stock Manager (`/admin`)                                   | Owner — Team & Roles (`/admin/team`)                                      |
 | ------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| ![Live customer orders queue](./docs/screenshots/admin-orders-queue.webp) | ![Cashier menu stock manager](./docs/screenshots/cashier-menu-stock.webp) |
-
-| Owner — Team & Roles (`/admin/team`)                                      | Checkout — Paused Delivery State                                                            |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| ![Owner team and roles manager](./docs/screenshots/admin-team-roles.webp) | ![Cart drawer showing paused delivery option](./docs/screenshots/cart-delivery-paused.webp) |
+| ![Cashier menu stock manager](./docs/screenshots/cashier-menu-stock.webp) | ![Owner team and roles manager](./docs/screenshots/admin-team-roles.webp) |
 
 ## Technology Stack
 
@@ -183,6 +191,7 @@ docs/                   Domain-agnostic engineering guides for this stack
 | ---------------------- | ---------------------------------------------------- |
 | `npm run dev`          | Run `apps/api` (`:8787`) and `apps/web` (`:5173`)    |
 | `npm run shop:init`    | Bootstrap a new shop profile & Owner over REST APIs  |
+| `npm run screenshots`  | Regenerate `docs/screenshots/*.webp` from live dev   |
 | `npm run db:start`     | Start local Supabase Docker stack                    |
 | `npm run db:reset`     | Rebuild local Postgres 17 from migrations and seeds  |
 | `npm run db:status`    | Print local Supabase URLs and API keys               |
