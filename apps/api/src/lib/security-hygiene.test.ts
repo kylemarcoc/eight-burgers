@@ -45,6 +45,41 @@ describe('Phase 4 security config, trusted-proxy IP extraction, and bounded rate
     expect(prod.enableDemoReset).toBe(true);
   });
 
+  it('supports SUPABASE_PUBLISHABLE_KEY and SUPABASE_SECRET_KEY with legacy fallback', () => {
+    const modern = parseApiConfig({
+      SUPABASE_URL: 'https://example.supabase.co',
+      SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test_key',
+      SUPABASE_SECRET_KEY: 'sb_secret_test_key',
+    });
+    expect(modern.supabaseAnonKey).toBe('sb_publishable_test_key');
+    expect(modern.supabaseServiceRoleKey).toBe('sb_secret_test_key');
+
+    const prefersModern = parseApiConfig({
+      SUPABASE_URL: 'https://example.supabase.co',
+      SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_preferred',
+      SUPABASE_SECRET_KEY: 'sb_secret_preferred',
+      SUPABASE_ANON_KEY: 'legacy-anon',
+      SUPABASE_SERVICE_ROLE_KEY: 'legacy-service-role',
+    });
+    expect(prefersModern.supabaseAnonKey).toBe('sb_publishable_preferred');
+    expect(prefersModern.supabaseServiceRoleKey).toBe('sb_secret_preferred');
+
+    expect(() =>
+      parseApiConfig({
+        SUPABASE_URL: 'https://example.supabase.co',
+        SUPABASE_PUBLISHABLE_KEY: '   ',
+        SUPABASE_SECRET_KEY: 'sb_secret_test_key',
+      }),
+    ).toThrow(/SUPABASE_PUBLISHABLE_KEY/);
+
+    expect(() =>
+      parseApiConfig({
+        SUPABASE_URL: 'https://example.supabase.co',
+        SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test_key',
+      }),
+    ).toThrow(/SUPABASE_SECRET_KEY/);
+  });
+
   it('ignores proxy forwarding headers when TRUST_PROXY is false and extracts forwarded IP when true', () => {
     const headers = new Headers({
       'x-forwarded-for': '203.0.113.10, 10.0.0.1',

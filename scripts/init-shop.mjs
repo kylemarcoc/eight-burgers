@@ -407,7 +407,7 @@ Usage:
 
 Required environment variables (or .env / apps/api/.env.local):
   SUPABASE_URL
-  SUPABASE_SERVICE_ROLE_KEY
+  SUPABASE_SECRET_KEY (or legacy SUPABASE_SERVICE_ROLE_KEY)
 
 Options:
   --non-interactive           Fail instead of prompting for missing values
@@ -434,11 +434,13 @@ function deriveMonogram(storeName) {
   return single.slice(0, 2).toUpperCase() || 'SH';
 }
 
-function createSupabaseRestClient(supabaseUrl, serviceRoleKey) {
+function createSupabaseRestClient(supabaseUrl, secretKey) {
   const baseUrl = supabaseUrl.replace(/\/+$/, '');
+  const isModernApiKey = secretKey.startsWith('sb_');
   const baseHeaders = {
-    apikey: serviceRoleKey,
-    Authorization: `Bearer ${serviceRoleKey}`,
+    apikey: secretKey,
+    // Non-JWT sb_secret_ keys must not be sent as Authorization: Bearer tokens.
+    ...(isModernApiKey ? {} : { Authorization: `Bearer ${secretKey}` }),
     'Content-Type': 'application/json',
   };
 
@@ -717,15 +719,19 @@ async function main() {
   }
 
   const supabaseUrl = (process.env.SUPABASE_URL ?? '').trim();
-  const serviceRoleKey = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim();
-  if (!supabaseUrl || !serviceRoleKey) {
+  const secretKey = (
+    process.env.SUPABASE_SECRET_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    ''
+  ).trim();
+  if (!supabaseUrl || !secretKey) {
     throw new Error(
-      'SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in your environment or .env file.',
+      'SUPABASE_URL and SUPABASE_SECRET_KEY (or legacy SUPABASE_SERVICE_ROLE_KEY) must be set in your environment or .env file.',
     );
   }
 
   const config = await resolveInputs(flags);
-  const client = createSupabaseRestClient(supabaseUrl, serviceRoleKey);
+  const client = createSupabaseRestClient(supabaseUrl, secretKey);
 
   const authUser = await ensureOwnerAuthUser(client, config.ownerEmail, config.ownerPassword);
   await upsertOwnerAdminRecord(client, authUser.userId, config.ownerEmail);

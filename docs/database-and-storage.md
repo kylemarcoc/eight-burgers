@@ -40,9 +40,9 @@ $$;
 
 - **Enable RLS on every table and bucket.** Run `alter table public.<table> enable row level security;` on all `public` tables and define explicit `storage.objects` policies rather than relying solely on API middleware checks.
 - **Separate Supabase client privileges in `apps/api/src/`.** Instantiate clients with `persistSession: false`, `autoRefreshToken: false`, and `detectSessionInUrl: false` per privilege tier:
-  - **Anon client (`SUPABASE_ANON_KEY`):** Public read queries governed by `to anon, authenticated` `SELECT` policies.
-  - **User-scoped RLS client (`SUPABASE_ANON_KEY` + `Authorization: Bearer <accessToken>`):** Authenticated privileged table and storage mutations governed by `to authenticated` policies using a server-managed role/allowlist table and a `security definer` role helper.
-  - **Service-role client (`SUPABASE_SERVICE_ROLE_KEY`):** Restricted strictly to readiness probes, server-side allowlist lookups, and least-privilege `SECURITY DEFINER` RPCs—never used as a blanket bypass for standard user/admin CRUD routes.
+  - **Anon client (`SUPABASE_PUBLISHABLE_KEY` / legacy `SUPABASE_ANON_KEY`):** Public read queries governed by `to anon, authenticated` `SELECT` policies.
+  - **User-scoped RLS client (`SUPABASE_PUBLISHABLE_KEY` + `Authorization: Bearer <accessToken>`):** Authenticated privileged table and storage mutations governed by `to authenticated` policies using a server-managed role/allowlist table and a `security definer` role helper.
+  - **Service-role client (`SUPABASE_SECRET_KEY` / legacy `SUPABASE_SERVICE_ROLE_KEY`):** Restricted strictly to readiness probes, server-side allowlist lookups, and least-privilege `SECURITY DEFINER` RPCs—never used as a blanket bypass for standard user/admin CRUD routes.
 - **Never query private tables anonymously.** Keep sensitive transaction, receipt, customer, and allowlist tables inaccessible to `anon` (zero `anon` policies) and mediate guest capability lookups through dedicated hashed-token RPCs.
 
 ## Atomic RPCs (`SECURITY DEFINER`) and idempotency

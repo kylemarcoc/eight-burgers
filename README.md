@@ -147,7 +147,7 @@ Deploy a brand-new white-label storefront without editing any application source
      - `TRUST_PROXY=true` when deployed behind a trusted reverse proxy (such as Vercel) that sets `X-Forwarded-For` / `X-Real-IP` headers (defaults to `false`)
      - `ENABLE_DEMO_RESET=false` (default; keeps demo reset endpoints blocked with `403 DEMO_RESET_DISABLED`)
      - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
-   - **Vercel single-project deployment:** Root [vercel.json](./vercel.json) and [api/index.js](./api/index.js) serve `apps/web/dist` and route `/api/*`, `/healthz`, and `/readyz` through `apps/api/dist/vercel.js` on the same origin (required for `SameSite=Lax` `/api` auth cookies). Set Vercel's Node.js version to `22.x`, and note Vercel Functions enforce a `4.5 MB` request payload limit on image uploads (`apps/api` validates up to `5 MB`).
+   - **Vercel single-project deployment:** Root [vercel.json](./vercel.json) and [api/index.js](./api/index.js) serve `apps/web/dist` and route `/api/*`, `/healthz`, and `/readyz` through `apps/api/dist/vercel.js` on the same origin (required for `SameSite=Lax` `/api` auth cookies). Set Vercel's Node.js version to `22.x`, note Vercel Functions enforce a `4.5 MB` request payload limit on image uploads (`apps/api` validates up to `5 MB`), and see [Supabase & Vercel Deployment Guide](./docs/vercel-supabase-setup.md) for full setup instructions.
 
 4. **Finish Setup in `/admin`**
    - Sign in as the Owner at `/admin` and follow the built-in **Shop Setup Checklist**:
@@ -214,6 +214,7 @@ vercel.json             Single-project Vercel build, security headers, and SPA/A
 ## Documentation
 
 - [Architecture](./docs/architecture.md) — Layering, boundaries, routing, and deployment
+- [Supabase & Vercel Deployment Guide](./docs/vercel-supabase-setup.md) — Cloud Supabase setup, 8Burgers/blank seeding, and single-project Vercel configuration
 - [Coding standards](./docs/coding-standards.md) — TypeScript, naming, imports, and formatting
 - [Feature structure](./docs/feature-structure.md) — Feature ownership, public APIs, and translations
 - [State management](./docs/state-management.md) — Local, client, server, form, and URL state

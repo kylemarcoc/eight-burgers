@@ -5,6 +5,12 @@ import { z } from 'zod';
 
 const MIN_PROD_RECEIPT_SECRET_LENGTH = 32;
 
+const nonEmptyOptionalString = z
+  .string()
+  .trim()
+  .optional()
+  .transform((value) => (value ? value : undefined));
+
 const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -14,16 +20,8 @@ const envSchema = z
       .enum(['true', 'false'])
       .default('false')
       .transform((value) => value === 'true'),
-    COOKIE_DOMAIN: z
-      .string()
-      .trim()
-      .optional()
-      .transform((value) => (value ? value : undefined)),
-    RECEIPT_SIGNING_SECRET: z
-      .string()
-      .trim()
-      .optional()
-      .transform((value) => (value ? value : undefined)),
+    COOKIE_DOMAIN: nonEmptyOptionalString,
+    RECEIPT_SIGNING_SECRET: nonEmptyOptionalString,
     TRUST_PROXY: z
       .enum(['true', 'false'])
       .default('false')
@@ -33,10 +31,26 @@ const envSchema = z
       .default('false')
       .transform((value) => value === 'true'),
     SUPABASE_URL: z.url().default('http://127.0.0.1:55321'),
-    SUPABASE_ANON_KEY: z.string().min(1, 'SUPABASE_ANON_KEY is required'),
-    SUPABASE_SERVICE_ROLE_KEY: z.string().min(1, 'SUPABASE_SERVICE_ROLE_KEY is required'),
+    SUPABASE_PUBLISHABLE_KEY: nonEmptyOptionalString,
+    SUPABASE_SECRET_KEY: nonEmptyOptionalString,
+    SUPABASE_ANON_KEY: nonEmptyOptionalString,
+    SUPABASE_SERVICE_ROLE_KEY: nonEmptyOptionalString,
   })
   .superRefine((env, ctx) => {
+    if (!(env.SUPABASE_PUBLISHABLE_KEY ?? env.SUPABASE_ANON_KEY)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['SUPABASE_PUBLISHABLE_KEY'],
+        message: 'SUPABASE_PUBLISHABLE_KEY (or legacy SUPABASE_ANON_KEY) is required.',
+      });
+    }
+    if (!(env.SUPABASE_SECRET_KEY ?? env.SUPABASE_SERVICE_ROLE_KEY)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['SUPABASE_SECRET_KEY'],
+        message: 'SUPABASE_SECRET_KEY (or legacy SUPABASE_SERVICE_ROLE_KEY) is required.',
+      });
+    }
     if (
       env.NODE_ENV === 'production' &&
       (!env.RECEIPT_SIGNING_SECRET ||
@@ -87,6 +101,9 @@ export function parseApiConfig(
 ): ApiConfig {
   const parsed = envSchema.parse(rawEnv);
   const normalizedSupabaseUrl = parsed.SUPABASE_URL.replace(/\/+$/, '');
+  const supabaseAnonKey = parsed.SUPABASE_PUBLISHABLE_KEY ?? parsed.SUPABASE_ANON_KEY ?? '';
+  const supabaseServiceRoleKey =
+    parsed.SUPABASE_SECRET_KEY ?? parsed.SUPABASE_SERVICE_ROLE_KEY ?? '';
   const receiptSigningSecret =
     parsed.RECEIPT_SIGNING_SECRET ??
     createHash('sha256')
@@ -103,7 +120,7 @@ export function parseApiConfig(
     trustProxy: parsed.TRUST_PROXY,
     enableDemoReset: parsed.ENABLE_DEMO_RESET,
     supabaseUrl: normalizedSupabaseUrl,
-    supabaseAnonKey: parsed.SUPABASE_ANON_KEY,
-    supabaseServiceRoleKey: parsed.SUPABASE_SERVICE_ROLE_KEY,
+    supabaseAnonKey,
+    supabaseServiceRoleKey,
   };
 }
