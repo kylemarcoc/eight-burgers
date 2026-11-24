@@ -204,7 +204,7 @@ export function useUserPage(role: string | undefined, page: number, loadPage: Lo
 
 ## Form state
 
-Use local controlled state (`useState`) paired with shared Zod v4 contracts (`packages/contracts/src/`) — or adopt `react-hook-form` + `@hookform/resolvers` only if installed and justified for large multi-step forms. Keep field-level validation feedback accessible (`aria-invalid` + `aria-describedby`), preserve unsaved input on submission failures, protect against duplicate submits while pending, and always re-validate inputs server-side in `apps/api/` and PostgreSQL constraints.
+Use local controlled state (`useState`) for trivial single-field controls, or `react-hook-form` + `@hookform/resolvers/zod` with feature-local `features/<feature>/schemas/*.schema.ts` schemas (importing domain primitives from `packages/contracts/src/`) for multi-field forms. Prefer inline validation-time resolvers (`(values, ctx, options) => zodResolver(createSchema(...))(values, ctx, options)`) over `useMemo`-wrapped schemas when validation depends on runtime config, and use `<Controller>` paired with pure `resolveEffective*` helpers for custom or async-derived controls instead of `useEffect` `setValue` syncing. Keep field-level validation feedback accessible (`aria-invalid` + `aria-describedby`), preserve unsaved input on submission failures, protect against duplicate submits while pending, and always re-validate inputs server-side in `apps/api/` and PostgreSQL constraints.
 
 ## URL state
 

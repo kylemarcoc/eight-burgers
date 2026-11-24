@@ -1,15 +1,16 @@
+import { zodResolver } from '@hookform/resolvers/zod';
 import {
   MENU_IMAGE_ALLOWED_INPUT_MIME_TYPES,
   MENU_IMAGE_MAX_UPLOAD_BYTES,
   PAYMENT_METHOD_LABELS,
   PAYMENT_METHOD_VALUES,
-  isSafeImageUrl,
   isValidCoordinates,
   type PaymentMethod,
   type PaymentMethodsConfig,
   type StoreProfile,
 } from '@menu-kiosk/contracts';
-import { useCallback, useId, useRef, useState, type ChangeEvent, type SubmitEvent } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type ChangeEvent } from 'react';
+import { useForm, useWatch } from 'react-hook-form';
 import { getApiErrorMessage, isApiError } from '@/shared/lib/api-error';
 import {
   useDeleteUnusedStoreAssetMutation,
@@ -17,16 +18,12 @@ import {
   useUpdateStoreProfileMutation,
   useUploadStoreAssetMutation,
 } from '../hooks/useStoreSettings';
+import {
+  createStoreFulfillmentPaymentFormSchema,
+  type StoreFulfillmentPaymentFormValues,
+} from '../schemas/store-fulfillment-payment-form.schema';
 
 const ALLOWED_MIME_SET = new Set<string>(MENU_IMAGE_ALLOWED_INPUT_MIME_TYPES);
-
-type FulfillmentPaymentFormState = {
-  pickupEnabled: boolean;
-  deliveryEnabled: boolean;
-  dineInEnabled: boolean;
-  dineInTableRequired: boolean;
-  paymentMethods: PaymentMethodsConfig;
-};
 
 function clonePaymentMethods(methods: PaymentMethodsConfig): PaymentMethodsConfig {
   return {
@@ -37,7 +34,7 @@ function clonePaymentMethods(methods: PaymentMethodsConfig): PaymentMethodsConfi
   };
 }
 
-function storeToFormState(store: StoreProfile): FulfillmentPaymentFormState {
+function storeToFormState(store: StoreProfile): StoreFulfillmentPaymentFormValues {
   return {
     pickupEnabled: store.pickupEnabled,
     deliveryEnabled: store.deliveryEnabled,
@@ -73,35 +70,48 @@ export function StoreFulfillmentPaymentForm({ onStatusMessage }: StoreFulfillmen
   const updateProfileMutation = useUpdateStoreProfileMutation();
   const uploadAssetMutation = useUploadStoreAssetMutation();
   const deleteUnusedAssetMutation = useDeleteUnusedStoreAssetMutation();
+  const hasOriginPin = isValidCoordinates(store.originCoords);
 
-  const [form, setForm] = useState<FulfillmentPaymentFormState>(() => storeToFormState(store));
-  const [loadedVersion, setLoadedVersion] = useState<number | undefined>(store.version);
-  const [isDirty, setIsDirty] = useState(false);
+  const {
+    register,
+    control,
+    handleSubmit,
+    reset,
+    setValue,
+    clearErrors,
+    formState: { errors, isDirty },
+  } = useForm<StoreFulfillmentPaymentFormValues>({
+    defaultValues: storeToFormState(store),
+    resolver: (values, ctx, options) =>
+      zodResolver(createStoreFulfillmentPaymentFormSchema({ hasOriginPin }))(values, ctx, options),
+  });
+
+  const watchedValues = useWatch({ control });
+  const deliveryEnabled = watchedValues.deliveryEnabled ?? store.deliveryEnabled;
+  const dineInEnabled = watchedValues.dineInEnabled ?? store.dineInEnabled;
+
+  const loadedVersionRef = useRef<number | undefined>(store.version);
   const [conflict, setConflict] = useState(false);
-  const [fieldError, setFieldError] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadingMethod, setUploadingMethod] = useState<PaymentMethod | null>(null);
   const [pendingQrUploads, setPendingQrUploads] = useState<Partial<Record<PaymentMethod, string>>>(
     {},
   );
-  const [lastSyncedSignature, setLastSyncedSignature] = useState(() =>
-    getFulfillmentPaymentSignature(store),
-  );
+  const lastSyncedSignatureRef = useRef(getFulfillmentPaymentSignature(store));
 
   const currentSignature = getFulfillmentPaymentSignature(store);
-  if (currentSignature !== lastSyncedSignature) {
-    setLastSyncedSignature(currentSignature);
-    if (!isDirty) {
-      setForm(storeToFormState(store));
-      setLoadedVersion(store.version);
+
+  useEffect(() => {
+    if (!isDirty && currentSignature !== lastSyncedSignatureRef.current) {
+      lastSyncedSignatureRef.current = currentSignature;
+      reset(storeToFormState(store));
+      loadedVersionRef.current = store.version;
       setConflict(false);
-      setFieldError(null);
     }
-  }
+  }, [currentSignature, isDirty, reset, store]);
 
   const headingId = useId();
   const fileInputRefs = useRef<Partial<Record<PaymentMethod, HTMLInputElement | null>>>({});
-  const hasOriginPin = isValidCoordinates(store.originCoords);
 
   const cleanupUnusedAsset = useCallback(
     (url: string | undefined) => {
@@ -118,33 +128,12 @@ export function StoreFulfillmentPaymentForm({ onStatusMessage }: StoreFulfillmen
     setPendingQrUploads({});
     const refreshed = await catalogQuery.refetch();
     const latest = refreshed.data?.store ?? store;
-    setForm(storeToFormState(latest));
-    setLoadedVersion(latest.version);
-    setLastSyncedSignature(getFulfillmentPaymentSignature(latest));
-    setIsDirty(false);
+    lastSyncedSignatureRef.current = getFulfillmentPaymentSignature(latest);
+    reset(storeToFormState(latest));
+    loadedVersionRef.current = latest.version;
     setConflict(false);
-    setFieldError(null);
     setUploadError(null);
     onStatusMessage('Reloaded latest fulfillment and payment settings.');
-  }
-
-  function updateMethodField(
-    method: PaymentMethod,
-    field: keyof PaymentMethodsConfig[PaymentMethod],
-    value: string | boolean,
-  ) {
-    setForm((prev) => ({
-      ...prev,
-      paymentMethods: {
-        ...prev.paymentMethods,
-        [method]: {
-          ...prev.paymentMethods[method],
-          [field]: value,
-        },
-      },
-    }));
-    setIsDirty(true);
-    setFieldError(null);
   }
 
   async function handleQrUpload(event: ChangeEvent<HTMLInputElement>, method: PaymentMethod) {
@@ -174,7 +163,9 @@ export function StoreFulfillmentPaymentForm({ onStatusMessage }: StoreFulfillmen
         cleanupUnusedAsset(previousPending);
       }
       setPendingQrUploads((prev) => ({ ...prev, [method]: uploaded.imageUrl }));
-      updateMethodField(method, 'qrImageUrl', uploaded.imageUrl);
+      setValue(`paymentMethods.${method}.qrImageUrl`, uploaded.imageUrl, { shouldDirty: true });
+      clearErrors(`paymentMethods.${method}.qrImageUrl`);
+      clearErrors('root');
       onStatusMessage(
         `Uploaded ${PAYMENT_METHOD_LABELS[method]} QR (${formatKilobytes(uploaded.sizeBytes)}, ${uploaded.width}×${uploaded.height}). Save fulfillment & payments to publish.`,
       );
@@ -187,51 +178,26 @@ export function StoreFulfillmentPaymentForm({ onStatusMessage }: StoreFulfillmen
     }
   }
 
-  async function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!form.pickupEnabled && !form.deliveryEnabled && !form.dineInEnabled) {
-      setFieldError('Enable at least one fulfillment mode (Pickup, Delivery, or Dine-in).');
-      return;
-    }
-    if (form.deliveryEnabled && !hasOriginPin) {
-      setFieldError('Set your shop location pin above before enabling Delivery.');
-      return;
-    }
-
-    const sanitizedMethods = clonePaymentMethods(form.paymentMethods);
-    let enabledPaymentCount = 0;
+  async function onSubmit(values: StoreFulfillmentPaymentFormValues) {
+    const sanitizedMethods = clonePaymentMethods(values.paymentMethods);
     for (const method of PAYMENT_METHOD_VALUES) {
       const cfg = sanitizedMethods[method];
-      cfg.label = cfg.label.trim() || PAYMENT_METHOD_LABELS[method];
-      cfg.accountName = cfg.accountName.trim();
-      cfg.accountNumber = cfg.accountNumber.trim();
-      cfg.instructions = cfg.instructions.trim();
+      cfg.label = cfg.label.trim().slice(0, 40) || PAYMENT_METHOD_LABELS[method];
+      cfg.accountName = cfg.accountName.trim().slice(0, 120);
+      cfg.accountNumber = cfg.accountNumber.trim().slice(0, 80);
+      cfg.instructions = cfg.instructions.trim().slice(0, 280);
       cfg.qrImageUrl = method === 'cash' ? '' : cfg.qrImageUrl.trim();
-
-      if (cfg.qrImageUrl && (!isSafeImageUrl(cfg.qrImageUrl) || cfg.qrImageUrl.length > 500)) {
-        setFieldError(
-          `${PAYMENT_METHOD_LABELS[method]} QR URL must be a valid https:// URL or relative image path.`,
-        );
-        return;
-      }
-      if (cfg.enabled) enabledPaymentCount += 1;
     }
 
-    if (enabledPaymentCount === 0) {
-      setFieldError('Enable at least one payment method.');
-      return;
-    }
-
-    setFieldError(null);
+    clearErrors('root');
     try {
       const updated = await updateProfileMutation.mutateAsync({
-        pickupEnabled: form.pickupEnabled,
-        deliveryEnabled: form.deliveryEnabled,
-        dineInEnabled: form.dineInEnabled,
-        dineInTableRequired: form.dineInTableRequired,
+        pickupEnabled: values.pickupEnabled,
+        deliveryEnabled: values.deliveryEnabled,
+        dineInEnabled: values.dineInEnabled,
+        dineInTableRequired: values.dineInTableRequired,
         paymentMethods: sanitizedMethods,
-        expectedVersion: loadedVersion ?? store.version,
+        expectedVersion: loadedVersionRef.current ?? store.version,
       });
 
       for (const method of PAYMENT_METHOD_VALUES) {
@@ -241,10 +207,9 @@ export function StoreFulfillmentPaymentForm({ onStatusMessage }: StoreFulfillmen
         }
       }
       setPendingQrUploads({});
-      setForm(storeToFormState(updated));
-      setLoadedVersion(updated.version);
-      setLastSyncedSignature(getFulfillmentPaymentSignature(updated));
-      setIsDirty(false);
+      lastSyncedSignatureRef.current = getFulfillmentPaymentSignature(updated);
+      reset(storeToFormState(updated));
+      loadedVersionRef.current = updated.version;
       setConflict(false);
       onStatusMessage('Saved fulfillment and payment settings.');
     } catch (error) {
@@ -259,6 +224,11 @@ export function StoreFulfillmentPaymentForm({ onStatusMessage }: StoreFulfillmen
   }
 
   const isBusy = updateProfileMutation.isPending || uploadAssetMutation.isPending;
+  const fieldError =
+    errors.root?.message ??
+    PAYMENT_METHOD_VALUES.map(
+      (method) => errors.paymentMethods?.[method]?.qrImageUrl?.message,
+    ).find(Boolean);
 
   return (
     <section
@@ -293,20 +263,27 @@ export function StoreFulfillmentPaymentForm({ onStatusMessage }: StoreFulfillmen
         </div>
       ) : null}
 
-      <form noValidate onSubmit={(event) => void handleSubmit(event)} className="space-y-6">
+      <form
+        noValidate
+        onSubmit={(event) => {
+          if (isBusy) {
+            event.preventDefault();
+            return;
+          }
+          void handleSubmit(onSubmit)(event);
+        }}
+        className="space-y-6"
+      >
         <fieldset className="space-y-3">
           <legend className="text-xs font-semibold text-ui-text">Enabled fulfillment modes</legend>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-ui-border bg-ui-canvas p-3 text-xs">
               <input
                 type="checkbox"
-                checked={form.pickupEnabled}
-                onChange={(event) => {
-                  setForm((prev) => ({ ...prev, pickupEnabled: event.target.checked }));
-                  setIsDirty(true);
-                  setFieldError(null);
-                }}
                 className="accent-ui-accent mt-0.5 h-4 w-4 rounded"
+                {...register('pickupEnabled', {
+                  onChange: () => clearErrors('root'),
+                })}
               />
               <span>
                 <span className="block font-semibold text-ui-text">Pickup</span>
@@ -318,21 +295,18 @@ export function StoreFulfillmentPaymentForm({ onStatusMessage }: StoreFulfillmen
 
             <label
               className={`flex items-start gap-2.5 rounded-xl border border-ui-border bg-ui-canvas p-3 text-xs ${
-                !hasOriginPin && !form.deliveryEnabled
+                !hasOriginPin && !deliveryEnabled
                   ? 'cursor-not-allowed opacity-60'
                   : 'cursor-pointer'
               }`}
             >
               <input
                 type="checkbox"
-                disabled={!hasOriginPin && !form.deliveryEnabled}
-                checked={form.deliveryEnabled}
-                onChange={(event) => {
-                  setForm((prev) => ({ ...prev, deliveryEnabled: event.target.checked }));
-                  setIsDirty(true);
-                  setFieldError(null);
-                }}
+                disabled={!hasOriginPin && !deliveryEnabled}
                 className="accent-ui-accent mt-0.5 h-4 w-4 rounded"
+                {...register('deliveryEnabled', {
+                  onChange: () => clearErrors('root'),
+                })}
               />
               <span>
                 <span className="block font-semibold text-ui-text">Delivery</span>
@@ -347,13 +321,10 @@ export function StoreFulfillmentPaymentForm({ onStatusMessage }: StoreFulfillmen
             <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-ui-border bg-ui-canvas p-3 text-xs">
               <input
                 type="checkbox"
-                checked={form.dineInEnabled}
-                onChange={(event) => {
-                  setForm((prev) => ({ ...prev, dineInEnabled: event.target.checked }));
-                  setIsDirty(true);
-                  setFieldError(null);
-                }}
                 className="accent-ui-accent mt-0.5 h-4 w-4 rounded"
+                {...register('dineInEnabled', {
+                  onChange: () => clearErrors('root'),
+                })}
               />
               <span>
                 <span className="block font-semibold text-ui-text">Dine-in</span>
@@ -364,16 +335,12 @@ export function StoreFulfillmentPaymentForm({ onStatusMessage }: StoreFulfillmen
             </label>
           </div>
 
-          {form.dineInEnabled ? (
+          {dineInEnabled ? (
             <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-ui-border bg-ui-surface-muted px-3 py-2 text-xs font-medium text-ui-text">
               <input
                 type="checkbox"
-                checked={form.dineInTableRequired}
-                onChange={(event) => {
-                  setForm((prev) => ({ ...prev, dineInTableRequired: event.target.checked }));
-                  setIsDirty(true);
-                }}
                 className="accent-ui-accent h-4 w-4 rounded"
+                {...register('dineInTableRequired')}
               />
               <span>Require table number for dine-in orders</span>
             </label>
@@ -384,7 +351,10 @@ export function StoreFulfillmentPaymentForm({ onStatusMessage }: StoreFulfillmen
           <legend className="text-xs font-semibold text-ui-text">Payment methods</legend>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {PAYMENT_METHOD_VALUES.map((method) => {
-              const cfg = form.paymentMethods[method];
+              const cfg = {
+                ...store.paymentMethods[method],
+                ...watchedValues.paymentMethods?.[method],
+              };
               const isCash = method === 'cash';
               const methodTitle = PAYMENT_METHOD_LABELS[method];
               const isUploadingThis = uploadingMethod === method;
@@ -398,11 +368,10 @@ export function StoreFulfillmentPaymentForm({ onStatusMessage }: StoreFulfillmen
                     <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-ui-text">
                       <input
                         type="checkbox"
-                        checked={cfg.enabled}
-                        onChange={(event) =>
-                          updateMethodField(method, 'enabled', event.target.checked)
-                        }
                         className="accent-ui-accent h-4 w-4 rounded"
+                        {...register(`paymentMethods.${method}.enabled`, {
+                          onChange: () => clearErrors('root'),
+                        })}
                       />
                       <span>{methodTitle}</span>
                     </label>
@@ -428,10 +397,11 @@ export function StoreFulfillmentPaymentForm({ onStatusMessage }: StoreFulfillmen
                       id={`payment-label-${method}`}
                       type="text"
                       maxLength={40}
-                      value={cfg.label}
-                      onChange={(event) => updateMethodField(method, 'label', event.target.value)}
                       placeholder={methodTitle}
                       className="mt-1 w-full rounded-xl border border-ui-border bg-ui-surface px-3 py-1.5 text-xs text-ui-text"
+                      {...register(`paymentMethods.${method}.label`, {
+                        onChange: () => clearErrors('root'),
+                      })}
                     />
                   </div>
 
@@ -448,12 +418,11 @@ export function StoreFulfillmentPaymentForm({ onStatusMessage }: StoreFulfillmen
                           id={`payment-account-name-${method}`}
                           type="text"
                           maxLength={80}
-                          value={cfg.accountName}
-                          onChange={(event) =>
-                            updateMethodField(method, 'accountName', event.target.value)
-                          }
                           placeholder="e.g. Kape Kanto OPC"
                           className="mt-1 w-full rounded-xl border border-ui-border bg-ui-surface px-3 py-1.5 text-xs text-ui-text"
+                          {...register(`paymentMethods.${method}.accountName`, {
+                            onChange: () => clearErrors('root'),
+                          })}
                         />
                       </div>
                       <div>
@@ -467,12 +436,11 @@ export function StoreFulfillmentPaymentForm({ onStatusMessage }: StoreFulfillmen
                           id={`payment-account-number-${method}`}
                           type="text"
                           maxLength={40}
-                          value={cfg.accountNumber}
-                          onChange={(event) =>
-                            updateMethodField(method, 'accountNumber', event.target.value)
-                          }
                           placeholder="e.g. 0917 123 4567"
                           className="mt-1 w-full rounded-xl border border-ui-border bg-ui-surface px-3 py-1.5 text-xs text-ui-text"
+                          {...register(`paymentMethods.${method}.accountNumber`, {
+                            onChange: () => clearErrors('root'),
+                          })}
                         />
                       </div>
                     </div>
@@ -489,16 +457,15 @@ export function StoreFulfillmentPaymentForm({ onStatusMessage }: StoreFulfillmen
                       id={`payment-instructions-${method}`}
                       type="text"
                       maxLength={240}
-                      value={cfg.instructions}
-                      onChange={(event) =>
-                        updateMethodField(method, 'instructions', event.target.value)
-                      }
                       placeholder={
                         isCash
                           ? 'e.g. Pay at counter or to rider on delivery.'
                           : `e.g. Scan QR or send exact amount via ${methodTitle}.`
                       }
                       className="mt-1 w-full rounded-xl border border-ui-border bg-ui-surface px-3 py-1.5 text-xs text-ui-text"
+                      {...register(`paymentMethods.${method}.instructions`, {
+                        onChange: () => clearErrors('root'),
+                      })}
                     />
                   </div>
 
@@ -545,7 +512,11 @@ export function StoreFulfillmentPaymentForm({ onStatusMessage }: StoreFulfillmen
                                     return next;
                                   });
                                 }
-                                updateMethodField(method, 'qrImageUrl', '');
+                                setValue(`paymentMethods.${method}.qrImageUrl`, '', {
+                                  shouldDirty: true,
+                                });
+                                clearErrors(`paymentMethods.${method}.qrImageUrl`);
+                                clearErrors('root');
                               }}
                               className="rounded-lg border border-ui-border bg-ui-surface px-2 py-1 text-xs font-medium text-ui-error hover:bg-ui-surface-muted"
                             >
@@ -559,12 +530,9 @@ export function StoreFulfillmentPaymentForm({ onStatusMessage }: StoreFulfillmen
                         id={`payment-qr-url-${method}`}
                         type="url"
                         maxLength={500}
-                        value={cfg.qrImageUrl}
-                        onChange={(event) =>
-                          updateMethodField(method, 'qrImageUrl', event.target.value)
-                        }
                         placeholder="Upload QR or paste https:// image URL"
                         className="w-full rounded-xl border border-ui-border bg-ui-surface px-3 py-1.5 text-xs text-ui-text"
+                        {...register(`paymentMethods.${method}.qrImageUrl`)}
                       />
 
                       {cfg.qrImageUrl ? (

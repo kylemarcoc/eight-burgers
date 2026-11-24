@@ -1,3 +1,4 @@
+import { zodResolver } from '@hookform/resolvers/zod';
 import {
   MENU_IMAGE_ALLOWED_INPUT_MIME_TYPES,
   MENU_IMAGE_MAX_UPLOAD_BYTES,
@@ -7,19 +8,17 @@ import {
   type MenuItemInput,
   type UploadedMenuImage,
 } from '@menu-kiosk/contracts';
-import {
-  useCallback,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type ChangeEvent,
-  type SubmitEvent,
-} from 'react';
+import { useCallback, useId, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { Controller, useForm, useWatch } from 'react-hook-form';
 import { FoodImage } from '@/shared/components/FoodImage';
 import { getApiErrorMessage, isApiError } from '@/shared/lib/api-error';
-import { formatPhp, isSafeImageUrl } from '@/shared/shop/shop-storage';
+import { formatPhp } from '@/shared/shop/shop-storage';
 import { useCatalogQuery, useMenuMutations } from '../hooks/useCatalog';
+import {
+  createMenuItemFormSchema,
+  resolveEffectiveMenuCategory,
+  type MenuItemFormValues,
+} from '../schemas/menu-item-form.schema';
 import { AdminCategoriesManager } from './AdminCategoriesManager';
 import { AdminDeliverySettings } from './AdminDeliverySettings';
 import { AdminOptionGroupsManager } from './AdminOptionGroupsManager';
@@ -29,27 +28,7 @@ type StatusBanner = {
   message: string;
 };
 
-type FormState = {
-  name: string;
-  category: string;
-  pricePhp: string;
-  specLabel: string;
-  description: string;
-  imageUrl: string;
-  available: boolean;
-  featured: boolean;
-  optionGroupIds: string[];
-};
-
-type FormFieldErrors = {
-  name?: string;
-  category?: string;
-  pricePhp?: string;
-  description?: string;
-  imageUrl?: string;
-};
-
-function createEmptyForm(defaultCategoryId = ''): FormState {
+function createEmptyForm(defaultCategoryId = ''): MenuItemFormValues {
   return {
     name: '',
     category: defaultCategoryId,
@@ -63,7 +42,7 @@ function createEmptyForm(defaultCategoryId = ''): FormState {
   };
 }
 
-function itemToFormState(item: MenuItem): FormState {
+function itemToFormState(item: MenuItem): MenuItemFormValues {
   return {
     name: item.name,
     category: item.category,
@@ -117,17 +96,16 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
   );
   const menu = useMemo(() => catalogQuery.data?.menu ?? [], [catalogQuery.data?.menu]);
 
+  const categoryIds = useMemo(() => categories.map((category) => category.id), [categories]);
   const categoryLabels = useMemo(
     () => new Map<string, string>(categories.map((category) => [category.id, category.name])),
     [categories],
   );
-  const firstCategoryId = categories[0]?.id ?? '';
+  const firstCategoryId = categoryIds[0] ?? '';
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingVersion, setEditingVersion] = useState<number | undefined>(undefined);
   const [editConflict, setEditConflict] = useState(false);
-  const [form, setForm] = useState<FormState>(() => createEmptyForm(firstCategoryId));
-  const [formErrors, setFormErrors] = useState<FormFieldErrors>({});
   const [statusBanner, setStatusBanner] = useState<StatusBanner | null>(null);
   const [inventorySearch, setInventorySearch] = useState('');
   const [inventoryCategory, setInventoryCategory] = useState<string>('all');
@@ -141,8 +119,23 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
   > | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  const effectiveFormCategory =
-    form.category && categoryLabels.has(form.category) ? form.category : firstCategoryId;
+  const {
+    register,
+    control,
+    handleSubmit,
+    reset,
+    setValue,
+    setFocus,
+    clearErrors,
+    formState: { errors: formErrors },
+  } = useForm<MenuItemFormValues>({
+    defaultValues: createEmptyForm(firstCategoryId),
+    resolver: (values, ctx, options) =>
+      zodResolver(createMenuItemFormSchema({ categoryIds }))(values, ctx, options),
+  });
+
+  const watchedName = useWatch({ control, name: 'name' }) ?? '';
+  const watchedImageUrl = useWatch({ control, name: 'imageUrl' }) ?? '';
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cleanupPendingUpload = useCallback(
@@ -171,12 +164,6 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
     [editingId, menu],
   );
   const isEditingMissing = Boolean(editingId && catalogQuery.isSuccess && !editingItem);
-
-  const nameInputRef = useRef<HTMLInputElement | null>(null);
-  const categorySelectRef = useRef<HTMLSelectElement | null>(null);
-  const priceInputRef = useRef<HTMLInputElement | null>(null);
-  const descriptionInputRef = useRef<HTMLTextAreaElement | null>(null);
-  const imageInputRef = useRef<HTMLInputElement | null>(null);
 
   const nameErrorId = useId();
   const categoryErrorId = useId();
@@ -214,11 +201,10 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
     setEditingId(item.id);
     setEditingVersion(item.version);
     setEditConflict(false);
-    setForm(itemToFormState(item));
-    setFormErrors({});
+    reset(itemToFormState(item));
     setConfirmDeleteId(null);
     setStatusBanner(null);
-    nameInputRef.current?.focus();
+    setFocus('name');
   }
 
   function cancelEditing() {
@@ -229,17 +215,7 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
     setEditingId(null);
     setEditingVersion(undefined);
     setEditConflict(false);
-    setForm(createEmptyForm(firstCategoryId));
-    setFormErrors({});
-  }
-
-  function toggleFormOptionGroup(groupId: string) {
-    setForm((prev) => ({
-      ...prev,
-      optionGroupIds: prev.optionGroupIds.includes(groupId)
-        ? prev.optionGroupIds.filter((id) => id !== groupId)
-        : [...prev.optionGroupIds, groupId],
-    }));
+    reset(createEmptyForm(firstCategoryId));
   }
 
   async function handleImageFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -275,8 +251,8 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
         width: uploaded.width,
         height: uploaded.height,
       });
-      setForm((prev) => ({ ...prev, imageUrl: uploaded.imageUrl }));
-      setFormErrors((prev) => ({ ...prev, imageUrl: undefined }));
+      setValue('imageUrl', uploaded.imageUrl, { shouldDirty: true });
+      clearErrors('imageUrl');
       showStatus(
         `Optimized photo to WebP (${formatKilobytes(uploaded.sizeBytes)}, ${uploaded.width}×${uploaded.height}). Save the listing to apply it.`,
       );
@@ -293,74 +269,29 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
       showStatus('This menu item no longer exists in the catalog.', 'error');
       return;
     }
-    setForm(itemToFormState(latest));
+    reset(itemToFormState(latest));
     setEditingVersion(latest.version);
     setEditConflict(false);
-    setFormErrors({});
     showStatus(`Reloaded latest details for "${latest.name}".`);
   }
 
-  async function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const trimmedName = form.name.trim();
-    const parsedPrice = Number(form.pricePhp);
-    const trimmedDescription = form.description.trim();
-    const trimmedImageUrl = form.imageUrl.trim();
-    const chosenCategory = effectiveFormCategory;
-
-    const nextErrors: FormFieldErrors = {};
-    if (!trimmedName) {
-      nextErrors.name = 'Enter an item name before saving.';
-    } else if (trimmedName.length > 120) {
-      nextErrors.name = 'Item name must be 120 characters or fewer.';
-    }
-    if (!chosenCategory) {
-      nextErrors.category = 'Create at least one category before saving menu items.';
-    }
-    if (!Number.isFinite(parsedPrice) || parsedPrice <= 0 || parsedPrice > 100000) {
-      nextErrors.pricePhp = 'Enter a valid price between ₱1 and ₱100,000.';
-    }
-    if (!trimmedDescription) {
-      nextErrors.description = 'Enter ingredients or a short description for customers.';
-    } else if (trimmedDescription.length > 500) {
-      nextErrors.description = 'Description must be 500 characters or fewer.';
-    }
-    if (!isSafeImageUrl(trimmedImageUrl) || trimmedImageUrl.length > 500) {
-      nextErrors.imageUrl = 'Enter a valid https:// image URL (max 500 chars), or leave blank.';
-    }
-
-    if (
-      nextErrors.name ||
-      nextErrors.category ||
-      nextErrors.pricePhp ||
-      nextErrors.description ||
-      nextErrors.imageUrl
-    ) {
-      setFormErrors(nextErrors);
-      if (nextErrors.name) {
-        nameInputRef.current?.focus();
-      } else if (nextErrors.category) {
-        categorySelectRef.current?.focus();
-      } else if (nextErrors.pricePhp) {
-        priceInputRef.current?.focus();
-      } else if (nextErrors.description) {
-        descriptionInputRef.current?.focus();
-      } else if (nextErrors.imageUrl) {
-        imageInputRef.current?.focus();
-      }
-      return;
-    }
+  async function onSubmit(values: MenuItemFormValues) {
+    const trimmedName = values.name.trim();
+    const parsedPrice = Number(values.pricePhp);
+    const trimmedDescription = values.description.trim();
+    const trimmedImageUrl = values.imageUrl.trim();
+    const chosenCategory = resolveEffectiveMenuCategory(values.category, categoryIds);
 
     const payload: MenuItemInput = {
       name: trimmedName,
       category: chosenCategory,
       pricePhp: Math.round(parsedPrice),
-      specLabel: form.specLabel.trim().slice(0, 80) || 'Regular',
+      specLabel: values.specLabel.trim().slice(0, 80) || 'Regular',
       description: trimmedDescription,
       imageUrl: trimmedImageUrl,
-      available: form.available,
-      featured: form.featured,
-      optionGroupIds: form.optionGroupIds,
+      available: values.available,
+      featured: values.featured,
+      optionGroupIds: values.optionGroupIds,
     };
 
     try {
@@ -384,8 +315,7 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
       setPendingUploadedUrl(null);
       setUploadedImageMeta(null);
       setUploadError(null);
-      setFormErrors({});
-      setForm(createEmptyForm(firstCategoryId));
+      reset(createEmptyForm(firstCategoryId));
     } catch (error) {
       if (editingId && isApiError(error) && error.status === 409) {
         setEditConflict(true);
@@ -572,7 +502,13 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
 
             <form
               noValidate
-              onSubmit={(event) => void handleSubmit(event)}
+              onSubmit={(event) => {
+                if (isSavingItem || categories.length === 0) {
+                  event.preventDefault();
+                  return;
+                }
+                void handleSubmit(onSubmit)(event);
+              }}
               className="mt-4 space-y-4"
             >
               <div>
@@ -583,24 +519,16 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                   Item Name
                 </label>
                 <input
-                  ref={nameInputRef}
                   id="admin-item-name"
                   type="text"
                   maxLength={120}
-                  value={form.name}
                   aria-invalid={Boolean(formErrors.name)}
                   aria-describedby={formErrors.name ? nameErrorId : undefined}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setForm((prev) => ({ ...prev, name: value }));
-                    if (formErrors.name && value.trim()) {
-                      setFormErrors((prev) => ({ ...prev, name: undefined }));
-                    }
-                  }}
                   placeholder="e.g. Signature House Special"
                   className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text ${
                     formErrors.name ? 'border-ui-error' : 'border-ui-border'
                   }`}
+                  {...register('name')}
                 />
                 {formErrors.name ? (
                   <p
@@ -608,7 +536,7 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                     role="alert"
                     className="mt-1 text-xs font-semibold text-ui-error"
                   >
-                    {formErrors.name}
+                    {formErrors.name.message}
                   </p>
                 ) : null}
               </div>
@@ -621,43 +549,43 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                   >
                     Category
                   </label>
-                  <select
-                    ref={categorySelectRef}
-                    id="admin-item-category"
-                    disabled={categories.length === 0}
-                    value={effectiveFormCategory}
-                    aria-invalid={Boolean(formErrors.category)}
-                    aria-describedby={formErrors.category ? categoryErrorId : undefined}
-                    onChange={(event) => {
-                      setForm((prev) => ({
-                        ...prev,
-                        category: event.target.value,
-                      }));
-                      if (formErrors.category) {
-                        setFormErrors((prev) => ({ ...prev, category: undefined }));
-                      }
-                    }}
-                    className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text disabled:opacity-50 ${
-                      formErrors.category ? 'border-ui-error' : 'border-ui-border'
-                    }`}
-                  >
-                    {categories.length === 0 ? (
-                      <option value="">No categories yet</option>
-                    ) : (
-                      categories.map((category) => (
-                        <option key={category.id} value={category.id}>
-                          {category.name}
-                        </option>
-                      ))
+                  <Controller
+                    control={control}
+                    name="category"
+                    render={({ field }) => (
+                      <select
+                        id="admin-item-category"
+                        name={field.name}
+                        ref={field.ref}
+                        value={resolveEffectiveMenuCategory(field.value, categoryIds)}
+                        onBlur={field.onBlur}
+                        onChange={(event) => field.onChange(event.target.value)}
+                        disabled={categories.length === 0}
+                        aria-invalid={Boolean(formErrors.category)}
+                        aria-describedby={formErrors.category ? categoryErrorId : undefined}
+                        className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text disabled:opacity-50 ${
+                          formErrors.category ? 'border-ui-error' : 'border-ui-border'
+                        }`}
+                      >
+                        {categories.length === 0 ? (
+                          <option value="">No categories yet</option>
+                        ) : (
+                          categories.map((category) => (
+                            <option key={category.id} value={category.id}>
+                              {category.name}
+                            </option>
+                          ))
+                        )}
+                      </select>
                     )}
-                  </select>
+                  />
                   {formErrors.category ? (
                     <p
                       id={categoryErrorId}
                       role="alert"
                       className="mt-1 text-xs font-semibold text-ui-error"
                     >
-                      {formErrors.category}
+                      {formErrors.category.message}
                     </p>
                   ) : null}
                 </div>
@@ -670,26 +598,17 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                     Price (₱)
                   </label>
                   <input
-                    ref={priceInputRef}
                     id="admin-item-price"
                     type="number"
                     min={1}
                     max={100000}
                     step={1}
-                    value={form.pricePhp}
                     aria-invalid={Boolean(formErrors.pricePhp)}
                     aria-describedby={formErrors.pricePhp ? priceErrorId : undefined}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      setForm((prev) => ({ ...prev, pricePhp: value }));
-                      const numeric = Number(value);
-                      if (formErrors.pricePhp && Number.isFinite(numeric) && numeric > 0) {
-                        setFormErrors((prev) => ({ ...prev, pricePhp: undefined }));
-                      }
-                    }}
                     className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text tabular-nums ${
                       formErrors.pricePhp ? 'border-ui-error' : 'border-ui-border'
                     }`}
+                    {...register('pricePhp')}
                   />
                   {formErrors.pricePhp ? (
                     <p
@@ -697,7 +616,7 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                       role="alert"
                       className="mt-1 text-xs font-semibold text-ui-error"
                     >
-                      {formErrors.pricePhp}
+                      {formErrors.pricePhp.message}
                     </p>
                   ) : null}
                 </div>
@@ -714,12 +633,9 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                   id="admin-item-spec"
                   type="text"
                   maxLength={80}
-                  value={form.specLabel}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, specLabel: event.target.value }))
-                  }
                   placeholder="e.g. Regular, 16oz, 100g"
                   className="mt-1 w-full rounded-xl border border-ui-border bg-ui-canvas px-3 py-2 text-sm text-ui-text"
+                  {...register('specLabel')}
                 />
               </div>
 
@@ -731,24 +647,16 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                   Ingredients & Description
                 </label>
                 <textarea
-                  ref={descriptionInputRef}
                   id="admin-item-description"
                   rows={3}
                   maxLength={500}
-                  value={form.description}
                   aria-invalid={Boolean(formErrors.description)}
                   aria-describedby={formErrors.description ? descriptionErrorId : undefined}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setForm((prev) => ({ ...prev, description: value }));
-                    if (formErrors.description && value.trim()) {
-                      setFormErrors((prev) => ({ ...prev, description: undefined }));
-                    }
-                  }}
                   placeholder="Describe ingredients, serving notes, or highlights..."
                   className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text ${
                     formErrors.description ? 'border-ui-error' : 'border-ui-border'
                   }`}
+                  {...register('description')}
                 />
                 {formErrors.description ? (
                   <p
@@ -756,7 +664,7 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                     role="alert"
                     className="mt-1 text-xs font-semibold text-ui-error"
                   >
-                    {formErrors.description}
+                    {formErrors.description.message}
                   </p>
                 ) : null}
               </div>
@@ -797,44 +705,36 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                     {uploadError}
                   </p>
                 ) : null}
-                {uploadedImageMeta && pendingUploadedUrl === form.imageUrl ? (
+                {uploadedImageMeta && pendingUploadedUrl === watchedImageUrl ? (
                   <p role="status" className="text-xs font-medium text-ui-accent tabular-nums">
                     Uploaded WebP ({formatKilobytes(uploadedImageMeta.sizeBytes)} ·{' '}
                     {uploadedImageMeta.width}×{uploadedImageMeta.height}) — save listing to publish.
                   </p>
                 ) : null}
                 <input
-                  ref={imageInputRef}
                   id="admin-item-image"
                   type="url"
                   maxLength={500}
-                  value={form.imageUrl}
                   aria-invalid={Boolean(formErrors.imageUrl)}
                   aria-describedby={formErrors.imageUrl ? imageErrorId : undefined}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setForm((prev) => ({ ...prev, imageUrl: value }));
-                    if (formErrors.imageUrl && isSafeImageUrl(value)) {
-                      setFormErrors((prev) => ({ ...prev, imageUrl: undefined }));
-                    }
-                  }}
                   placeholder="https://example.com/menu-photo.webp"
                   className={`w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text ${
                     formErrors.imageUrl ? 'border-ui-error' : 'border-ui-border'
                   }`}
+                  {...register('imageUrl')}
                 />
                 {formErrors.imageUrl ? (
                   <p id={imageErrorId} role="alert" className="text-xs font-semibold text-ui-error">
-                    {formErrors.imageUrl}
+                    {formErrors.imageUrl.message}
                   </p>
                 ) : null}
 
                 <div className="overflow-hidden rounded-xl border border-ui-border bg-ui-surface-muted">
                   <div className="aspect-[16/9] w-full">
                     <FoodImage
-                      src={form.imageUrl}
-                      alt={form.name || 'Menu item preview'}
-                      badgeText={form.name || 'Preview'}
+                      src={watchedImageUrl}
+                      alt={watchedName || 'Menu item preview'}
+                      badgeText={watchedName || 'Preview'}
                       className="h-full w-full"
                     />
                   </div>
@@ -846,32 +746,44 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                   <legend className="text-xs font-semibold text-ui-text">
                     Attached option groups
                   </legend>
-                  <div className="flex flex-wrap gap-2">
-                    {optionGroups.map((group) => {
-                      const checked = form.optionGroupIds.includes(group.id);
-                      return (
-                        <label
-                          key={group.id}
-                          className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs ${
-                            checked
-                              ? 'border-ui-accent bg-ui-surface font-semibold text-ui-text'
-                              : 'border-ui-border bg-ui-canvas text-ui-text-muted'
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggleFormOptionGroup(group.id)}
-                            className="accent-ui-accent h-3.5 w-3.5 rounded"
-                          />
-                          <span>{group.name}</span>
-                          {!group.active ? (
-                            <span className="text-[10px] text-ui-error">(Paused)</span>
-                          ) : null}
-                        </label>
-                      );
-                    })}
-                  </div>
+                  <Controller
+                    control={control}
+                    name="optionGroupIds"
+                    render={({ field }) => (
+                      <div className="flex flex-wrap gap-2">
+                        {optionGroups.map((group) => {
+                          const checked = field.value.includes(group.id);
+                          return (
+                            <label
+                              key={group.id}
+                              className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs ${
+                                checked
+                                  ? 'border-ui-accent bg-ui-surface font-semibold text-ui-text'
+                                  : 'border-ui-border bg-ui-canvas text-ui-text-muted'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onBlur={field.onBlur}
+                                onChange={() => {
+                                  const nextIds = checked
+                                    ? field.value.filter((id) => id !== group.id)
+                                    : [...field.value, group.id];
+                                  field.onChange(nextIds);
+                                }}
+                                className="accent-ui-accent h-3.5 w-3.5 rounded"
+                              />
+                              <span>{group.name}</span>
+                              {!group.active ? (
+                                <span className="text-[10px] text-ui-error">(Paused)</span>
+                              ) : null}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  />
                 </fieldset>
               ) : null}
 
@@ -879,22 +791,16 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                 <label className="flex cursor-pointer items-center gap-2">
                   <input
                     type="checkbox"
-                    checked={form.available}
-                    onChange={(event) =>
-                      setForm((prev) => ({ ...prev, available: event.target.checked }))
-                    }
                     className="accent-ui-accent h-4 w-4 rounded"
+                    {...register('available')}
                   />
                   <span>In stock</span>
                 </label>
                 <label className="flex cursor-pointer items-center gap-2">
                   <input
                     type="checkbox"
-                    checked={form.featured}
-                    onChange={(event) =>
-                      setForm((prev) => ({ ...prev, featured: event.target.checked }))
-                    }
                     className="accent-ui-accent h-4 w-4 rounded"
+                    {...register('featured')}
                   />
                   <span>Featured</span>
                 </label>
@@ -1044,7 +950,7 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                             .then((updated) => {
                               if (editingId === updated.id) {
                                 setEditingVersion(updated.version);
-                                setForm((prev) => ({ ...prev, available: updated.available }));
+                                setValue('available', updated.available);
                                 setEditConflict(false);
                               }
                             })

@@ -139,7 +139,9 @@ describe('CartPortalDrawer', () => {
     });
     fireEvent.click(within(dialog).getByRole('button', { name: /place order/i }));
 
-    expect(nameInput.getAttribute('aria-invalid')).toBe('true');
+    await waitFor(() => {
+      expect(nameInput.getAttribute('aria-invalid')).toBe('true');
+    });
     const nameErrorId = nameInput.getAttribute('aria-describedby');
     expect(nameErrorId).toBeTruthy();
     expect(document.getElementById(nameErrorId ?? '')?.textContent).toContain('Enter your name');
@@ -153,7 +155,9 @@ describe('CartPortalDrawer', () => {
     fireEvent.change(nameInput, { target: { value: 'Marco' } });
     fireEvent.change(contactInput, { target: { value: '09171234567' } });
     fireEvent.click(within(dialog).getByRole('button', { name: /place order/i }));
-    expect(document.activeElement).toBe(locationInput);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(locationInput);
+    });
 
     fireEvent.click(within(dialog).getByRole('radio', { name: /pickup/i }));
     expect(within(dialog).queryByText(/select a delivery address/i)).toBeNull();
@@ -297,9 +301,11 @@ describe('CartPortalDrawer', () => {
       expect(within(dialog).getByText('Device location')).toBeTruthy();
     });
     fireEvent.click(within(dialog).getByRole('button', { name: /place order · ₱352/i }));
-    expect(document.activeElement).toBe(
-      within(dialog).getByLabelText(/street, building & rider notes/i),
-    );
+    await waitFor(() => {
+      expect(document.activeElement).toBe(
+        within(dialog).getByLabelText(/street, building & rider notes/i),
+      );
+    });
 
     // Clear GPS and search Bonifacio High Street (5.5 km -> ₱90 fee -> ₱388 total)
     fireEvent.click(within(dialog).getByRole('button', { name: /^change$/i }));
@@ -762,11 +768,13 @@ describe('CartPortalDrawer', () => {
 
     fireEvent.click(within(dialog).getByRole('button', { name: /place order · ₱298/i }));
     expect(
-      within(dialog).getByText(
+      await within(dialog).findByText(
         /select a delivery address from the suggestions or use your device location/i,
       ),
     ).toBeTruthy();
-    expect(document.activeElement).toBe(locationInput);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(locationInput);
+    });
 
     const orderPosts = spy.mock.calls.filter(
       ([input, init]) => String(input) === '/api/v1/orders' && init?.method === 'POST',
@@ -1198,5 +1206,178 @@ describe('CartPortalDrawer', () => {
       expect(within(dialog).queryByText('Ready at Counter')).toBeTruthy();
     });
     expect(document.activeElement).toBe(refInput);
+  });
+
+  it('preserves dineInTable across order reset and clears unedited tableNumber when dineInTable is dismissed', async () => {
+    const { state } = installMockShopApi({
+      initialStore: {
+        dineInEnabled: true,
+        dineInTableRequired: true,
+      },
+    });
+
+    window.sessionStorage.setItem(DINE_IN_TABLE_STORAGE_KEY, '7');
+    useCartStore.getState().actions.rehydrateSessionStorage();
+
+    render(
+      <TestQueryWrapper>
+        <CartDrawerTestHarness />
+      </TestQueryWrapper>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
+
+    const dialog = screen.getByRole('dialog', { name: /your order cart/i });
+    await within(dialog).findByText('Burger Deluxe');
+    const tableInput = within(dialog).getByLabelText(/table number/i) as HTMLInputElement;
+    expect(tableInput.value).toBe('7');
+
+    fireEvent.change(within(dialog).getByLabelText(/your name/i), { target: { value: 'Bianca' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /place order · ₱148/i }));
+    expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
+
+    // Mark completed and dismiss receipt, then start a second order while dineInTable is still active
+    const refreshBtn = await within(dialog).findByRole('button', { name: /refresh status/i });
+    await waitFor(() => {
+      expect((refreshBtn as HTMLButtonElement).disabled).toBe(false);
+    });
+    if (state.orders[0]) {
+      state.orders[0] = { ...state.orders[0], status: 'completed', version: 2 };
+    }
+    fireEvent.click(refreshBtn);
+    await within(dialog).findByText('Completed');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /done · back to menu/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
+
+    const nextDialog = screen.getByRole('dialog', { name: /your order cart/i });
+    await within(nextDialog).findByText('Burger Deluxe');
+    const nextTableInput = within(nextDialog).getByLabelText(/table number/i) as HTMLInputElement;
+    expect(nextTableInput.value).toBe('7');
+
+    // Dismissing the dine-in table banner clears the unedited tableNumber input
+    useCartStore.getState().actions.clearDineInTable();
+    await waitFor(() => {
+      expect(nextTableInput.value).toBe('');
+    });
+  });
+
+  it('does not trigger field validation errors or steal focus when submitting while checkout is disabled', async () => {
+    installMockShopApi({
+      initialStore: {
+        acceptingOrders: false,
+      },
+    });
+
+    render(
+      <TestQueryWrapper>
+        <CartDrawerTestHarness />
+      </TestQueryWrapper>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
+
+    const dialog = screen.getByRole('dialog', { name: /your order cart/i });
+    await within(dialog).findByText('Burger Deluxe');
+    const nameInput = within(dialog).getByLabelText(/your name/i);
+    const submitButton = within(dialog).getByRole('button', { name: /place order/i });
+    const form = submitButton.closest('form');
+    expect(form).toBeTruthy();
+
+    if (form) {
+      fireEvent.submit(form);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(nameInput.getAttribute('aria-invalid')).toBe('false');
+    expect(within(dialog).queryByText(/enter your name/i)).toBeNull();
+    expect(document.activeElement).not.toBe(nameInput);
+  });
+
+  it('defaults payment method to the first enabled method when cash is disabled and switches cleanly', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { spy } = installMockShopApi({
+      initialStore: {
+        paymentMethods: {
+          cash: {
+            enabled: false,
+            label: 'Cash',
+            accountName: '',
+            accountNumber: '',
+            instructions: '',
+            qrImageUrl: '',
+          },
+          gcash: {
+            enabled: true,
+            label: 'GCash',
+            accountName: '8Burgers OPC',
+            accountNumber: '0917 555 1234',
+            instructions: '',
+            qrImageUrl: '',
+          },
+          maya: {
+            enabled: true,
+            label: 'Maya',
+            accountName: '8Burgers Maya',
+            accountNumber: '0918 555 6789',
+            instructions: '',
+            qrImageUrl: '',
+          },
+          bank_transfer: {
+            enabled: false,
+            label: 'Bank Transfer',
+            accountName: '',
+            accountNumber: '',
+            instructions: '',
+            qrImageUrl: '',
+          },
+        },
+      },
+    });
+
+    render(
+      <TestQueryWrapper>
+        <CartDrawerTestHarness />
+      </TestQueryWrapper>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Seed Burger' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
+
+    const dialog = screen.getByRole('dialog', { name: /your order cart/i });
+    await within(dialog).findByText('Burger Deluxe');
+
+    const paymentSelect = within(dialog).getByLabelText(/payment method/i) as HTMLSelectElement;
+    expect(paymentSelect.value).toBe('gcash');
+    expect(within(dialog).getByText('0917 555 1234')).toBeTruthy();
+
+    fireEvent.change(paymentSelect, { target: { value: 'maya' } });
+    expect(paymentSelect.value).toBe('maya');
+    expect(within(dialog).getByText('0918 555 6789')).toBeTruthy();
+
+    fireEvent.change(paymentSelect, { target: { value: 'gcash' } });
+    expect(paymentSelect.value).toBe('gcash');
+    expect(within(dialog).getByText('0917 555 1234')).toBeTruthy();
+
+    // Payment reference is required because cash is disabled
+    fireEvent.change(within(dialog).getByLabelText(/your name/i), { target: { value: 'Marco' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /place order/i }));
+    expect(await within(dialog).findByText(/enter the payment reference number/i)).toBeTruthy();
+
+    fireEvent.change(within(dialog).getByLabelText(/^payment reference$/i), {
+      target: { value: 'GC-2026' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /place order/i }));
+    expect(await within(dialog).findByText('Order Confirmed')).toBeTruthy();
+
+    const orderPost = spy.mock.calls.find(
+      ([input, init]) => String(input) === '/api/v1/orders' && init?.method === 'POST',
+    );
+    const payload = JSON.parse(String(orderPost?.[1]?.body ?? '{}')) as Record<string, unknown>;
+    expect(payload.paymentMethod).toBe('gcash');
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 });

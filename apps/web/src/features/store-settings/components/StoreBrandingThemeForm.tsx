@@ -1,24 +1,16 @@
+import { zodResolver } from '@hookform/resolvers/zod';
 import {
   CURATED_STORE_THEME_PRESET_VALUES,
   MENU_IMAGE_ALLOWED_INPUT_MIME_TYPES,
   MENU_IMAGE_MAX_UPLOAD_BYTES,
   STORE_THEME_TOKENS,
   getContrastRatio,
-  isSafeImageUrl,
   resolveStoreAccentTokens,
   storeAccentHexSchema,
   type StoreProfile,
-  type StoreThemePreset,
 } from '@menu-kiosk/contracts';
-import {
-  useCallback,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type ChangeEvent,
-  type SubmitEvent,
-} from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { Controller, useForm, useWatch } from 'react-hook-form';
 import { getApiErrorMessage, isApiError } from '@/shared/lib/api-error';
 import {
   useDeleteUnusedStoreAssetMutation,
@@ -26,17 +18,14 @@ import {
   useUpdateStoreProfileMutation,
   useUploadStoreAssetMutation,
 } from '../hooks/useStoreSettings';
+import {
+  storeBrandingThemeFormSchema,
+  type StoreBrandingThemeFormValues,
+} from '../schemas/store-branding-theme-form.schema';
 
 const ALLOWED_MIME_SET = new Set<string>(MENU_IMAGE_ALLOWED_INPUT_MIME_TYPES);
 
-type BrandingFormState = {
-  logoUrl: string;
-  heroImageUrl: string;
-  themeAccentPreset: StoreThemePreset;
-  themeAccentHex: string;
-};
-
-function storeToBrandingState(store: StoreProfile): BrandingFormState {
+function storeToBrandingState(store: StoreProfile): StoreBrandingThemeFormValues {
   return {
     logoUrl: store.logoUrl,
     heroImageUrl: store.heroImageUrl,
@@ -70,26 +59,42 @@ export function StoreBrandingThemeForm({ onStatusMessage }: StoreBrandingThemeFo
   const uploadAssetMutation = useUploadStoreAssetMutation();
   const deleteUnusedAssetMutation = useDeleteUnusedStoreAssetMutation();
 
-  const [form, setForm] = useState<BrandingFormState>(() => storeToBrandingState(store));
-  const [loadedVersion, setLoadedVersion] = useState<number | undefined>(store.version);
-  const [isDirty, setIsDirty] = useState(false);
+  const {
+    register,
+    control,
+    handleSubmit,
+    reset,
+    setValue,
+    clearErrors,
+    formState: { errors, isDirty },
+  } = useForm<StoreBrandingThemeFormValues>({
+    defaultValues: storeToBrandingState(store),
+    resolver: zodResolver(storeBrandingThemeFormSchema),
+  });
+
+  const watched = useWatch({ control });
+  const logoUrl = watched.logoUrl ?? store.logoUrl;
+  const heroImageUrl = watched.heroImageUrl ?? store.heroImageUrl;
+  const themeAccentPreset = watched.themeAccentPreset ?? store.themeAccentPreset;
+  const themeAccentHex = watched.themeAccentHex ?? store.themeAccentHex ?? '#c2410c';
+
+  const loadedVersionRef = useRef<number | undefined>(store.version);
   const [conflict, setConflict] = useState(false);
   const [pendingLogoUpload, setPendingLogoUpload] = useState<string | null>(null);
   const [pendingHeroUpload, setPendingHeroUpload] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [fieldError, setFieldError] = useState<string | null>(null);
-  const [lastSyncedSignature, setLastSyncedSignature] = useState(() => getBrandingSignature(store));
+  const lastSyncedSignatureRef = useRef(getBrandingSignature(store));
 
   const currentSignature = getBrandingSignature(store);
-  if (currentSignature !== lastSyncedSignature) {
-    setLastSyncedSignature(currentSignature);
-    if (!isDirty) {
-      setForm(storeToBrandingState(store));
-      setLoadedVersion(store.version);
+
+  useEffect(() => {
+    if (!isDirty && currentSignature !== lastSyncedSignatureRef.current) {
+      lastSyncedSignatureRef.current = currentSignature;
+      reset(storeToBrandingState(store));
+      loadedVersionRef.current = store.version;
       setConflict(false);
-      setFieldError(null);
     }
-  }
+  }, [currentSignature, isDirty, reset, store]);
 
   const logoFileRef = useRef<HTMLInputElement | null>(null);
   const heroFileRef = useRef<HTMLInputElement | null>(null);
@@ -107,10 +112,10 @@ export function StoreBrandingThemeForm({ onStatusMessage }: StoreBrandingThemeFo
   const previewTokens = useMemo(
     () =>
       resolveStoreAccentTokens(
-        form.themeAccentPreset,
-        form.themeAccentPreset === 'custom' ? form.themeAccentHex : null,
+        themeAccentPreset,
+        themeAccentPreset === 'custom' ? themeAccentHex : null,
       ),
-    [form.themeAccentPreset, form.themeAccentHex],
+    [themeAccentPreset, themeAccentHex],
   );
 
   const lightContrast = useMemo(
@@ -129,12 +134,10 @@ export function StoreBrandingThemeForm({ onStatusMessage }: StoreBrandingThemeFo
     setPendingHeroUpload(null);
     const refreshed = await catalogQuery.refetch();
     const latest = refreshed.data?.store ?? store;
-    setForm(storeToBrandingState(latest));
-    setLoadedVersion(latest.version);
-    setLastSyncedSignature(getBrandingSignature(latest));
-    setIsDirty(false);
+    lastSyncedSignatureRef.current = getBrandingSignature(latest);
+    reset(storeToBrandingState(latest));
+    loadedVersionRef.current = latest.version;
     setConflict(false);
-    setFieldError(null);
     setUploadError(null);
     onStatusMessage('Reloaded latest branding and theme settings.');
   }
@@ -165,15 +168,17 @@ export function StoreBrandingThemeForm({ onStatusMessage }: StoreBrandingThemeFo
           cleanupUnusedAsset(pendingLogoUpload);
         }
         setPendingLogoUpload(uploaded.imageUrl);
-        setForm((prev) => ({ ...prev, logoUrl: uploaded.imageUrl }));
+        setValue('logoUrl', uploaded.imageUrl, { shouldDirty: true });
+        clearErrors('logoUrl');
       } else {
         if (pendingHeroUpload && pendingHeroUpload !== uploaded.imageUrl) {
           cleanupUnusedAsset(pendingHeroUpload);
         }
         setPendingHeroUpload(uploaded.imageUrl);
-        setForm((prev) => ({ ...prev, heroImageUrl: uploaded.imageUrl }));
+        setValue('heroImageUrl', uploaded.imageUrl, { shouldDirty: true });
+        clearErrors('heroImageUrl');
       }
-      setIsDirty(true);
+      clearErrors('root');
       onStatusMessage(
         `Uploaded ${purpose} (${formatKilobytes(uploaded.sizeBytes)}, ${uploaded.width}×${uploaded.height}). Save branding to publish.`,
       );
@@ -182,40 +187,22 @@ export function StoreBrandingThemeForm({ onStatusMessage }: StoreBrandingThemeFo
     }
   }
 
-  async function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function onSubmit(values: StoreBrandingThemeFormValues) {
+    const trimmedLogo = values.logoUrl.trim();
+    const trimmedHero = values.heroImageUrl.trim();
+    const resolvedCustomHex =
+      values.themeAccentPreset === 'custom'
+        ? storeAccentHexSchema.parse(values.themeAccentHex)
+        : null;
 
-    const trimmedLogo = form.logoUrl.trim();
-    const trimmedHero = form.heroImageUrl.trim();
-    if (!isSafeImageUrl(trimmedLogo) || trimmedLogo.length > 500) {
-      setFieldError('Logo URL must be a valid https:// URL or relative image path.');
-      return;
-    }
-    if (!isSafeImageUrl(trimmedHero) || trimmedHero.length > 500) {
-      setFieldError('Hero banner URL must be a valid https:// URL or relative image path.');
-      return;
-    }
-
-    let resolvedCustomHex: string | null = null;
-    if (form.themeAccentPreset === 'custom') {
-      const hexParsed = storeAccentHexSchema.safeParse(form.themeAccentHex);
-      if (!hexParsed.success) {
-        setFieldError(
-          hexParsed.error.issues[0]?.message ?? 'Enter a 6-digit hex color (for example, #C2410C).',
-        );
-        return;
-      }
-      resolvedCustomHex = hexParsed.data;
-    }
-
-    setFieldError(null);
+    clearErrors('root');
     try {
       const updated = await updateProfileMutation.mutateAsync({
         logoUrl: trimmedLogo,
         heroImageUrl: trimmedHero,
-        themeAccentPreset: form.themeAccentPreset,
+        themeAccentPreset: values.themeAccentPreset,
         themeAccentHex: resolvedCustomHex,
-        expectedVersion: loadedVersion ?? store.version,
+        expectedVersion: loadedVersionRef.current ?? store.version,
       });
 
       if (pendingLogoUpload && pendingLogoUpload !== trimmedLogo) {
@@ -226,10 +213,9 @@ export function StoreBrandingThemeForm({ onStatusMessage }: StoreBrandingThemeFo
       }
       setPendingLogoUpload(null);
       setPendingHeroUpload(null);
-      setForm(storeToBrandingState(updated));
-      setLoadedVersion(updated.version);
-      setLastSyncedSignature(getBrandingSignature(updated));
-      setIsDirty(false);
+      lastSyncedSignatureRef.current = getBrandingSignature(updated);
+      reset(storeToBrandingState(updated));
+      loadedVersionRef.current = updated.version;
       setConflict(false);
       onStatusMessage('Saved branding and theme settings.');
     } catch (error) {
@@ -241,6 +227,11 @@ export function StoreBrandingThemeForm({ onStatusMessage }: StoreBrandingThemeFo
   }
 
   const isBusy = updateProfileMutation.isPending || uploadAssetMutation.isPending;
+  const fieldError =
+    errors.logoUrl?.message ??
+    errors.heroImageUrl?.message ??
+    errors.themeAccentHex?.message ??
+    errors.root?.message;
 
   return (
     <section
@@ -274,7 +265,17 @@ export function StoreBrandingThemeForm({ onStatusMessage }: StoreBrandingThemeFo
         </div>
       ) : null}
 
-      <form noValidate onSubmit={(event) => void handleSubmit(event)} className="space-y-5">
+      <form
+        noValidate
+        onSubmit={(event) => {
+          if (isBusy) {
+            event.preventDefault();
+            return;
+          }
+          void handleSubmit(onSubmit)(event);
+        }}
+        className="space-y-5"
+      >
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div className="space-y-2.5 rounded-xl border border-ui-border bg-ui-canvas p-4">
             <div className="flex items-center justify-between gap-2">
@@ -299,7 +300,7 @@ export function StoreBrandingThemeForm({ onStatusMessage }: StoreBrandingThemeFo
                 >
                   {uploadAssetMutation.isPending ? 'Uploading…' : 'Upload logo'}
                 </button>
-                {form.logoUrl ? (
+                {logoUrl ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -307,8 +308,8 @@ export function StoreBrandingThemeForm({ onStatusMessage }: StoreBrandingThemeFo
                         cleanupUnusedAsset(pendingLogoUpload);
                         setPendingLogoUpload(null);
                       }
-                      setForm((prev) => ({ ...prev, logoUrl: '' }));
-                      setIsDirty(true);
+                      setValue('logoUrl', '', { shouldDirty: true });
+                      clearErrors('logoUrl');
                     }}
                     className="rounded-lg border border-ui-border bg-ui-surface px-2 py-1 text-xs font-medium text-ui-error hover:bg-ui-surface-muted"
                   >
@@ -319,9 +320,9 @@ export function StoreBrandingThemeForm({ onStatusMessage }: StoreBrandingThemeFo
             </div>
 
             <div className="flex items-center gap-3">
-              {form.logoUrl ? (
+              {logoUrl ? (
                 <img
-                  src={form.logoUrl}
+                  src={logoUrl}
                   alt="Store logo preview"
                   className="h-12 w-12 rounded-xl border border-ui-border bg-ui-surface object-cover"
                 />
@@ -334,13 +335,9 @@ export function StoreBrandingThemeForm({ onStatusMessage }: StoreBrandingThemeFo
                 id="store-logo-url"
                 type="url"
                 maxLength={500}
-                value={form.logoUrl}
-                onChange={(event) => {
-                  setForm((prev) => ({ ...prev, logoUrl: event.target.value }));
-                  setIsDirty(true);
-                }}
                 placeholder="https://... or leave blank for monogram"
                 className="min-w-0 flex-1 rounded-xl border border-ui-border bg-ui-surface px-3 py-1.5 text-xs text-ui-text"
+                {...register('logoUrl')}
               />
             </div>
           </div>
@@ -368,7 +365,7 @@ export function StoreBrandingThemeForm({ onStatusMessage }: StoreBrandingThemeFo
                 >
                   {uploadAssetMutation.isPending ? 'Uploading…' : 'Upload hero'}
                 </button>
-                {form.heroImageUrl ? (
+                {heroImageUrl ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -376,8 +373,8 @@ export function StoreBrandingThemeForm({ onStatusMessage }: StoreBrandingThemeFo
                         cleanupUnusedAsset(pendingHeroUpload);
                         setPendingHeroUpload(null);
                       }
-                      setForm((prev) => ({ ...prev, heroImageUrl: '' }));
-                      setIsDirty(true);
+                      setValue('heroImageUrl', '', { shouldDirty: true });
+                      clearErrors('heroImageUrl');
                     }}
                     className="rounded-lg border border-ui-border bg-ui-surface px-2 py-1 text-xs font-medium text-ui-error hover:bg-ui-surface-muted"
                   >
@@ -391,18 +388,14 @@ export function StoreBrandingThemeForm({ onStatusMessage }: StoreBrandingThemeFo
               id="store-hero-url"
               type="url"
               maxLength={500}
-              value={form.heroImageUrl}
-              onChange={(event) => {
-                setForm((prev) => ({ ...prev, heroImageUrl: event.target.value }));
-                setIsDirty(true);
-              }}
               placeholder="Leave blank for typographic storefront hero"
               className="w-full rounded-xl border border-ui-border bg-ui-surface px-3 py-1.5 text-xs text-ui-text"
+              {...register('heroImageUrl')}
             />
-            {form.heroImageUrl ? (
+            {heroImageUrl ? (
               <div className="aspect-[16/7] overflow-hidden rounded-lg border border-ui-border bg-ui-surface">
                 <img
-                  src={form.heroImageUrl}
+                  src={heroImageUrl}
                   alt="Hero banner preview"
                   className="h-full w-full object-cover"
                 />
@@ -423,103 +416,111 @@ export function StoreBrandingThemeForm({ onStatusMessage }: StoreBrandingThemeFo
 
         <fieldset className="space-y-3">
           <legend className="text-xs font-semibold text-ui-text">Accent color preset</legend>
-          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-            {CURATED_STORE_THEME_PRESET_VALUES.map((preset) => {
-              const tokenPair = STORE_THEME_TOKENS[preset];
-              const isSelected = form.themeAccentPreset === preset;
-              return (
+          <Controller
+            control={control}
+            name="themeAccentPreset"
+            render={({ field }) => (
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                {CURATED_STORE_THEME_PRESET_VALUES.map((preset) => {
+                  const tokenPair = STORE_THEME_TOKENS[preset];
+                  const isSelected = field.value === preset;
+                  return (
+                    <button
+                      key={preset}
+                      type="button"
+                      aria-pressed={isSelected}
+                      onBlur={field.onBlur}
+                      onClick={() => {
+                        field.onChange(preset);
+                        clearErrors('themeAccentHex');
+                      }}
+                      className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left text-xs font-semibold transition-colors motion-reduce:transition-none ${
+                        isSelected
+                          ? 'border-ui-accent bg-ui-surface-muted text-ui-text'
+                          : 'border-ui-border bg-ui-canvas text-ui-text-muted hover:text-ui-text'
+                      }`}
+                    >
+                      <span>{tokenPair.label}</span>
+                      <span className="flex items-center gap-1" aria-hidden="true">
+                        <span
+                          className="h-4 w-4 rounded-full border border-ui-border"
+                          style={{ backgroundColor: tokenPair.light.accent }}
+                        />
+                        <span
+                          className="h-4 w-4 rounded-full border border-ui-border"
+                          style={{ backgroundColor: tokenPair.dark.accent }}
+                        />
+                      </span>
+                    </button>
+                  );
+                })}
+
                 <button
-                  key={preset}
                   type="button"
-                  aria-pressed={isSelected}
+                  aria-pressed={field.value === 'custom'}
+                  onBlur={field.onBlur}
                   onClick={() => {
-                    setForm((prev) => ({ ...prev, themeAccentPreset: preset }));
-                    setIsDirty(true);
-                    setFieldError(null);
+                    field.onChange('custom');
+                    clearErrors('themeAccentHex');
                   }}
                   className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left text-xs font-semibold transition-colors motion-reduce:transition-none ${
-                    isSelected
+                    field.value === 'custom'
                       ? 'border-ui-accent bg-ui-surface-muted text-ui-text'
                       : 'border-ui-border bg-ui-canvas text-ui-text-muted hover:text-ui-text'
                   }`}
                 >
-                  <span>{tokenPair.label}</span>
-                  <span className="flex items-center gap-1" aria-hidden="true">
-                    <span
-                      className="h-4 w-4 rounded-full border border-ui-border"
-                      style={{ backgroundColor: tokenPair.light.accent }}
-                    />
-                    <span
-                      className="h-4 w-4 rounded-full border border-ui-border"
-                      style={{ backgroundColor: tokenPair.dark.accent }}
-                    />
-                  </span>
+                  <span>Custom hex</span>
+                  <span
+                    aria-hidden="true"
+                    className="h-4 w-4 rounded-full border border-ui-border"
+                    style={{
+                      backgroundColor: /^#[0-9A-Fa-f]{6}$/.test(themeAccentHex)
+                        ? themeAccentHex
+                        : '#c2410c',
+                    }}
+                  />
                 </button>
-              );
-            })}
+              </div>
+            )}
+          />
 
-            <button
-              type="button"
-              aria-pressed={form.themeAccentPreset === 'custom'}
-              onClick={() => {
-                setForm((prev) => ({ ...prev, themeAccentPreset: 'custom' }));
-                setIsDirty(true);
-                setFieldError(null);
-              }}
-              className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left text-xs font-semibold transition-colors motion-reduce:transition-none ${
-                form.themeAccentPreset === 'custom'
-                  ? 'border-ui-accent bg-ui-surface-muted text-ui-text'
-                  : 'border-ui-border bg-ui-canvas text-ui-text-muted hover:text-ui-text'
-              }`}
-            >
-              <span>Custom hex</span>
-              <span
-                aria-hidden="true"
-                className="h-4 w-4 rounded-full border border-ui-border"
-                style={{
-                  backgroundColor: /^#[0-9A-Fa-f]{6}$/.test(form.themeAccentHex)
-                    ? form.themeAccentHex
-                    : '#c2410c',
-                }}
-              />
-            </button>
-          </div>
-
-          {form.themeAccentPreset === 'custom' ? (
-            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-ui-border bg-ui-canvas p-3">
-              <label htmlFor={customHexInputId} className="text-xs font-semibold text-ui-text">
-                Custom brand hex
-              </label>
-              <input
-                type="color"
-                aria-label="Pick custom brand color"
-                value={
-                  /^#[0-9A-Fa-f]{6}$/.test(form.themeAccentHex) ? form.themeAccentHex : '#c2410c'
-                }
-                onChange={(event) => {
-                  setForm((prev) => ({ ...prev, themeAccentHex: event.target.value }));
-                  setIsDirty(true);
-                  setFieldError(null);
-                }}
-                className="h-8 w-10 cursor-pointer rounded border border-ui-border bg-transparent"
-              />
-              <input
-                id={customHexInputId}
-                type="text"
-                maxLength={7}
-                value={form.themeAccentHex}
-                onChange={(event) => {
-                  setForm((prev) => ({ ...prev, themeAccentHex: event.target.value }));
-                  setIsDirty(true);
-                  setFieldError(null);
-                }}
-                placeholder="#c2410c"
-                className="w-28 rounded-lg border border-ui-border bg-ui-surface px-2.5 py-1.5 font-mono text-xs text-ui-text"
-              />
-              <span className="text-[11px] text-ui-text-muted">
-                Luminance is automatically clamped to maintain WCAG AA contrast.
-              </span>
-            </div>
+          {themeAccentPreset === 'custom' ? (
+            <Controller
+              control={control}
+              name="themeAccentHex"
+              render={({ field }) => (
+                <div className="flex flex-wrap items-center gap-3 rounded-xl border border-ui-border bg-ui-canvas p-3">
+                  <label htmlFor={customHexInputId} className="text-xs font-semibold text-ui-text">
+                    Custom brand hex
+                  </label>
+                  <input
+                    type="color"
+                    aria-label="Pick custom brand color"
+                    value={/^#[0-9A-Fa-f]{6}$/.test(field.value) ? field.value : '#c2410c'}
+                    onChange={(event) => {
+                      field.onChange(event.target.value);
+                      clearErrors('themeAccentHex');
+                    }}
+                    className="h-8 w-10 cursor-pointer rounded border border-ui-border bg-transparent"
+                  />
+                  <input
+                    id={customHexInputId}
+                    name={field.name}
+                    ref={field.ref}
+                    value={field.value}
+                    onBlur={field.onBlur}
+                    onChange={(event) => field.onChange(event.target.value)}
+                    type="text"
+                    maxLength={7}
+                    placeholder="#c2410c"
+                    className="w-28 rounded-lg border border-ui-border bg-ui-surface px-2.5 py-1.5 font-mono text-xs text-ui-text"
+                  />
+                  <span className="text-[11px] text-ui-text-muted">
+                    Luminance is automatically clamped to maintain WCAG AA contrast.
+                  </span>
+                </div>
+              )}
+            />
           ) : null}
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

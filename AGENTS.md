@@ -16,6 +16,7 @@ This repository (`menu-kiosk`) is a white-label F&B ordering storefront, Staff P
 
 - Inspect the working tree, root and workspace `package.json` files, framework and TypeScript configurations, `.oxlintrc.json`, and relevant source and tests before editing. Preserve unrelated edits, working behavior, and public APIs unless the task calls for a change.
 - Keep frontend feature logic, tests, and public APIs inside `apps/web/src/features/<feature>/`, exposed via `index.ts`.
+- Keep form-draft Zod schemas in `apps/web/src/features/<feature>/schemas/*.schema.ts` (colocated with `*.schema.test.ts`), using inline validation-time `zodResolver(createSchema(...))` for runtime-dependent schemas and `<Controller>` (with pure `resolveEffective*` helpers) for custom or derived controls.
 - Keep `apps/web/src/shared/` independent of `app/`, `routes/`, `features/`, and backend server code.
 - Keep `apps/api/src/` independent of `apps/web` UI modules, keep `packages/contracts/src/` pure and independent of both frontend and server runtimes, and evolve database schemas via append-only migrations in `supabase/migrations/`.
 - Make incremental changes. Follow nearby patterns, reuse existing utilities, and justify any new dependency or abstraction before adding it to `package.json`. Upgrade React only when requested.

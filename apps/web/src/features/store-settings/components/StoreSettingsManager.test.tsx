@@ -36,7 +36,7 @@ describe('StoreSettingsManager', () => {
       target: { value: 'http://insecure.example.com' },
     });
     fireEvent.click(screen.getByRole('button', { name: /save store profile/i }));
-    expect(screen.getByText(/external links must start with https:\/\//i)).toBeTruthy();
+    expect(await screen.findByText(/external links must start with https:\/\//i)).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText(/external link 1 url/i), {
       target: { value: 'https://instagram.com/kapekanto' },
@@ -238,5 +238,44 @@ describe('StoreSettingsManager', () => {
     expect(state.store.paymentMethods.bank_transfer.enabled).toBe(true);
     expect(state.store.paymentMethods.gcash.accountNumber).toBe('0917 555 0101');
     expect(state.store.paymentMethods.gcash.qrImageUrl).toContain('/payment-qr/');
+  });
+
+  it('syncs updated store version once dirty edits in StoreProfileForm are reverted so subsequent saves avoid 409', async () => {
+    const { state } = installMockShopApi({ authenticated: true, role: 'owner' });
+    render(
+      <TestQueryWrapper>
+        <StoreSettingsManager />
+      </TestQueryWrapper>,
+    );
+
+    const storeNameInput = (await screen.findByLabelText(/store name/i)) as HTMLInputElement;
+    expect(storeNameInput.value).toBe('8Burgers');
+
+    // Dirty StoreProfileForm
+    fireEvent.change(storeNameInput, { target: { value: 'Temp Draft' } });
+
+    // Save StoreBrandingThemeForm while StoreProfileForm is dirty -> bumps store.version
+    fireEvent.click(screen.getByRole('button', { name: /matcha/i }));
+    fireEvent.click(screen.getByRole('button', { name: /save branding & theme/i }));
+    await waitFor(() => {
+      expect(state.store.themeAccentPreset).toBe('matcha');
+    });
+
+    // Revert StoreProfileForm edit so isDirty returns to false -> version sync must catch up
+    fireEvent.change(storeNameInput, { target: { value: '8Burgers' } });
+
+    // Edit again and save -> must succeed without a spurious 409 conflict
+    fireEvent.change(storeNameInput, { target: { value: '8Burgers Makati' } });
+    fireEvent.click(screen.getByRole('button', { name: /save store profile/i }));
+
+    await waitFor(() => {
+      expect(
+        screen
+          .getAllByRole('status')
+          .some((node) => node.textContent?.includes('Saved store profile for 8Burgers Makati.')),
+      ).toBe(true);
+    });
+    expect(state.store.storeName).toBe('8Burgers Makati');
+    expect(screen.queryByText(/store profile changed on another device/i)).toBeNull();
   });
 });

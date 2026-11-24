@@ -32,24 +32,32 @@ describe('AdminCatalogManager', () => {
     fireEvent.change(imageInput, { target: { value: 'javascript:alert(1)' } });
     fireEvent.click(screen.getByRole('button', { name: /add item to menu/i }));
 
-    expect(nameInput.getAttribute('aria-invalid')).toBe('true');
-    expect(priceInput.getAttribute('aria-invalid')).toBe('true');
-    expect(descInput.getAttribute('aria-invalid')).toBe('true');
-    expect(imageInput.getAttribute('aria-invalid')).toBe('true');
+    await waitFor(() => {
+      expect(nameInput.getAttribute('aria-invalid')).toBe('true');
+      expect(priceInput.getAttribute('aria-invalid')).toBe('true');
+      expect(descInput.getAttribute('aria-invalid')).toBe('true');
+      expect(imageInput.getAttribute('aria-invalid')).toBe('true');
+    });
     expect(screen.getByText(/enter a valid https:\/\/ image url/i)).toBeTruthy();
 
     fireEvent.change(imageInput, { target: { value: 'http://example.com/burger.webp' } });
     fireEvent.click(screen.getByRole('button', { name: /add item to menu/i }));
-    expect(imageInput.getAttribute('aria-invalid')).toBe('true');
+    await waitFor(() => {
+      expect(imageInput.getAttribute('aria-invalid')).toBe('true');
+    });
 
     fireEvent.change(imageInput, {
       target: { value: 'https://user:pass@example.com/burger.webp' },
     });
     fireEvent.click(screen.getByRole('button', { name: /add item to menu/i }));
-    expect(imageInput.getAttribute('aria-invalid')).toBe('true');
+    await waitFor(() => {
+      expect(imageInput.getAttribute('aria-invalid')).toBe('true');
+    });
 
     fireEvent.change(nameInput, { target: { value: 'Smoked Bacon Burger' } });
-    expect(nameInput.getAttribute('aria-invalid')).toBe('false');
+    await waitFor(() => {
+      expect(nameInput.getAttribute('aria-invalid')).toBe('false');
+    });
   });
 
   it('edits listings, requires confirmation before deleting, and resets empty filters', async () => {
@@ -126,22 +134,30 @@ describe('AdminCatalogManager', () => {
     // Validation bounds
     fireEvent.change(baseFeeInput, { target: { value: '-5' } });
     fireEvent.click(saveBtn);
-    expect(baseFeeInput.getAttribute('aria-invalid')).toBe('true');
+    await waitFor(() => {
+      expect(baseFeeInput.getAttribute('aria-invalid')).toBe('true');
+    });
 
     fireEvent.change(baseFeeInput, { target: { value: '45' } });
     fireEvent.change(perKmInput, { target: { value: '-1' } });
     fireEvent.click(saveBtn);
-    expect(perKmInput.getAttribute('aria-invalid')).toBe('true');
+    await waitFor(() => {
+      expect(perKmInput.getAttribute('aria-invalid')).toBe('true');
+    });
 
     fireEvent.change(perKmInput, { target: { value: '12' } });
     fireEvent.change(maxDistInput, { target: { value: '0.04' } });
     fireEvent.click(saveBtn);
-    expect(maxDistInput.getAttribute('aria-invalid')).toBe('true');
+    await waitFor(() => {
+      expect(maxDistInput.getAttribute('aria-invalid')).toBe('true');
+    });
 
     fireEvent.change(maxDistInput, { target: { value: '15' } });
     fireEvent.change(minSubtotalInput, { target: { value: '0' } });
     fireEvent.click(saveBtn);
-    expect(minSubtotalInput.getAttribute('aria-invalid')).toBe('true');
+    await waitFor(() => {
+      expect(minSubtotalInput.getAttribute('aria-invalid')).toBe('true');
+    });
 
     // Live formula preview reflects dirty inputs before saving
     expect(screen.getByText(/₱45 base \+ ₱12\/km · up to 15 km/i)).toBeTruthy();
@@ -490,5 +506,61 @@ describe('AdminCatalogManager', () => {
         'Demo delivery pricing reset is disabled in this environment.',
       );
     });
+  });
+
+  it('syncs updated deliveryPricing version after reverting a dirty edit and truncates long specLabel cleanly', async () => {
+    const { state } = installMockShopApi({ authenticated: true });
+    render(
+      <TestQueryWrapper>
+        <AdminCatalogManager />
+      </TestQueryWrapper>,
+    );
+
+    await screen.findByRole('heading', { level: 3, name: 'Burger Deluxe' });
+
+    const baseFeeInput = screen.getByLabelText(/base fee \(₱\)/i) as HTMLInputElement;
+    const perKmInput = screen.getByLabelText(/per-km rate \(₱\/km\)/i) as HTMLInputElement;
+    const saveDeliveryBtn = screen.getByRole('button', { name: /save delivery settings/i });
+
+    // Dirty AdminDeliverySettings while server deliveryPricing updates and catalog refetches
+    fireEvent.change(baseFeeInput, { target: { value: '99' } });
+    state.deliveryPricing.perKmRatePhp = 18;
+    state.deliveryPricing.version = (state.deliveryPricing.version ?? 1) + 1;
+
+    // Trigger catalog query invalidation/refetch by toggling an item's availability
+    fireEvent.click(screen.getByRole('button', { name: /in stock — toggle burger deluxe/i }));
+    await screen.findByRole('button', { name: /sold out — toggle burger deluxe/i });
+
+    // Revert baseFeeInput so isDirty returns to false -> should sync latest server values and version
+    fireEvent.change(baseFeeInput, { target: { value: '35' } });
+    await waitFor(() => {
+      expect(perKmInput.value).toBe('18');
+    });
+
+    // Save a new delivery change -> must succeed without a spurious 409 Conflict
+    fireEvent.change(baseFeeInput, { target: { value: '45' } });
+    fireEvent.click(saveDeliveryBtn);
+    await waitFor(() => {
+      expect(screen.getByRole('status').textContent).toContain(
+        'Saved delivery pricing: ₱45 base + ₱18/km',
+      );
+    });
+    expect(screen.queryByText(/delivery settings changed on another device/i)).toBeNull();
+
+    // Menu item with >80 char specLabel truncates to 80 chars cleanly on submit
+    fireEvent.change(screen.getByLabelText(/item name/i), { target: { value: 'Double Smash' } });
+    fireEvent.change(screen.getByLabelText(/portion \/ spec label/i), {
+      target: { value: 'S'.repeat(95) },
+    });
+    fireEvent.change(screen.getByLabelText(/ingredients & description/i), {
+      target: { value: 'Double beef patty with house sauce.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /add item to menu/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('status').textContent).toContain('Added "Double Smash"');
+    });
+    const created = state.menu.find((item) => item.name === 'Double Smash');
+    expect(created?.specLabel).toBe('S'.repeat(80));
   });
 });

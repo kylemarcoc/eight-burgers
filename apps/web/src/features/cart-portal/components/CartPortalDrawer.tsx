@@ -1,3 +1,4 @@
+import { zodResolver } from '@hookform/resolvers/zod';
 import {
   DEFAULT_STORE_PROFILE,
   PAYMENT_METHOD_LABELS,
@@ -23,6 +24,7 @@ import {
   type SubmitEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { Controller, useForm, useWatch, type FieldErrors } from 'react-hook-form';
 import {
   ItemCustomizerModal,
   preloadItemCustomizerModal,
@@ -66,6 +68,11 @@ import {
 } from '@/shared/store/useCartStore';
 import { useCartLifecycle } from '../hooks/useCartLifecycle';
 import { useResolvedCartSummary } from '../hooks/useResolvedCartSummary';
+import {
+  createCheckoutFormSchema,
+  resolveEffectiveFulfillment,
+  type CheckoutFormValues,
+} from '../schemas/checkout-form.schema';
 import { DeliveryLocationPicker } from './DeliveryLocationPicker';
 
 const EMPTY_DELIVERY_PRICING: DeliveryPricingConfig = {
@@ -339,15 +346,6 @@ function buildSmsOrderHref(contact: string, body: string): string {
   return `sms:${digits}?body=${encodeURIComponent(body)}`;
 }
 
-type CheckoutFieldErrors = {
-  customerName?: string;
-  contactNumber?: string;
-  tableNumber?: string;
-  deliveryPin?: string;
-  addressOrNotes?: string;
-  paymentReference?: string;
-};
-
 const FOCUSABLE_SELECTOR = [
   'a[href]',
   'button:not([disabled])',
@@ -478,16 +476,6 @@ export function CartPortalDrawer() {
   const [receiptRefError, setReceiptRefError] = useState<string | null>(null);
   const [receiptRefSuccess, setReceiptRefSuccess] = useState<string | null>(null);
 
-  const [customerName, setCustomerName] = useState('');
-  const [contactNumber, setContactNumber] = useState('');
-  const [selectedFulfillment, setSelectedFulfillment] = useState<FulfillmentMode | null>(null);
-  const [tableNumberDraft, setTableNumberDraft] = useState<string | null>(null);
-  const [selectedAddress, setSelectedAddress] = useState<string | null>(null);
-  const [deliveryPin, setDeliveryPin] = useState<GeoCoordinates | null>(null);
-  const [addressOrNotes, setAddressOrNotes] = useState('');
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethod>('cash');
-  const [checkoutPaymentRef, setCheckoutPaymentRef] = useState('');
-  const [fieldErrors, setFieldErrors] = useState<CheckoutFieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
@@ -499,26 +487,70 @@ export function CartPortalDrawer() {
         } from your bag that ${prunedRemovedCount === 1 ? 'is' : 'are'} no longer on the menu.`
       : null;
 
-  const fulfillment: FulfillmentMode = useMemo(() => {
-    if (selectedFulfillment) {
-      if (selectedFulfillment === 'delivery') {
-        return 'delivery';
-      }
-      if (enabledFulfillmentModes.includes(selectedFulfillment)) {
-        return selectedFulfillment;
-      }
+  const {
+    register,
+    control,
+    handleSubmit,
+    reset: resetCheckoutForm,
+    setValue,
+    setFocus,
+    clearErrors,
+    formState: { errors: fieldErrors, dirtyFields },
+  } = useForm<CheckoutFormValues>({
+    defaultValues: {
+      customerName: '',
+      contactNumber: '',
+      selectedFulfillment: null,
+      tableNumber: dineInTable ?? '',
+      deliveryPin: null,
+      selectedAddress: null,
+      addressOrNotes: '',
+      paymentMethod: 'cash',
+      paymentReference: '',
+    },
+    resolver: (values, ctx, options) =>
+      zodResolver(
+        createCheckoutFormSchema({
+          enabledFulfillmentModes,
+          isDineInEnabled,
+          dineInTable,
+          dineInTableRequired: store.dineInTableRequired,
+          enabledPaymentMethods,
+        }),
+      )(values, ctx, options),
+    shouldFocusError: false,
+  });
+
+  useEffect(() => {
+    if (!dirtyFields.tableNumber) {
+      setValue('tableNumber', dineInTable ?? '', { shouldDirty: false });
     }
-    if (dineInTable && isDineInEnabled) {
-      return 'dine-in';
-    }
-    return enabledFulfillmentModes[0] ?? 'pickup';
-  }, [selectedFulfillment, enabledFulfillmentModes, dineInTable, isDineInEnabled]);
+  }, [dineInTable, dirtyFields.tableNumber, setValue]);
+
+  const watchedCheckout = useWatch({ control });
+  const customerName = watchedCheckout.customerName ?? '';
+  const contactNumber = watchedCheckout.contactNumber ?? '';
+  const selectedFulfillment = watchedCheckout.selectedFulfillment ?? null;
+  const effectiveTableNumber = watchedCheckout.tableNumber ?? dineInTable ?? '';
+  const deliveryPin = (watchedCheckout.deliveryPin ?? null) as GeoCoordinates | null;
+  const selectedAddress = watchedCheckout.selectedAddress ?? null;
+  const addressOrNotes = watchedCheckout.addressOrNotes ?? '';
+  const selectedPaymentMethod = watchedCheckout.paymentMethod ?? 'cash';
+  const checkoutPaymentRef = watchedCheckout.paymentReference ?? '';
+
+  const fulfillment: FulfillmentMode = useMemo(
+    () =>
+      resolveEffectiveFulfillment(selectedFulfillment, {
+        enabledFulfillmentModes,
+        isDineInEnabled,
+        dineInTable,
+      }),
+    [selectedFulfillment, enabledFulfillmentModes, isDineInEnabled, dineInTable],
+  );
 
   const paymentMethod: PaymentMethod = enabledPaymentMethods.includes(selectedPaymentMethod)
     ? selectedPaymentMethod
     : (enabledPaymentMethods[0] ?? 'cash');
-
-  const effectiveTableNumber = tableNumberDraft !== null ? tableNumberDraft : (dineInTable ?? '');
 
   const titleId = useId();
   const overlayId = useId();
@@ -539,12 +571,7 @@ export function CartPortalDrawer() {
   const portalRootRef = useRef<HTMLDivElement | null>(null);
   const dialogRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
-  const nameInputRef = useRef<HTMLInputElement | null>(null);
-  const contactInputRef = useRef<HTMLInputElement | null>(null);
-  const tableInputRef = useRef<HTMLInputElement | null>(null);
   const locationInputRef = useRef<HTMLInputElement | null>(null);
-  const notesInputRef = useRef<HTMLInputElement | null>(null);
-  const paymentRefInputRef = useRef<HTMLInputElement | null>(null);
   const receiptHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const focusedReceiptKeyRef = useRef<string | null>(null);
@@ -624,23 +651,19 @@ export function CartPortalDrawer() {
   }, [clearPrunedRemovedCount, setCartOpen]);
 
   const handleClearLocation = useCallback(() => {
-    setDeliveryPin(null);
-    setSelectedAddress(null);
+    setValue('deliveryPin', null, { shouldDirty: true });
+    setValue('selectedAddress', null, { shouldDirty: true });
     setSubmitError(null);
-  }, []);
+  }, [setValue]);
 
   const handleSelectLocation = useCallback(
     (nextPin: GeoCoordinates, resolvedAddress?: string | null) => {
-      setDeliveryPin(nextPin);
-      setSelectedAddress(resolvedAddress ?? null);
+      setValue('deliveryPin', nextPin, { shouldDirty: true });
+      setValue('selectedAddress', resolvedAddress ?? null, { shouldDirty: true });
       setSubmitError(null);
-      setFieldErrors((prev) => ({
-        ...prev,
-        deliveryPin: undefined,
-        ...(resolvedAddress ? { addressOrNotes: undefined } : {}),
-      }));
+      clearErrors(resolvedAddress ? ['deliveryPin', 'addressOrNotes'] : 'deliveryPin');
     },
-    [],
+    [clearErrors, setValue],
   );
 
   useEffect(() => {
@@ -802,13 +825,28 @@ export function CartPortalDrawer() {
         )
       : 0;
 
-  async function handleCheckoutSubmit(event: SubmitEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function handleCheckoutInvalid(invalidErrors: FieldErrors<CheckoutFormValues>) {
+    if (invalidErrors.customerName) {
+      setFocus('customerName');
+    } else if (invalidErrors.contactNumber) {
+      setFocus('contactNumber');
+    } else if (invalidErrors.tableNumber) {
+      setFocus('tableNumber');
+    } else if (invalidErrors.deliveryPin) {
+      locationInputRef.current?.focus();
+    } else if (invalidErrors.addressOrNotes) {
+      setFocus('addressOrNotes');
+    } else if (invalidErrors.paymentReference) {
+      setFocus('paymentReference');
+    }
+  }
+
+  async function onCheckoutValid(values: CheckoutFormValues) {
     if (isCheckoutDisabled) return;
 
-    const trimmedSelectedAddress = selectedAddress?.trim() ?? '';
-    const trimmedNotes = addressOrNotes.trim();
-    const trimmedTable = effectiveTableNumber.trim();
+    const trimmedSelectedAddress = values.selectedAddress?.trim() ?? '';
+    const trimmedNotes = values.addressOrNotes.trim();
+    const trimmedTable = values.tableNumber.trim();
     const composedAddressOrNotes =
       fulfillment === 'delivery'
         ? trimmedNotes && trimmedSelectedAddress
@@ -816,54 +854,6 @@ export function CartPortalDrawer() {
           : (trimmedNotes || trimmedSelectedAddress).slice(0, 500)
         : trimmedNotes;
 
-    const nextErrors: CheckoutFieldErrors = {};
-    if (!customerName.trim()) {
-      nextErrors.customerName = 'Enter your name so we can call your order.';
-    }
-    if (fulfillment === 'delivery' && !contactNumber.trim()) {
-      nextErrors.contactNumber = 'Enter a mobile number so the rider can reach you.';
-    }
-    if (fulfillment === 'dine-in' && store.dineInTableRequired && !trimmedTable) {
-      nextErrors.tableNumber = 'Enter your table number so we can serve your order.';
-    }
-    if (fulfillment === 'delivery' && !hasDeliveryPin) {
-      nextErrors.deliveryPin =
-        'Select a delivery address from the suggestions or use your device location.';
-    }
-    if (fulfillment === 'delivery' && !composedAddressOrNotes) {
-      nextErrors.addressOrNotes = 'Enter your street, building, unit, or landmark for the rider.';
-    }
-    if (paymentMethod !== 'cash' && !checkoutPaymentRef.trim()) {
-      nextErrors.paymentReference =
-        'Enter the payment reference number from your transfer receipt.';
-    }
-
-    if (
-      nextErrors.customerName ||
-      nextErrors.contactNumber ||
-      nextErrors.tableNumber ||
-      nextErrors.deliveryPin ||
-      nextErrors.addressOrNotes ||
-      nextErrors.paymentReference
-    ) {
-      setFieldErrors(nextErrors);
-      if (nextErrors.customerName) {
-        nameInputRef.current?.focus();
-      } else if (nextErrors.contactNumber) {
-        contactInputRef.current?.focus();
-      } else if (nextErrors.tableNumber) {
-        tableInputRef.current?.focus();
-      } else if (nextErrors.deliveryPin) {
-        locationInputRef.current?.focus();
-      } else if (nextErrors.addressOrNotes) {
-        notesInputRef.current?.focus();
-      } else if (nextErrors.paymentReference) {
-        paymentRefInputRef.current?.focus();
-      }
-      return;
-    }
-
-    setFieldErrors({});
     setSubmitError(null);
     setConfirmClear(false);
     setCopyStatus('idle');
@@ -874,14 +864,16 @@ export function CartPortalDrawer() {
       const response = await placeOrderMutation.mutateAsync({
         idempotencyKey,
         payload: {
-          customerName: customerName.trim(),
-          contactNumber: contactNumber.trim(),
+          customerName: values.customerName.trim(),
+          contactNumber: values.contactNumber.trim(),
           fulfillment,
           tableNumber: fulfillment === 'dine-in' ? trimmedTable : '',
-          ...(fulfillment === 'delivery' && deliveryPin ? { deliveryPin } : {}),
+          ...(fulfillment === 'delivery' && values.deliveryPin
+            ? { deliveryPin: values.deliveryPin }
+            : {}),
           addressOrNotes: composedAddressOrNotes,
           paymentMethod,
-          paymentReference: paymentMethod !== 'cash' ? checkoutPaymentRef.trim() : '',
+          paymentReference: paymentMethod !== 'cash' ? values.paymentReference.trim() : '',
           items: cartSummary.lines.map((line) => ({
             itemId: line.item.id,
             quantity: line.quantity,
@@ -905,13 +897,17 @@ export function CartPortalDrawer() {
       setReceiptRefError(null);
       setReceiptRefSuccess(null);
       idempotencyRef.current = { signature: '', key: createIdempotencyKey() };
-      setCustomerName('');
-      setContactNumber('');
-      setAddressOrNotes('');
-      setSelectedAddress(null);
-      setDeliveryPin(null);
-      setCheckoutPaymentRef('');
-      setTableNumberDraft(null);
+      resetCheckoutForm({
+        customerName: '',
+        contactNumber: '',
+        selectedFulfillment: values.selectedFulfillment,
+        tableNumber: dineInTable ?? '',
+        deliveryPin: null,
+        selectedAddress: null,
+        addressOrNotes: '',
+        paymentMethod,
+        paymentReference: '',
+      });
     } catch (error) {
       if (isApiError(error) && error.code === 'PRICE_CHANGED') {
         idempotencyRef.current = { signature: '', key: createIdempotencyKey() };
@@ -2092,7 +2088,13 @@ export function CartPortalDrawer() {
 
               <form
                 noValidate
-                onSubmit={(event) => void handleCheckoutSubmit(event)}
+                onSubmit={(event) => {
+                  if (isCheckoutDisabled) {
+                    event.preventDefault();
+                    return;
+                  }
+                  void handleSubmit(onCheckoutValid, handleCheckoutInvalid)(event);
+                }}
                 className="space-y-3 border-t border-ui-border pt-4"
               >
                 <h3 className="text-sm font-bold text-ui-text">Order Details</h3>
@@ -2106,24 +2108,16 @@ export function CartPortalDrawer() {
                       Your Name
                     </label>
                     <input
-                      ref={nameInputRef}
                       id="checkout-name"
-                      name="customerName"
                       type="text"
                       maxLength={120}
-                      value={customerName}
                       aria-invalid={Boolean(fieldErrors.customerName)}
                       aria-describedby={fieldErrors.customerName ? nameErrorId : undefined}
-                      onChange={(event) => {
-                        setCustomerName(event.target.value);
-                        if (fieldErrors.customerName && event.target.value.trim()) {
-                          setFieldErrors((prev) => ({ ...prev, customerName: undefined }));
-                        }
-                      }}
                       placeholder="e.g. Marco"
                       className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text ${
                         fieldErrors.customerName ? 'border-ui-error' : 'border-ui-border'
                       }`}
+                      {...register('customerName')}
                     />
                     {fieldErrors.customerName ? (
                       <p
@@ -2131,7 +2125,7 @@ export function CartPortalDrawer() {
                         role="alert"
                         className="mt-1 text-xs font-semibold text-ui-error"
                       >
-                        {fieldErrors.customerName}
+                        {fieldErrors.customerName.message}
                       </p>
                     ) : null}
                   </div>
@@ -2143,24 +2137,16 @@ export function CartPortalDrawer() {
                       {fulfillment === 'delivery' ? 'Mobile Number' : 'Mobile (optional)'}
                     </label>
                     <input
-                      ref={contactInputRef}
                       id="checkout-contact"
-                      name="contactNumber"
                       type="tel"
                       maxLength={40}
-                      value={contactNumber}
                       aria-invalid={Boolean(fieldErrors.contactNumber)}
                       aria-describedby={fieldErrors.contactNumber ? contactErrorId : undefined}
-                      onChange={(event) => {
-                        setContactNumber(event.target.value);
-                        if (fieldErrors.contactNumber && event.target.value.trim()) {
-                          setFieldErrors((prev) => ({ ...prev, contactNumber: undefined }));
-                        }
-                      }}
                       placeholder="0917 000 0000"
                       className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text ${
                         fieldErrors.contactNumber ? 'border-ui-error' : 'border-ui-border'
                       }`}
+                      {...register('contactNumber')}
                     />
                     {fieldErrors.contactNumber ? (
                       <p
@@ -2168,124 +2154,130 @@ export function CartPortalDrawer() {
                         role="alert"
                         className="mt-1 text-xs font-semibold text-ui-error"
                       >
-                        {fieldErrors.contactNumber}
+                        {fieldErrors.contactNumber.message}
                       </p>
                     ) : null}
                   </div>
                 </div>
 
-                <fieldset className="space-y-1.5">
-                  <legend className="text-xs font-semibold text-ui-text">Fulfillment</legend>
-                  <div
-                    className={`grid gap-2 ${
-                      visibleFulfillmentModes.length === 1
-                        ? 'grid-cols-1'
-                        : visibleFulfillmentModes.length === 3
-                          ? 'grid-cols-1 sm:grid-cols-3'
-                          : 'grid-cols-2'
-                    }`}
-                  >
-                    {visibleFulfillmentModes.includes('pickup') ? (
-                      <label
-                        className={`flex cursor-pointer items-center justify-between rounded-xl border px-3 py-2 text-xs ${
-                          fulfillment === 'pickup'
-                            ? 'border-ui-accent bg-ui-surface-muted font-semibold text-ui-text'
-                            : 'border-ui-border bg-ui-surface text-ui-text-muted'
+                <Controller
+                  control={control}
+                  name="selectedFulfillment"
+                  render={({ field }) => (
+                    <fieldset className="space-y-1.5">
+                      <legend className="text-xs font-semibold text-ui-text">Fulfillment</legend>
+                      <div
+                        className={`grid gap-2 ${
+                          visibleFulfillmentModes.length === 1
+                            ? 'grid-cols-1'
+                            : visibleFulfillmentModes.length === 3
+                              ? 'grid-cols-1 sm:grid-cols-3'
+                              : 'grid-cols-2'
                         }`}
                       >
-                        <span className="flex items-center gap-1.5">
-                          <input
-                            type="radio"
-                            name="fulfillment"
-                            checked={fulfillment === 'pickup'}
-                            onChange={() => {
-                              setSelectedFulfillment('pickup');
-                              if (dineInTable) clearDineInTable();
-                              setTableNumberDraft(null);
-                              setDeliveryPin(null);
-                              setSelectedAddress(null);
-                              setSubmitError(null);
-                              setFieldErrors((prev) => ({
-                                ...prev,
-                                contactNumber: undefined,
-                                tableNumber: undefined,
-                                deliveryPin: undefined,
-                                addressOrNotes: undefined,
-                              }));
-                            }}
-                            className="accent-ui-accent"
-                          />
-                          Pickup
-                        </span>
-                        <span>Free</span>
-                      </label>
-                    ) : null}
+                        {visibleFulfillmentModes.includes('pickup') ? (
+                          <label
+                            className={`flex cursor-pointer items-center justify-between rounded-xl border px-3 py-2 text-xs ${
+                              fulfillment === 'pickup'
+                                ? 'border-ui-accent bg-ui-surface-muted font-semibold text-ui-text'
+                                : 'border-ui-border bg-ui-surface text-ui-text-muted'
+                            }`}
+                          >
+                            <span className="flex items-center gap-1.5">
+                              <input
+                                type="radio"
+                                name={field.name}
+                                value="pickup"
+                                checked={fulfillment === 'pickup'}
+                                onBlur={field.onBlur}
+                                onChange={() => {
+                                  field.onChange('pickup');
+                                  if (dineInTable) clearDineInTable();
+                                  setValue('tableNumber', '', { shouldDirty: false });
+                                  setValue('deliveryPin', null);
+                                  setValue('selectedAddress', null);
+                                  setSubmitError(null);
+                                  clearErrors([
+                                    'contactNumber',
+                                    'tableNumber',
+                                    'deliveryPin',
+                                    'addressOrNotes',
+                                  ]);
+                                }}
+                                className="accent-ui-accent"
+                              />
+                              Pickup
+                            </span>
+                            <span>Free</span>
+                          </label>
+                        ) : null}
 
-                    {visibleFulfillmentModes.includes('delivery') ? (
-                      <label
-                        className={`flex items-center justify-between rounded-xl border px-3 py-2 text-xs ${
-                          !isDeliveryEnabled
-                            ? 'cursor-not-allowed border-ui-border bg-ui-surface text-ui-text-muted opacity-60'
-                            : fulfillment === 'delivery'
-                              ? 'cursor-pointer border-ui-accent bg-ui-surface-muted font-semibold text-ui-text'
-                              : 'cursor-pointer border-ui-border bg-ui-surface text-ui-text-muted'
-                        }`}
-                      >
-                        <span className="flex items-center gap-1.5">
-                          <input
-                            type="radio"
-                            name="fulfillment"
-                            disabled={!isDeliveryEnabled}
-                            checked={fulfillment === 'delivery'}
-                            onChange={() => {
-                              setSelectedFulfillment('delivery');
-                              if (dineInTable) clearDineInTable();
-                              setTableNumberDraft(null);
-                              setSubmitError(null);
-                              setFieldErrors((prev) => ({ ...prev, tableNumber: undefined }));
-                            }}
-                            className="accent-ui-accent"
-                          />
-                          Delivery
-                        </span>
-                        <span className="tabular-nums">{deliveryOptionBadge}</span>
-                      </label>
-                    ) : null}
+                        {visibleFulfillmentModes.includes('delivery') ? (
+                          <label
+                            className={`flex items-center justify-between rounded-xl border px-3 py-2 text-xs ${
+                              !isDeliveryEnabled
+                                ? 'cursor-not-allowed border-ui-border bg-ui-surface text-ui-text-muted opacity-60'
+                                : fulfillment === 'delivery'
+                                  ? 'cursor-pointer border-ui-accent bg-ui-surface-muted font-semibold text-ui-text'
+                                  : 'cursor-pointer border-ui-border bg-ui-surface text-ui-text-muted'
+                            }`}
+                          >
+                            <span className="flex items-center gap-1.5">
+                              <input
+                                type="radio"
+                                name={field.name}
+                                value="delivery"
+                                disabled={!isDeliveryEnabled}
+                                checked={fulfillment === 'delivery'}
+                                onBlur={field.onBlur}
+                                onChange={() => {
+                                  field.onChange('delivery');
+                                  if (dineInTable) clearDineInTable();
+                                  setValue('tableNumber', '', { shouldDirty: false });
+                                  setSubmitError(null);
+                                  clearErrors('tableNumber');
+                                }}
+                                className="accent-ui-accent"
+                              />
+                              Delivery
+                            </span>
+                            <span className="tabular-nums">{deliveryOptionBadge}</span>
+                          </label>
+                        ) : null}
 
-                    {visibleFulfillmentModes.includes('dine-in') ? (
-                      <label
-                        className={`flex cursor-pointer items-center justify-between rounded-xl border px-3 py-2 text-xs ${
-                          fulfillment === 'dine-in'
-                            ? 'border-ui-accent bg-ui-surface-muted font-semibold text-ui-text'
-                            : 'border-ui-border bg-ui-surface text-ui-text-muted'
-                        }`}
-                      >
-                        <span className="flex items-center gap-1.5">
-                          <input
-                            type="radio"
-                            name="fulfillment"
-                            checked={fulfillment === 'dine-in'}
-                            onChange={() => {
-                              setSelectedFulfillment('dine-in');
-                              setDeliveryPin(null);
-                              setSelectedAddress(null);
-                              setSubmitError(null);
-                              setFieldErrors((prev) => ({
-                                ...prev,
-                                contactNumber: undefined,
-                                deliveryPin: undefined,
-                                addressOrNotes: undefined,
-                              }));
-                            }}
-                            className="accent-ui-accent"
-                          />
-                          Dine-in
-                        </span>
-                        <span>Table</span>
-                      </label>
-                    ) : null}
-                  </div>
-                </fieldset>
+                        {visibleFulfillmentModes.includes('dine-in') ? (
+                          <label
+                            className={`flex cursor-pointer items-center justify-between rounded-xl border px-3 py-2 text-xs ${
+                              fulfillment === 'dine-in'
+                                ? 'border-ui-accent bg-ui-surface-muted font-semibold text-ui-text'
+                                : 'border-ui-border bg-ui-surface text-ui-text-muted'
+                            }`}
+                          >
+                            <span className="flex items-center gap-1.5">
+                              <input
+                                type="radio"
+                                name={field.name}
+                                value="dine-in"
+                                checked={fulfillment === 'dine-in'}
+                                onBlur={field.onBlur}
+                                onChange={() => {
+                                  field.onChange('dine-in');
+                                  setValue('deliveryPin', null);
+                                  setValue('selectedAddress', null);
+                                  setSubmitError(null);
+                                  clearErrors(['contactNumber', 'deliveryPin', 'addressOrNotes']);
+                                }}
+                                className="accent-ui-accent"
+                              />
+                              Dine-in
+                            </span>
+                            <span>Table</span>
+                          </label>
+                        ) : null}
+                      </div>
+                    </fieldset>
+                  )}
+                />
 
                 {fulfillment === 'dine-in' ? (
                   <div>
@@ -2296,24 +2288,16 @@ export function CartPortalDrawer() {
                       {store.dineInTableRequired ? 'Table Number' : 'Table Number (optional)'}
                     </label>
                     <input
-                      ref={tableInputRef}
                       id="checkout-table-number"
-                      name="tableNumber"
                       type="text"
                       maxLength={TABLE_NUMBER_MAX_LENGTH}
-                      value={effectiveTableNumber}
                       aria-invalid={Boolean(fieldErrors.tableNumber)}
                       aria-describedby={fieldErrors.tableNumber ? tableErrorId : undefined}
-                      onChange={(event) => {
-                        setTableNumberDraft(event.target.value);
-                        if (fieldErrors.tableNumber && event.target.value.trim()) {
-                          setFieldErrors((prev) => ({ ...prev, tableNumber: undefined }));
-                        }
-                      }}
                       placeholder="e.g. 7 or Patio 2"
                       className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text ${
                         fieldErrors.tableNumber ? 'border-ui-error' : 'border-ui-border'
                       }`}
+                      {...register('tableNumber')}
                     />
                     {fieldErrors.tableNumber ? (
                       <p
@@ -2321,7 +2305,7 @@ export function CartPortalDrawer() {
                         role="alert"
                         className="mt-1 text-xs font-semibold text-ui-error"
                       >
-                        {fieldErrors.tableNumber}
+                        {fieldErrors.tableNumber.message}
                       </p>
                     ) : null}
                   </div>
@@ -2345,7 +2329,7 @@ export function CartPortalDrawer() {
                         outOfRange={isOutOfRange}
                         distanceKm={deliveryQuote.distanceKm}
                         originLabel={originLabel}
-                        errorText={fieldErrors.deliveryPin}
+                        errorText={fieldErrors.deliveryPin?.message}
                         errorId={locationErrorId}
                         onSelectLocation={handleSelectLocation}
                         onClearLocation={handleClearLocation}
@@ -2451,20 +2435,11 @@ export function CartPortalDrawer() {
                         : 'Pickup Notes (optional)'}
                   </label>
                   <input
-                    ref={notesInputRef}
                     id="checkout-notes"
-                    name="addressOrNotes"
                     type="text"
                     maxLength={500}
-                    value={addressOrNotes}
                     aria-invalid={Boolean(fieldErrors.addressOrNotes)}
                     aria-describedby={fieldErrors.addressOrNotes ? addressErrorId : undefined}
-                    onChange={(event) => {
-                      setAddressOrNotes(event.target.value);
-                      if (fieldErrors.addressOrNotes && event.target.value.trim()) {
-                        setFieldErrors((prev) => ({ ...prev, addressOrNotes: undefined }));
-                      }
-                    }}
                     placeholder={
                       fulfillment === 'delivery'
                         ? selectedAddress
@@ -2475,6 +2450,7 @@ export function CartPortalDrawer() {
                     className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text ${
                       fieldErrors.addressOrNotes ? 'border-ui-error' : 'border-ui-border'
                     }`}
+                    {...register('addressOrNotes')}
                   />
                   {fieldErrors.addressOrNotes ? (
                     <p
@@ -2482,7 +2458,7 @@ export function CartPortalDrawer() {
                       role="alert"
                       className="mt-1 text-xs font-semibold text-ui-error"
                     >
-                      {fieldErrors.addressOrNotes}
+                      {fieldErrors.addressOrNotes.message}
                     </p>
                   ) : null}
                 </div>
@@ -2494,25 +2470,33 @@ export function CartPortalDrawer() {
                   >
                     Payment Method
                   </label>
-                  <select
-                    id="checkout-payment"
+                  <Controller
+                    control={control}
                     name="paymentMethod"
-                    value={paymentMethod}
-                    onChange={(event) => {
-                      const nextMethod = event.target.value as PaymentMethod;
-                      setSelectedPaymentMethod(nextMethod);
-                      if (nextMethod === 'cash' && fieldErrors.paymentReference) {
-                        setFieldErrors((prev) => ({ ...prev, paymentReference: undefined }));
-                      }
-                    }}
-                    className="mt-1 w-full rounded-xl border border-ui-border bg-ui-canvas px-3 py-2 text-sm text-ui-text"
-                  >
-                    {enabledPaymentMethods.map((method) => (
-                      <option key={method} value={method}>
-                        {store.paymentMethods[method].label || PAYMENT_METHOD_LABELS[method]}
-                      </option>
-                    ))}
-                  </select>
+                    render={({ field }) => (
+                      <select
+                        id="checkout-payment"
+                        name={field.name}
+                        ref={field.ref}
+                        value={paymentMethod}
+                        onBlur={field.onBlur}
+                        onChange={(event) => {
+                          const nextMethod = event.target.value as PaymentMethod;
+                          field.onChange(nextMethod);
+                          if (nextMethod === 'cash') {
+                            clearErrors('paymentReference');
+                          }
+                        }}
+                        className="mt-1 w-full rounded-xl border border-ui-border bg-ui-canvas px-3 py-2 text-sm text-ui-text"
+                      >
+                        {enabledPaymentMethods.map((method) => (
+                          <option key={method} value={method}>
+                            {store.paymentMethods[method].label || PAYMENT_METHOD_LABELS[method]}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  />
                 </div>
 
                 {paymentMethod !== 'cash' ? (
@@ -2531,27 +2515,19 @@ export function CartPortalDrawer() {
                         Payment Reference
                       </label>
                       <input
-                        ref={paymentRefInputRef}
                         id="checkout-payment-reference"
-                        name="paymentReference"
                         type="text"
                         required
                         maxLength={PAYMENT_REFERENCE_MAX_LENGTH}
-                        value={checkoutPaymentRef}
                         aria-invalid={Boolean(fieldErrors.paymentReference)}
                         aria-describedby={
                           fieldErrors.paymentReference ? paymentRefErrorId : undefined
                         }
-                        onChange={(event) => {
-                          setCheckoutPaymentRef(event.target.value);
-                          if (fieldErrors.paymentReference && event.target.value.trim()) {
-                            setFieldErrors((prev) => ({ ...prev, paymentReference: undefined }));
-                          }
-                        }}
                         placeholder="e.g. Ref # 1234 5678 9012"
                         className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 font-mono text-xs text-ui-text ${
                           fieldErrors.paymentReference ? 'border-ui-error' : 'border-ui-border'
                         }`}
+                        {...register('paymentReference')}
                       />
                       {fieldErrors.paymentReference ? (
                         <p
@@ -2559,7 +2535,7 @@ export function CartPortalDrawer() {
                           role="alert"
                           className="mt-1 text-xs font-semibold text-ui-error"
                         >
-                          {fieldErrors.paymentReference}
+                          {fieldErrors.paymentReference.message}
                         </p>
                       ) : null}
                       <p className="mt-1 text-[11px] text-ui-text-muted">
@@ -2584,14 +2560,11 @@ export function CartPortalDrawer() {
                       <button
                         type="button"
                         onClick={() => {
-                          setSelectedFulfillment(fallbackFulfillment);
+                          setValue('selectedFulfillment', fallbackFulfillment, {
+                            shouldDirty: true,
+                          });
                           setSubmitError(null);
-                          setFieldErrors((prev) => ({
-                            ...prev,
-                            contactNumber: undefined,
-                            deliveryPin: undefined,
-                            addressOrNotes: undefined,
-                          }));
+                          clearErrors(['contactNumber', 'deliveryPin', 'addressOrNotes']);
                         }}
                         className="rounded-lg border border-ui-border bg-ui-surface px-2.5 py-1 text-xs font-semibold text-ui-text hover:bg-ui-canvas"
                       >

@@ -1,4 +1,6 @@
-import { useId, useRef, useState, type SubmitEvent } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useEffect, useId, useRef, useState } from 'react';
+import { useForm, useWatch } from 'react-hook-form';
 import { getApiErrorMessage, isApiError } from '@/shared/lib/api-error';
 import {
   calculateDeliveryQuote,
@@ -9,6 +11,10 @@ import {
 } from '@/shared/shop/shop-storage';
 import type { DeliveryPricingConfig, DeliveryPricingPatch } from '@/shared/shop/types';
 import { useCatalogQuery, useDeliveryPricingMutations } from '../hooks/useCatalog';
+import {
+  createDeliveryPricingFormSchema,
+  type DeliveryPricingFormValues,
+} from '../schemas/delivery-pricing-form.schema';
 
 const EMPTY_PRICING: DeliveryPricingConfig = {
   deliveryEnabled: false,
@@ -21,23 +27,7 @@ const EMPTY_PRICING: DeliveryPricingConfig = {
 
 const PREVIEW_DISTANCES_KM = [1, 3, 5, 10, 15, 20] as const;
 
-type PricingFormState = {
-  deliveryEnabled: boolean;
-  baseFeePhp: string;
-  perKmRatePhp: string;
-  maxDistanceKm: string;
-  thresholdEnabled: boolean;
-  thresholdInput: string;
-};
-
-type PricingFormErrors = {
-  baseFeePhp?: string;
-  perKmRatePhp?: string;
-  maxDistanceKm?: string;
-  thresholdInput?: string;
-};
-
-function pricingToFormState(pricing: DeliveryPricingConfig): PricingFormState {
+function pricingToFormState(pricing: DeliveryPricingConfig): DeliveryPricingFormValues {
   return {
     deliveryEnabled: pricing.deliveryEnabled,
     baseFeePhp: String(pricing.baseFeePhp),
@@ -70,32 +60,46 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
   const hasOriginPin = isValidCoordinates(deliveryPricing.originCoords);
   const { updateDeliveryPricing, resetDeliveryPricing } = useDeliveryPricingMutations();
 
-  const [form, setForm] = useState<PricingFormState>(() => pricingToFormState(deliveryPricing));
-  const [loadedVersion, setLoadedVersion] = useState<number | undefined>(deliveryPricing.version);
-  const [isDirty, setIsDirty] = useState(false);
-  const [errors, setErrors] = useState<PricingFormErrors>({});
+  const {
+    register,
+    control,
+    handleSubmit,
+    reset,
+    clearErrors,
+    formState: { errors, isDirty },
+  } = useForm<DeliveryPricingFormValues>({
+    defaultValues: pricingToFormState(deliveryPricing),
+    resolver: (values, ctx, options) =>
+      zodResolver(createDeliveryPricingFormSchema({ hasOriginPin }))(values, ctx, options),
+  });
+
+  const watched = useWatch({ control });
+  const deliveryEnabled = watched.deliveryEnabled ?? deliveryPricing.deliveryEnabled;
+  const baseFeePhp = watched.baseFeePhp ?? String(deliveryPricing.baseFeePhp);
+  const perKmRatePhp = watched.perKmRatePhp ?? String(deliveryPricing.perKmRatePhp);
+  const maxDistanceKm = watched.maxDistanceKm ?? String(deliveryPricing.maxDistanceKm);
+  const thresholdEnabled =
+    watched.thresholdEnabled ?? deliveryPricing.freeDeliveryMinSubtotalPhp !== null;
+  const thresholdInput =
+    watched.thresholdInput ?? String(deliveryPricing.freeDeliveryMinSubtotalPhp ?? 500);
+
+  const loadedVersionRef = useRef<number | undefined>(deliveryPricing.version);
   const [editConflict, setEditConflict] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
-  const [lastSyncedSignature, setLastSyncedSignature] = useState(() =>
-    getPricingSignature(deliveryPricing),
-  );
+  const lastSyncedSignatureRef = useRef(getPricingSignature(deliveryPricing));
 
   const currentSignature = getPricingSignature(deliveryPricing);
-  if (currentSignature !== lastSyncedSignature) {
-    setLastSyncedSignature(currentSignature);
-    if (!isDirty) {
-      setForm(pricingToFormState(deliveryPricing));
-      setLoadedVersion(deliveryPricing.version);
-      setErrors({});
+
+  useEffect(() => {
+    if (!isDirty && currentSignature !== lastSyncedSignatureRef.current) {
+      lastSyncedSignatureRef.current = currentSignature;
+      reset(pricingToFormState(deliveryPricing));
+      loadedVersionRef.current = deliveryPricing.version;
       setEditConflict(false);
     }
-  }
+  }, [currentSignature, deliveryPricing, isDirty, reset]);
 
-  const baseFeeInputRef = useRef<HTMLInputElement | null>(null);
-  const perKmRateInputRef = useRef<HTMLInputElement | null>(null);
-  const maxDistanceInputRef = useRef<HTMLInputElement | null>(null);
-  const thresholdInputRef = useRef<HTMLInputElement | null>(null);
-
+  const deliveryEnabledErrorId = useId();
   const baseFeeErrorId = useId();
   const perKmRateErrorId = useId();
   const maxDistanceErrorId = useId();
@@ -104,102 +108,31 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
   async function reloadLatestSettings() {
     const refreshed = await catalogQuery.refetch();
     const latest = refreshed.data?.deliveryPricing ?? deliveryPricing;
-    setForm(pricingToFormState(latest));
-    setLoadedVersion(latest.version);
-    setLastSyncedSignature(getPricingSignature(latest));
-    setIsDirty(false);
+    lastSyncedSignatureRef.current = getPricingSignature(latest);
+    reset(pricingToFormState(latest));
+    loadedVersionRef.current = latest.version;
     setEditConflict(false);
-    setErrors({});
     onStatusMessage('Reloaded latest delivery pricing settings.');
   }
 
-  async function handlePricingSubmit(event: SubmitEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (form.deliveryEnabled && !hasOriginPin) {
-      onStatusMessage(
-        'Set your shop location pin in Store Settings before enabling delivery.',
-        'error',
-      );
-      return;
-    }
-
-    const parsedBase = Number(form.baseFeePhp);
-    const parsedRate = Number(form.perKmRatePhp);
-    const parsedMaxDist = Number(form.maxDistanceKm);
-    const parsedThreshold = Number(form.thresholdInput);
-
-    const nextErrors: PricingFormErrors = {};
-    if (
-      form.baseFeePhp.trim() === '' ||
-      !Number.isFinite(parsedBase) ||
-      parsedBase < 0 ||
-      parsedBase > 10000
-    ) {
-      nextErrors.baseFeePhp = 'Enter a base fee between ₱0 and ₱10,000.';
-    }
-    if (
-      form.perKmRatePhp.trim() === '' ||
-      !Number.isFinite(parsedRate) ||
-      parsedRate < 0 ||
-      parsedRate > 1000
-    ) {
-      nextErrors.perKmRatePhp = 'Enter a per-km rate between ₱0 and ₱1,000.';
-    }
-    if (
-      form.maxDistanceKm.trim() === '' ||
-      !Number.isFinite(parsedMaxDist) ||
-      parsedMaxDist < 0.1 ||
-      parsedMaxDist > 200
-    ) {
-      nextErrors.maxDistanceKm = 'Enter a max distance between 0.1 km and 200 km.';
-    }
-    if (
-      form.thresholdEnabled &&
-      (form.thresholdInput.trim() === '' ||
-        !Number.isFinite(parsedThreshold) ||
-        parsedThreshold <= 0 ||
-        parsedThreshold > 100000)
-    ) {
-      nextErrors.thresholdInput = 'Enter a minimum subtotal between ₱1 and ₱100,000.';
-    }
-
-    if (
-      nextErrors.baseFeePhp ||
-      nextErrors.perKmRatePhp ||
-      nextErrors.maxDistanceKm ||
-      nextErrors.thresholdInput
-    ) {
-      setErrors(nextErrors);
-      if (nextErrors.baseFeePhp) {
-        baseFeeInputRef.current?.focus();
-      } else if (nextErrors.perKmRatePhp) {
-        perKmRateInputRef.current?.focus();
-      } else if (nextErrors.maxDistanceKm) {
-        maxDistanceInputRef.current?.focus();
-      } else if (nextErrors.thresholdInput) {
-        thresholdInputRef.current?.focus();
-      }
-      return;
-    }
-
+  async function onSubmit(values: DeliveryPricingFormValues) {
     const patch: DeliveryPricingPatch = {
-      deliveryEnabled: form.deliveryEnabled,
-      baseFeePhp: Math.round(parsedBase),
-      perKmRatePhp: Math.round(parsedRate),
-      maxDistanceKm: Math.round(parsedMaxDist * 10) / 10,
-      freeDeliveryMinSubtotalPhp: form.thresholdEnabled ? Math.round(parsedThreshold) : null,
-      expectedVersion: loadedVersion ?? deliveryPricing.version,
+      deliveryEnabled: values.deliveryEnabled,
+      baseFeePhp: Math.round(Number(values.baseFeePhp)),
+      perKmRatePhp: Math.round(Number(values.perKmRatePhp)),
+      maxDistanceKm: Math.round(Number(values.maxDistanceKm) * 10) / 10,
+      freeDeliveryMinSubtotalPhp: values.thresholdEnabled
+        ? Math.round(Number(values.thresholdInput))
+        : null,
+      expectedVersion: loadedVersionRef.current ?? deliveryPricing.version,
     };
 
     try {
       const updated = await updateDeliveryPricing.mutateAsync(patch);
-      setErrors({});
+      lastSyncedSignatureRef.current = getPricingSignature(updated);
+      reset(pricingToFormState(updated));
+      loadedVersionRef.current = updated.version;
       setEditConflict(false);
-      setIsDirty(false);
-      setForm(pricingToFormState(updated));
-      setLoadedVersion(updated.version);
-      setLastSyncedSignature(getPricingSignature(updated));
       const thresholdSummary =
         updated.freeDeliveryMinSubtotalPhp !== null
           ? `Free delivery at ${formatPhp(updated.freeDeliveryMinSubtotalPhp)}+`
@@ -217,14 +150,14 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
     }
   }
 
-  const previewBase = Number(form.baseFeePhp);
-  const previewRate = Number(form.perKmRatePhp);
-  const previewMaxDist = Number(form.maxDistanceKm);
-  const previewThreshold = Number(form.thresholdInput);
+  const previewBase = Number(baseFeePhp);
+  const previewRate = Number(perKmRatePhp);
+  const previewMaxDist = Number(maxDistanceKm);
+  const previewThreshold = Number(thresholdInput);
   const isPreviewValid =
-    form.baseFeePhp.trim() !== '' &&
-    form.perKmRatePhp.trim() !== '' &&
-    form.maxDistanceKm.trim() !== '' &&
+    baseFeePhp.trim() !== '' &&
+    perKmRatePhp.trim() !== '' &&
+    maxDistanceKm.trim() !== '' &&
     Number.isFinite(previewBase) &&
     Number.isFinite(previewRate) &&
     Number.isFinite(previewMaxDist) &&
@@ -237,14 +170,14 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
     subtotalPhp: 0,
     deliveryPricing: {
       ...deliveryPricing,
-      deliveryEnabled: form.deliveryEnabled,
+      deliveryEnabled,
       baseFeePhp: isPreviewValid ? Math.round(previewBase) : deliveryPricing.baseFeePhp,
       perKmRatePhp: isPreviewValid ? Math.round(previewRate) : deliveryPricing.perKmRatePhp,
       maxDistanceKm: isPreviewValid
         ? Math.round(previewMaxDist * 10) / 10
         : deliveryPricing.maxDistanceKm,
       freeDeliveryMinSubtotalPhp:
-        form.thresholdEnabled && Number.isFinite(previewThreshold) && previewThreshold > 0
+        thresholdEnabled && Number.isFinite(previewThreshold) && previewThreshold > 0
           ? Math.round(previewThreshold)
           : null,
     },
@@ -288,13 +221,11 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
                 void resetDeliveryPricing
                   .mutateAsync()
                   .then((restored) => {
-                    setForm(pricingToFormState(restored));
-                    setLoadedVersion(restored.version);
-                    setLastSyncedSignature(getPricingSignature(restored));
-                    setIsDirty(false);
+                    lastSyncedSignatureRef.current = getPricingSignature(restored);
+                    reset(pricingToFormState(restored));
+                    loadedVersionRef.current = restored.version;
                     setEditConflict(false);
                     setConfirmReset(false);
-                    setErrors({});
                     onStatusMessage('Restored default distance-formula delivery pricing.');
                   })
                   .catch((error: unknown) => {
@@ -333,7 +264,13 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         <form
           noValidate
-          onSubmit={(event) => void handlePricingSubmit(event)}
+          onSubmit={(event) => {
+            if (updateDeliveryPricing.isPending) {
+              event.preventDefault();
+              return;
+            }
+            void handleSubmit(onSubmit)(event);
+          }}
           className="space-y-4 rounded-2xl border border-ui-border bg-ui-surface p-5 lg:col-span-7"
         >
           {editConflict ? (
@@ -364,26 +301,39 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
             </p>
           ) : null}
 
-          <label
-            className={`flex items-center gap-2 rounded-xl border border-ui-border bg-ui-surface-muted px-3 py-2.5 text-sm font-semibold text-ui-text ${
-              !hasOriginPin && !form.deliveryEnabled
-                ? 'cursor-not-allowed opacity-60'
-                : 'cursor-pointer'
-            }`}
-          >
-            <input
-              id="admin-delivery-enabled"
-              type="checkbox"
-              disabled={!hasOriginPin && !form.deliveryEnabled}
-              checked={form.deliveryEnabled}
-              onChange={(event) => {
-                setForm((prev) => ({ ...prev, deliveryEnabled: event.target.checked }));
-                setIsDirty(true);
-              }}
-              className="accent-ui-accent h-4 w-4 rounded"
-            />
-            <span>Accepting delivery orders</span>
-          </label>
+          <div>
+            <label
+              className={`flex items-center gap-2 rounded-xl border bg-ui-surface-muted px-3 py-2.5 text-sm font-semibold text-ui-text ${
+                errors.deliveryEnabled ? 'border-ui-error' : 'border-ui-border'
+              } ${
+                !hasOriginPin && !deliveryEnabled
+                  ? 'cursor-not-allowed opacity-60'
+                  : 'cursor-pointer'
+              }`}
+            >
+              <input
+                id="admin-delivery-enabled"
+                type="checkbox"
+                disabled={!hasOriginPin && !deliveryEnabled}
+                aria-invalid={Boolean(errors.deliveryEnabled)}
+                aria-describedby={errors.deliveryEnabled ? deliveryEnabledErrorId : undefined}
+                className="accent-ui-accent h-4 w-4 rounded"
+                {...register('deliveryEnabled', {
+                  onChange: () => clearErrors('deliveryEnabled'),
+                })}
+              />
+              <span>Accepting delivery orders</span>
+            </label>
+            {errors.deliveryEnabled ? (
+              <p
+                id={deliveryEnabledErrorId}
+                role="alert"
+                className="mt-1 text-xs font-semibold text-ui-error"
+              >
+                {errors.deliveryEnabled.message}
+              </p>
+            ) : null}
+          </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
@@ -394,33 +344,17 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
                 Base Fee (₱)
               </label>
               <input
-                ref={baseFeeInputRef}
                 id="admin-delivery-base-fee"
                 type="number"
                 min={0}
                 max={10000}
                 step={1}
-                value={form.baseFeePhp}
                 aria-invalid={Boolean(errors.baseFeePhp)}
                 aria-describedby={errors.baseFeePhp ? baseFeeErrorId : undefined}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setForm((prev) => ({ ...prev, baseFeePhp: value }));
-                  setIsDirty(true);
-                  const numeric = Number(value);
-                  if (
-                    errors.baseFeePhp &&
-                    value.trim() !== '' &&
-                    Number.isFinite(numeric) &&
-                    numeric >= 0 &&
-                    numeric <= 10000
-                  ) {
-                    setErrors((prev) => ({ ...prev, baseFeePhp: undefined }));
-                  }
-                }}
                 className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text tabular-nums ${
                   errors.baseFeePhp ? 'border-ui-error' : 'border-ui-border'
                 }`}
+                {...register('baseFeePhp')}
               />
               {errors.baseFeePhp ? (
                 <p
@@ -428,7 +362,7 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
                   role="alert"
                   className="mt-1 text-xs font-semibold text-ui-error"
                 >
-                  {errors.baseFeePhp}
+                  {errors.baseFeePhp.message}
                 </p>
               ) : null}
             </div>
@@ -441,33 +375,17 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
                 Per-km Rate (₱/km)
               </label>
               <input
-                ref={perKmRateInputRef}
                 id="admin-delivery-per-km"
                 type="number"
                 min={0}
                 max={1000}
                 step={1}
-                value={form.perKmRatePhp}
                 aria-invalid={Boolean(errors.perKmRatePhp)}
                 aria-describedby={errors.perKmRatePhp ? perKmRateErrorId : undefined}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setForm((prev) => ({ ...prev, perKmRatePhp: value }));
-                  setIsDirty(true);
-                  const numeric = Number(value);
-                  if (
-                    errors.perKmRatePhp &&
-                    value.trim() !== '' &&
-                    Number.isFinite(numeric) &&
-                    numeric >= 0 &&
-                    numeric <= 1000
-                  ) {
-                    setErrors((prev) => ({ ...prev, perKmRatePhp: undefined }));
-                  }
-                }}
                 className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text tabular-nums ${
                   errors.perKmRatePhp ? 'border-ui-error' : 'border-ui-border'
                 }`}
+                {...register('perKmRatePhp')}
               />
               {errors.perKmRatePhp ? (
                 <p
@@ -475,7 +393,7 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
                   role="alert"
                   className="mt-1 text-xs font-semibold text-ui-error"
                 >
-                  {errors.perKmRatePhp}
+                  {errors.perKmRatePhp.message}
                 </p>
               ) : null}
             </div>
@@ -488,33 +406,17 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
                 Max Distance (km)
               </label>
               <input
-                ref={maxDistanceInputRef}
                 id="admin-delivery-max-distance"
                 type="number"
                 min={0.1}
                 max={200}
                 step={0.1}
-                value={form.maxDistanceKm}
                 aria-invalid={Boolean(errors.maxDistanceKm)}
                 aria-describedby={errors.maxDistanceKm ? maxDistanceErrorId : undefined}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setForm((prev) => ({ ...prev, maxDistanceKm: value }));
-                  setIsDirty(true);
-                  const numeric = Number(value);
-                  if (
-                    errors.maxDistanceKm &&
-                    value.trim() !== '' &&
-                    Number.isFinite(numeric) &&
-                    numeric >= 0.1 &&
-                    numeric <= 200
-                  ) {
-                    setErrors((prev) => ({ ...prev, maxDistanceKm: undefined }));
-                  }
-                }}
                 className={`mt-1 w-full rounded-xl border bg-ui-canvas px-3 py-2 text-sm text-ui-text tabular-nums ${
                   errors.maxDistanceKm ? 'border-ui-error' : 'border-ui-border'
                 }`}
+                {...register('maxDistanceKm')}
               />
               {errors.maxDistanceKm ? (
                 <p
@@ -522,7 +424,7 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
                   role="alert"
                   className="mt-1 text-xs font-semibold text-ui-error"
                 >
-                  {errors.maxDistanceKm}
+                  {errors.maxDistanceKm.message}
                 </p>
               ) : null}
             </div>
@@ -533,13 +435,10 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
               <input
                 id="admin-free-delivery-enabled"
                 type="checkbox"
-                checked={form.thresholdEnabled}
-                onChange={(event) => {
-                  setForm((prev) => ({ ...prev, thresholdEnabled: event.target.checked }));
-                  setIsDirty(true);
-                  setErrors((prev) => ({ ...prev, thresholdInput: undefined }));
-                }}
                 className="accent-ui-accent h-4 w-4 rounded"
+                {...register('thresholdEnabled', {
+                  onChange: () => clearErrors('thresholdInput'),
+                })}
               />
               <span>Free delivery on orders meeting minimum subtotal</span>
             </label>
@@ -552,33 +451,18 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
                 Min. Subtotal (₱)
               </label>
               <input
-                ref={thresholdInputRef}
                 id="admin-free-delivery-min"
                 type="number"
                 min={1}
                 max={100000}
                 step={1}
-                disabled={!form.thresholdEnabled}
-                value={form.thresholdInput}
+                disabled={!thresholdEnabled}
                 aria-invalid={Boolean(errors.thresholdInput)}
                 aria-describedby={errors.thresholdInput ? thresholdErrorId : undefined}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setForm((prev) => ({ ...prev, thresholdInput: value }));
-                  setIsDirty(true);
-                  const numeric = Number(value);
-                  if (
-                    errors.thresholdInput &&
-                    Number.isFinite(numeric) &&
-                    numeric > 0 &&
-                    numeric <= 100000
-                  ) {
-                    setErrors((prev) => ({ ...prev, thresholdInput: undefined }));
-                  }
-                }}
                 className={`mt-1 w-40 rounded-xl border bg-ui-canvas px-3 py-1.5 text-sm text-ui-text tabular-nums disabled:opacity-50 ${
                   errors.thresholdInput ? 'border-ui-error' : 'border-ui-border'
                 }`}
+                {...register('thresholdInput')}
               />
               {errors.thresholdInput ? (
                 <p
@@ -586,7 +470,7 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
                   role="alert"
                   className="mt-1 text-xs font-semibold text-ui-error"
                 >
-                  {errors.thresholdInput}
+                  {errors.thresholdInput.message}
                 </p>
               ) : null}
             </div>
@@ -658,7 +542,7 @@ export function AdminDeliverySettings({ onStatusMessage }: AdminDeliverySettings
           </ul>
 
           <p className="text-xs text-ui-text-muted">
-            {form.thresholdEnabled &&
+            {thresholdEnabled &&
             Number.isFinite(previewThreshold) &&
             previewThreshold > 0 &&
             previewThreshold <= 100000

@@ -77,4 +77,51 @@ describe('AdminOptionGroupsManager', () => {
     const bacon = state.optionGroups.flatMap((g) => g.choices).find((c) => c.id === 'bacon');
     expect(bacon?.available).toBe(false);
   });
+
+  it('preserves existing choice database IDs when editing and reordering choices', async () => {
+    const { spy, state } = installMockShopApi({ authenticated: true, role: 'owner' });
+
+    render(
+      <TestQueryWrapper>
+        <AdminOptionGroupsManager role="owner" onStatusMessage={vi.fn()} />
+      </TestQueryWrapper>,
+    );
+
+    const addOnsBefore = state.optionGroups.find((g) => g.id === 'add-ons');
+    expect(addOnsBefore).toBeTruthy();
+    const originalIds = [...(addOnsBefore?.choices ?? [])]
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((c) => c.id);
+    expect(originalIds.length).toBeGreaterThanOrEqual(2);
+
+    fireEvent.click(await screen.findByRole('button', { name: /edit option group add-ons/i }));
+
+    // Move the second choice up so order swaps, then save
+    const secondChoiceName = [...(addOnsBefore?.choices ?? [])].sort(
+      (a, b) => a.sortOrder - b.sortOrder,
+    )[1]?.name;
+    expect(secondChoiceName).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: new RegExp(`move choice ${secondChoiceName} up`, 'i'),
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /save option group/i }));
+
+    await waitFor(() => {
+      const patchCall = spy.mock.calls.find(
+        ([input, init]) =>
+          String(input) === '/api/v1/admin/option-groups/add-ons' && init?.method === 'PATCH',
+      );
+      expect(patchCall).toBeTruthy();
+      const body = JSON.parse(String(patchCall?.[1]?.body ?? '{}')) as {
+        choices?: Array<{ id?: string }>;
+      };
+      expect(body.choices?.map((c) => c.id)).toEqual([
+        originalIds[1],
+        originalIds[0],
+        ...originalIds.slice(2),
+      ]);
+    });
+  });
 });
