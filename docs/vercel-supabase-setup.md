@@ -141,7 +141,7 @@ _(Setting `SUPABASE_URL` and `SUPABASE_SECRET_KEY`—or legacy `SUPABASE_SERVICE
 
 1. Push your branch (containing [vercel.json](../vercel.json), [api/index.js](../api/index.js), [apps/api/src/vercel.ts](../apps/api/src/vercel.ts), and [apps/api/vite.config.ts](../apps/api/vite.config.ts)) and import the repository in **Vercel**.
 2. Keep **Root Directory** as `.` (monorepo root) — [vercel.json](../vercel.json) supplies `buildCommand: "npm run build"` and `outputDirectory: "apps/web/dist"`.
-3. Under **Project Settings → Build and Deployment → Node.js Version**, select **`22.x`** (matching `engines.node >= 22.22.2` in [package.json](../package.json#L6-L8)).
+3. Under **Project Settings → Build and Deployment → Node.js Version**, select **`22.x`** (matching `engines.node` (`"22.x"`) in [package.json](../package.json#L6-L8)).
 
 ### Step 2: Configure Environment Variables
 
