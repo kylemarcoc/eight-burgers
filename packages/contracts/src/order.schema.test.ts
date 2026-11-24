@@ -80,11 +80,12 @@ describe('order.schema', () => {
     expect(normalizeContactDigits('9171234567')).toBe('09171234567');
   });
 
-  it('validates publicOrderTrackerSchema with tableNumber & paymentStatus while omitting PII, paymentReference, and itemNote', () => {
+  it('validates publicOrderTrackerSchema with tableNumber, hasContactNumber & paymentStatus while omitting PII, paymentReference, and itemNote', () => {
     const parsed = publicOrderTrackerSchema.parse({
       queueNumber: '#8B-101',
       fulfillment: 'dine-in',
       tableNumber: '7',
+      hasContactNumber: true,
       paymentStatus: 'pending_verification',
       lines: [
         {
@@ -102,6 +103,7 @@ describe('order.schema', () => {
 
     expect(parsed.queueNumber).toBe('#8B-101');
     expect(parsed.tableNumber).toBe('7');
+    expect(parsed.hasContactNumber).toBe(true);
     expect(parsed.paymentStatus).toBe('pending_verification');
     expect('customerName' in parsed).toBe(false);
     expect('contactNumber' in parsed).toBe(false);
@@ -111,13 +113,16 @@ describe('order.schema', () => {
     expect(parsed.lines[0]?.selectedOptionNames).toEqual(['Sliced Cheese']);
   });
 
-  it('requires either customerName or contactNumber in cancelPublicOrderByQueueRequestSchema', () => {
+  it('requires contactNumber and rejects customerName-only payloads in cancelPublicOrderByQueueRequestSchema', () => {
     expect(cancelPublicOrderByQueueRequestSchema.safeParse({ customerName: 'Marco' }).success).toBe(
-      true,
+      false,
     );
     expect(
       cancelPublicOrderByQueueRequestSchema.safeParse({ contactNumber: '09171234567' }).success,
     ).toBe(true);
+    expect(cancelPublicOrderByQueueRequestSchema.safeParse({ contactNumber: '   ' }).success).toBe(
+      false,
+    );
     expect(cancelPublicOrderByQueueRequestSchema.safeParse({}).success).toBe(false);
   });
 

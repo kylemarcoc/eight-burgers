@@ -161,7 +161,7 @@ export function StoreFulfillmentPaymentForm({ onStatusMessage }: StoreFulfillmen
       return;
     }
     if (file.size > MENU_IMAGE_MAX_UPLOAD_BYTES) {
-      setUploadError('QR image must be 5 MB or smaller.');
+      setUploadError('QR image must be 4 MB or smaller.');
       return;
     }
 

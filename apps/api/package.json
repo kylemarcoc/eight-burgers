@@ -11,8 +11,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@hono/node-server": "^2.1.11",
     "@menu-kiosk/contracts": "*",
-    "@hono/node-server": "^1.14.0",
     "@supabase/supabase-js": "^2.49.0",
     "hono": "^4.7.0",
     "sharp": "^0.35.5",

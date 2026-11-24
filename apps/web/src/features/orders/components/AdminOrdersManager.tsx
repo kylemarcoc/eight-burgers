@@ -15,7 +15,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useCatalogQuery } from '@/features/menu-catalog';
 import { StoreOrderingStatusToggle } from '@/features/store-settings';
-import { getApiErrorMessage, isApiError } from '@/shared/lib/api-error';
+import { handleAdminUnauthorizedError } from '@/shared/lib/admin-session-cache';
+import { getApiErrorMessage } from '@/shared/lib/api-error';
 import { buildGoogleMapsPinUrl, formatPhp, isValidCoordinates } from '@/shared/shop/shop-storage';
 import type { FulfillmentMode, OrderRecord, OrderStatus } from '@/shared/shop/types';
 import { orderKeys } from '../api/orders-api';
@@ -181,14 +182,7 @@ export function AdminOrdersManager({ role = 'owner' }: AdminOrdersManagerProps) 
   const updateOrderPaymentStatusMutation = useUpdateOrderPaymentStatusMutation();
 
   useEffect(() => {
-    if (isApiError(ordersQuery.error) && ordersQuery.error.status === 401) {
-      void queryClient.cancelQueries({ queryKey: ['admin'] });
-      queryClient.removeQueries({ queryKey: orderKeys.adminAll });
-      queryClient.setQueryData(['admin', 'auth', 'session'], {
-        authenticated: false,
-        user: null,
-      });
-    }
+    handleAdminUnauthorizedError(queryClient, ordersQuery.error);
   }, [ordersQuery.error, queryClient]);
 
   const setOrderPending = useCallback((orderId: string, pending: boolean) => {

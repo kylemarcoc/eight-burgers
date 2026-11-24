@@ -1,5 +1,6 @@
 import type { AdminLoginRequest } from '@menu-kiosk/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { clearAdminSessionCache } from '@/shared/lib/admin-session-cache';
 import { adminAuthKeys, fetchAdminSession, loginAdmin, logoutAdmin } from '../api/auth-api';
 
 export function useAdminSessionQuery() {
@@ -28,13 +29,7 @@ export function useAdminLogoutMutation() {
   return useMutation({
     mutationFn: () => logoutAdmin(),
     onSettled: async () => {
-      await queryClient.cancelQueries({ queryKey: ['admin'] });
-      queryClient.removeQueries({ queryKey: ['admin', 'orders'] });
-      queryClient.removeQueries({ queryKey: ['admin', 'team'] });
-      queryClient.setQueryData(adminAuthKeys.session(), {
-        authenticated: false,
-        user: null,
-      });
+      await clearAdminSessionCache(queryClient);
     },
   });
 }

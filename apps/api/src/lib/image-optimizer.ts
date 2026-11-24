@@ -64,7 +64,7 @@ export async function optimizeMenuImageToWebp(
     throw new MenuImageOptimizationError(
       'FILE_TOO_LARGE',
       413,
-      'Image file exceeds the 5 MB upload limit.',
+      'Image file exceeds the 4 MB upload limit.',
     );
   }
 

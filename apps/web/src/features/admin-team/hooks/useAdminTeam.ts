@@ -1,5 +1,6 @@
 import type { CreateAdminUserRequest, UpdateAdminUserRequest } from '@menu-kiosk/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { handleAdminUnauthorizedError } from '@/shared/lib/admin-session-cache';
 import { adminTeamKeys, createAdminUser, fetchAdminTeam, updateAdminUser } from '../api/team-api';
 
 export function useAdminTeamQuery(enabled = true) {
@@ -13,12 +14,16 @@ export function useAdminTeamQuery(enabled = true) {
 
 export function useAdminTeamMutations() {
   const queryClient = useQueryClient();
+  const onError = (error: unknown) => {
+    handleAdminUnauthorizedError(queryClient, error);
+  };
 
   const createMember = useMutation({
     mutationFn: (payload: CreateAdminUserRequest) => createAdminUser(payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: adminTeamKeys.all });
     },
+    onError,
   });
 
   const updateMember = useMutation({
@@ -27,6 +32,7 @@ export function useAdminTeamMutations() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: adminTeamKeys.all });
     },
+    onError,
   });
 
   return {

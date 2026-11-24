@@ -173,7 +173,7 @@ Add these in **Vercel → Project Settings → Environment Variables** (see [.en
 
 ## 5. Vercel Runtime Notes & Constraints
 
-- **4.5 MB upload ceiling:** [menu.schema.ts](../packages/contracts/src/menu.schema.ts#L291) allows up to `5 MB` uploads (`MENU_IMAGE_MAX_UPLOAD_BYTES`), but standard Vercel Serverless Functions reject request bodies over **4.5 MB** (`413`) before Hono receives them. Keep uploaded menu/logo/QR images under `4.5 MB`.
+- **4 MB upload ceiling (below Vercel's 4.5 MB limit):** [menu.schema.ts](../packages/contracts/src/menu.schema.ts#L292) enforces a `4 MB` file limit (`MENU_IMAGE_MAX_UPLOAD_BYTES`), and [app.ts](../apps/api/src/app.ts) caps upload requests below standard Vercel Serverless Functions' **4.5 MB** body ceiling (`413`) so oversized uploads return structured JSON errors instead of platform `413` pages.
 - **In-memory cache & rate limits:** [SlidingWindowRateLimiter](../apps/api/src/lib/rate-limit.ts#L22-L88) and [storeProfileCache](../apps/api/src/lib/store-profile-cache.ts#L13-L63) (`60s` TTL) live in memory per serverless container; edits in `/admin/settings` propagate across concurrent warm instances within 60 seconds, and rate limiting is best-effort per instance.
 - **Uploaded images vs. bundled images:** Seeded 8Burgers photos load from `apps/web/public/images/menu/*.webp`. Newly uploaded item, logo, hero, and payment-QR WebP images are processed via `sharp` and stored in Supabase Storage via [buildMenuImagePublicUrl](../apps/api/src/lib/menu-images.ts#L29-L36) (`https://<project-ref>.supabase.co/storage/v1/object/public/menu-images/...`).
 
@@ -184,5 +184,5 @@ Add these in **Vercel → Project Settings → Environment Variables** (see [.en
 1. **Local pre-flight (before pushing):** Run `npm run lint`, `npm run format:check`, `npm run test`, `npm run typecheck`, and `npm run build`.
 2. **Health & DB readiness:** Confirm `GET https://<your-domain>/healthz` returns `200 {"status":"ok"}` and `GET https://<your-domain>/readyz` returns `200 {"status":"ready"}` ([health.ts](../apps/api/src/routes/health.ts)).
 3. **Storefront & SPA deep links:** Open `/`, `/admin`, and `/admin/settings`, then hard-reload to confirm zero `404`s and menu images load cleanly.
-4. **Admin auth & image pipeline:** Sign in at `/admin` with your Owner account (verifies `APP_ORIGIN`, `COOKIE_SECURE=true`, and same-origin `Path=/api` cookies), upload one test image (`< 4.5 MB`) to verify Linux `sharp` + Supabase `menu-images` RLS, and test a full checkout + `/admin/orders` status cycle.
+4. **Admin auth & image pipeline:** Sign in at `/admin` with your Owner account (verifies `APP_ORIGIN`, `COOKIE_SECURE=true`, and same-origin `Path=/api` cookies), upload one test image (`<= 4 MB`) to verify Linux `sharp` + Supabase `menu-images` RLS, and test a full checkout + `/admin/orders` status cycle.
 5. **Team setup:** Add separate Cashier and Staff accounts under `/admin/team` before sharing credentials with store staff.

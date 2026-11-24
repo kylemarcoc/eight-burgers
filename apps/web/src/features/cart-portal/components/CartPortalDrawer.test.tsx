@@ -576,6 +576,117 @@ describe('CartPortalDrawer', () => {
     ).toBeTruthy();
   });
 
+  it('requires mobile number for pickup tracker cancellation and guides no-phone orders to device receipt or counter', async () => {
+    installMockShopApi({
+      initialOrders: [
+        {
+          id: '00000000-0000-4000-8000-000000000106',
+          queueNumber: '#8B-106',
+          customerName: 'Ana',
+          contactNumber: '',
+          fulfillment: 'pickup',
+          tableNumber: '',
+          deliveryEtaMinutes: '',
+          addressOrNotes: '',
+          paymentMethod: 'cash',
+          paymentStatus: 'unpaid',
+          paymentReference: '',
+          lines: [
+            {
+              lineId: 'burger-deluxe',
+              itemId: 'burger-deluxe',
+              name: 'Burger Deluxe',
+              unitPricePhp: 148,
+              selectedOptions: [],
+              addonNames: [],
+              itemNote: '',
+              addonsPricePhp: 0,
+              quantity: 1,
+              lineTotalPhp: 148,
+            },
+          ],
+          subtotalPhp: 148,
+          deliveryFeePhp: 0,
+          totalPhp: 148,
+          status: 'received',
+          createdAtIso: '2026-11-22T03:00:00.000Z',
+          version: 1,
+        },
+        {
+          id: '00000000-0000-4000-8000-000000000107',
+          queueNumber: '#8B-107',
+          customerName: 'Ben',
+          contactNumber: '09181112233',
+          fulfillment: 'pickup',
+          tableNumber: '',
+          deliveryEtaMinutes: '',
+          addressOrNotes: '',
+          paymentMethod: 'cash',
+          paymentStatus: 'unpaid',
+          paymentReference: '',
+          lines: [
+            {
+              lineId: 'burger-deluxe',
+              itemId: 'burger-deluxe',
+              name: 'Burger Deluxe',
+              unitPricePhp: 148,
+              selectedOptions: [],
+              addonNames: [],
+              itemNote: '',
+              addonsPricePhp: 0,
+              quantity: 1,
+              lineTotalPhp: 148,
+            },
+          ],
+          subtotalPhp: 148,
+          deliveryFeePhp: 0,
+          totalPhp: 148,
+          status: 'received',
+          createdAtIso: '2026-11-22T03:05:00.000Z',
+          version: 1,
+        },
+      ],
+    });
+
+    render(
+      <TestQueryWrapper>
+        <CartDrawerTestHarness />
+      </TestQueryWrapper>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
+    const dialog = screen.getByRole('dialog', { name: /your order cart/i });
+
+    fireEvent.change(within(dialog).getByLabelText(/track an existing order/i), {
+      target: { value: '106' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /track order/i }));
+
+    expect(await within(dialog).findByText('#8B-106')).toBeTruthy();
+    expect(within(dialog).getByText(/this order was placed without a mobile number/i)).toBeTruthy();
+    expect(within(dialog).queryByRole('button', { name: /^cancel order$/i })).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /done · back to menu/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Drawer' }));
+
+    const nextDialog = screen.getByRole('dialog', { name: /your order cart/i });
+    fireEvent.change(within(nextDialog).getByLabelText(/track an existing order/i), {
+      target: { value: '107' },
+    });
+    fireEvent.click(within(nextDialog).getByRole('button', { name: /track order/i }));
+
+    expect(await within(nextDialog).findByText('#8B-107')).toBeTruthy();
+    fireEvent.click(within(nextDialog).getByRole('button', { name: /^cancel order$/i }));
+    const verifyInput = within(nextDialog).getByLabelText(/confirm mobile number on order/i);
+    fireEvent.change(verifyInput, { target: { value: '+63 918 111 2233' } });
+    fireEvent.click(within(nextDialog).getByRole('button', { name: /confirm cancel/i }));
+    expect(
+      await within(nextDialog).findByText(
+        /this order was cancelled and removed from the active kitchen queue/i,
+      ),
+    ).toBeTruthy();
+  });
+
   it('closes the suggestion listbox on first Escape without closing the drawer, then closes drawer on second Escape', async () => {
     installMockShopApi();
     render(

@@ -1019,21 +1019,14 @@ export function CartPortalDrawer() {
     if (!publicTrackedOrder) return;
     const trimmed = cancelVerificationInput.trim();
     if (!trimmed) {
-      setCancelOrderError(
-        publicTrackedOrder.fulfillment === 'delivery'
-          ? 'Enter the mobile number used on this delivery order.'
-          : 'Enter the customer name used on this order.',
-      );
+      setCancelOrderError('Enter the mobile number used on this order.');
       return;
     }
     setCancelOrderError(null);
     try {
       await cancelByQueueMutation.mutateAsync({
         queueNumber: publicTrackedOrder.queueNumber,
-        verification:
-          publicTrackedOrder.fulfillment === 'delivery'
-            ? { contactNumber: trimmed }
-            : { customerName: trimmed },
+        verification: { contactNumber: trimmed },
       });
       setConfirmCancelOrder(false);
       setCancelVerificationInput('');
@@ -1670,81 +1663,83 @@ export function CartPortalDrawer() {
                   </ul>
 
                   {canCustomerCancelOrder(publicTrackedOrder) ? (
-                    <div className="space-y-2 rounded-xl border border-ui-border bg-ui-surface p-3">
-                      {cancelOrderError ? (
-                        <p role="alert" className="text-xs font-semibold text-ui-error">
-                          {cancelOrderError}
-                        </p>
-                      ) : null}
-                      {confirmCancelOrder ? (
-                        <form
-                          noValidate
-                          onSubmit={(event) => void handleConfirmPublicQueueCancel(event)}
-                          className="space-y-2.5"
-                        >
-                          <label
-                            htmlFor="cancel-verify-input"
-                            className="block text-xs font-semibold text-ui-text"
+                    publicTrackedOrder.fulfillment === 'delivery' ||
+                    publicTrackedOrder.hasContactNumber ? (
+                      <div className="space-y-2 rounded-xl border border-ui-border bg-ui-surface p-3">
+                        {cancelOrderError ? (
+                          <p role="alert" className="text-xs font-semibold text-ui-error">
+                            {cancelOrderError}
+                          </p>
+                        ) : null}
+                        {confirmCancelOrder ? (
+                          <form
+                            noValidate
+                            onSubmit={(event) => void handleConfirmPublicQueueCancel(event)}
+                            className="space-y-2.5"
                           >
-                            {publicTrackedOrder.fulfillment === 'delivery'
-                              ? 'Confirm Mobile Number on Order'
-                              : 'Confirm Customer Name on Order'}
-                          </label>
-                          <input
-                            id="cancel-verify-input"
-                            type={publicTrackedOrder.fulfillment === 'delivery' ? 'tel' : 'text'}
-                            value={cancelVerificationInput}
-                            onChange={(event) => {
-                              setCancelVerificationInput(event.target.value);
-                              if (cancelOrderError) setCancelOrderError(null);
-                            }}
-                            placeholder={
-                              publicTrackedOrder.fulfillment === 'delivery'
-                                ? '0917 000 0000'
-                                : 'e.g. Marco'
-                            }
-                            className="w-full rounded-lg border border-ui-border bg-ui-canvas px-3 py-1.5 text-xs text-ui-text"
-                          />
-                          <div className="grid grid-cols-2 gap-2">
-                            <button
-                              type="submit"
-                              disabled={cancelByQueueMutation.isPending}
-                              className="rounded-lg bg-ui-error px-3 py-1.5 text-xs font-semibold text-ui-on-error hover:opacity-90 disabled:opacity-50"
+                            <label
+                              htmlFor="cancel-verify-input"
+                              className="block text-xs font-semibold text-ui-text"
                             >
-                              {cancelByQueueMutation.isPending ? 'Cancelling…' : 'Confirm Cancel'}
-                            </button>
+                              Confirm Mobile Number on Order
+                            </label>
+                            <input
+                              id="cancel-verify-input"
+                              type="tel"
+                              value={cancelVerificationInput}
+                              onChange={(event) => {
+                                setCancelVerificationInput(event.target.value);
+                                if (cancelOrderError) setCancelOrderError(null);
+                              }}
+                              placeholder="0917 000 0000"
+                              className="w-full rounded-lg border border-ui-border bg-ui-canvas px-3 py-1.5 text-xs text-ui-text"
+                            />
+                            <div className="grid grid-cols-2 gap-2">
+                              <button
+                                type="submit"
+                                disabled={cancelByQueueMutation.isPending}
+                                className="rounded-lg bg-ui-error px-3 py-1.5 text-xs font-semibold text-ui-on-error hover:opacity-90 disabled:opacity-50"
+                              >
+                                {cancelByQueueMutation.isPending ? 'Cancelling…' : 'Confirm Cancel'}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={cancelByQueueMutation.isPending}
+                                onClick={() => {
+                                  setConfirmCancelOrder(false);
+                                  setCancelVerificationInput('');
+                                  setCancelOrderError(null);
+                                }}
+                                className="rounded-lg border border-ui-border bg-ui-surface-muted px-3 py-1.5 text-xs font-semibold text-ui-text hover:bg-ui-canvas"
+                              >
+                                Keep Order
+                              </button>
+                            </div>
+                          </form>
+                        ) : (
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs text-ui-text-muted">
+                              Need to cancel before preparation starts?
+                            </span>
                             <button
                               type="button"
-                              disabled={cancelByQueueMutation.isPending}
                               onClick={() => {
-                                setConfirmCancelOrder(false);
-                                setCancelVerificationInput('');
+                                setConfirmCancelOrder(true);
                                 setCancelOrderError(null);
                               }}
-                              className="rounded-lg border border-ui-border bg-ui-surface-muted px-3 py-1.5 text-xs font-semibold text-ui-text hover:bg-ui-canvas"
+                              className="shrink-0 rounded-lg border border-ui-error/40 bg-ui-error/10 px-2.5 py-1 text-xs font-semibold text-ui-error hover:bg-ui-error/20"
                             >
-                              Keep Order
+                              Cancel Order
                             </button>
                           </div>
-                        </form>
-                      ) : (
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs text-ui-text-muted">
-                            Need to cancel before preparation starts?
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setConfirmCancelOrder(true);
-                              setCancelOrderError(null);
-                            }}
-                            className="shrink-0 rounded-lg border border-ui-error/40 bg-ui-error/10 px-2.5 py-1 text-xs font-semibold text-ui-error hover:bg-ui-error/20"
-                          >
-                            Cancel Order
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="rounded-xl border border-ui-border bg-ui-surface px-3 py-2 text-xs text-ui-text-muted">
+                        This order was placed without a mobile number. Cancel from the device that
+                        placed it, or contact {store.storeName} for assistance.
+                      </p>
+                    )
                   ) : publicTrackedOrder.status === 'received' &&
                     publicTrackedOrder.paymentStatus !== 'unpaid' ? (
                     <p className="rounded-xl border border-ui-border bg-ui-surface px-3 py-2 text-xs text-ui-text-muted">

@@ -283,6 +283,7 @@ export const publicOrderTrackerSchema = z.object({
   queueNumber: z.string().trim().min(1).max(20),
   fulfillment: fulfillmentModeSchema,
   tableNumber: tableNumberSchema.default(''),
+  hasContactNumber: z.boolean().optional(),
   paymentStatus: paymentStatusSchema.default('unpaid'),
   deliveryEtaMinutes: z.string().trim().min(1).max(40).optional(),
   lines: z.array(publicOrderLineSummarySchema).min(1).max(50),
@@ -297,19 +298,13 @@ export const publicOrderTrackerResponseSchema = z.object({
 });
 export type PublicOrderTrackerResponse = z.infer<typeof publicOrderTrackerResponseSchema>;
 
-export const cancelPublicOrderByQueueRequestSchema = z
-  .strictObject({
-    customerName: z.string().trim().max(80).optional(),
-    contactNumber: z.string().trim().max(32).optional(),
-  })
-  .refine(
-    (data) =>
-      Boolean(data.customerName && data.customerName.trim().length > 0) ||
-      Boolean(data.contactNumber && data.contactNumber.trim().length > 0),
-    {
-      message: 'Provide the customer name or mobile number used on the order.',
-    },
-  );
+export const cancelPublicOrderByQueueRequestSchema = z.strictObject({
+  contactNumber: z
+    .string()
+    .trim()
+    .min(1, 'Provide the mobile number used on the order.')
+    .max(32, 'Mobile number must be 32 characters or fewer.'),
+});
 export type CancelPublicOrderByQueueRequest = z.infer<typeof cancelPublicOrderByQueueRequestSchema>;
 
 export function canCustomerCancelOrder(order: {

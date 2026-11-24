@@ -6,6 +6,7 @@ import {
 } from '@menu-kiosk/contracts';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { catalogKeys, useCatalogQuery } from '@/features/menu-catalog';
+import { handleAdminUnauthorizedError } from '@/shared/lib/admin-session-cache';
 import { isApiError } from '@/shared/lib/api-error';
 import {
   deleteUnusedAdminStoreAsset,
@@ -18,14 +19,10 @@ function handleAdminStoreMutationError(
   queryClient: ReturnType<typeof useQueryClient>,
   error: unknown,
 ) {
-  if (isApiError(error) && error.status === 401) {
-    void queryClient.cancelQueries({ queryKey: ['admin'] });
-    queryClient.removeQueries({ queryKey: ['admin', 'orders'] });
-    queryClient.setQueryData(['admin', 'auth', 'session'], {
-      authenticated: false,
-      user: null,
-    });
-  } else if (isApiError(error) && error.status === 409) {
+  if (handleAdminUnauthorizedError(queryClient, error)) {
+    return;
+  }
+  if (isApiError(error) && error.status === 409) {
     void queryClient.invalidateQueries({ queryKey: catalogKeys.all });
   }
 }

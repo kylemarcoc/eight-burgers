@@ -98,6 +98,7 @@ function toPublicOrderTracker(order: OrderRecord): PublicOrderTracker {
     queueNumber: order.queueNumber,
     fulfillment: order.fulfillment,
     tableNumber: order.tableNumber ?? '',
+    hasContactNumber: order.contactNumber.trim().length > 0,
     paymentStatus: order.paymentStatus ?? 'unpaid',
     ...(order.deliveryEtaMinutes ? { deliveryEtaMinutes: order.deliveryEtaMinutes } : {}),
     lines: order.lines.map((line) => {
@@ -557,16 +558,8 @@ export function installMockShopApi(options: MockApiOptions = {}) {
       const payload = (body ?? {}) as CancelPublicOrderByQueueRequest;
       const orderDigits = normalizeContactDigits(order.contactNumber);
       const inputDigits = normalizeContactDigits(payload.contactNumber ?? '');
-      const orderName = order.customerName.trim().replace(/\s+/g, ' ').toLowerCase();
-      const inputName = (payload.customerName ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
 
-      const verified =
-        order.fulfillment === 'delivery'
-          ? Boolean(orderDigits && inputDigits && orderDigits === inputDigits)
-          : Boolean(
-              (orderName && inputName && orderName === inputName) ||
-              (orderDigits && inputDigits && orderDigits === inputDigits),
-            );
+      const verified = Boolean(orderDigits && inputDigits && orderDigits === inputDigits);
 
       if (!verified) {
         return problemJson(

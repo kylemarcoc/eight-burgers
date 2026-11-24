@@ -4,7 +4,9 @@ import {
   type AdminRole,
   type AdminTeamMember,
 } from '@menu-kiosk/contracts';
-import { useId, useMemo, useRef, useState, type SubmitEvent } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useEffect, useId, useMemo, useRef, useState, type SubmitEvent } from 'react';
+import { handleAdminUnauthorizedError } from '@/shared/lib/admin-session-cache';
 import { getApiErrorMessage } from '@/shared/lib/api-error';
 import { useAdminTeamMutations, useAdminTeamQuery } from '../hooks/useAdminTeam';
 
@@ -38,8 +40,13 @@ export type AdminTeamManagerProps = {
 };
 
 export function AdminTeamManager({ currentUserId }: AdminTeamManagerProps) {
+  const queryClient = useQueryClient();
   const teamQuery = useAdminTeamQuery(true);
   const { createMember, updateMember } = useAdminTeamMutations();
+
+  useEffect(() => {
+    handleAdminUnauthorizedError(queryClient, teamQuery.error);
+  }, [queryClient, teamQuery.error]);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

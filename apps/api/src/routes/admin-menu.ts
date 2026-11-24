@@ -59,8 +59,8 @@ export function createAdminMenuRoutes(
         status: 413,
         code: 'FILE_TOO_LARGE',
         title: 'Payload Too Large',
-        detail: 'Image file exceeds the 5 MB upload limit.',
-        fieldErrors: { file: ['Image must be 5 MB or smaller.'] },
+        detail: 'Image file exceeds the 4 MB upload limit.',
+        fieldErrors: { file: ['Image must be 4 MB or smaller.'] },
       });
     }
 

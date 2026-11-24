@@ -7,7 +7,8 @@ import {
   type PlaceOrderRequest,
 } from '@menu-kiosk/contracts';
 import { Hono } from 'hono';
-import { readAuthCookies } from '../lib/cookies';
+import { refreshAdminSessionSingleFlight } from '../lib/auth-refresh';
+import { clearAuthCookies, readAuthCookies, setAuthCookies } from '../lib/cookies';
 import { problemResponse, zodFieldErrors } from '../lib/problem';
 import { SlidingWindowRateLimiter, extractClientIp } from '../lib/rate-limit';
 import type { ApiDeps, ApiEnv } from '../types';
@@ -424,7 +425,7 @@ export function createOrderRoutes(deps: ApiDeps): Hono<ApiEnv> {
         status: 400,
         code: 'VALIDATION_ERROR',
         title: 'Validation Failed',
-        detail: 'Provide the customer name or mobile number used on the order.',
+        detail: 'Provide the mobile number used on the order.',
         fieldErrors: zodFieldErrors(parsed.error),
       });
     }
@@ -624,15 +625,30 @@ export function createOrderRoutes(deps: ApiDeps): Hono<ApiEnv> {
       }
     }
 
-    const { accessToken } = readAuthCookies(c);
+    const { accessToken, refreshToken } = readAuthCookies(c);
+    let verifiedAdminAccessToken: string | null = null;
     if (accessToken) {
       const admin = await deps.gateway.verifyAccessToken(accessToken);
       if (admin) {
-        const order = await deps.gateway.getAdminOrderById(accessToken, orderId);
-        if (order) {
-          return c.json({ data: order }, 200);
-        }
+        verifiedAdminAccessToken = accessToken;
       }
+    }
+
+    if (!verifiedAdminAccessToken && refreshToken) {
+      const refreshed = await refreshAdminSessionSingleFlight(deps.gateway, refreshToken);
+      if (refreshed) {
+        setAuthCookies(c, deps.config, refreshed.tokens);
+        verifiedAdminAccessToken = refreshed.tokens.accessToken;
+      }
+    }
+
+    if (verifiedAdminAccessToken) {
+      const order = await deps.gateway.getAdminOrderById(verifiedAdminAccessToken, orderId);
+      if (order) {
+        return c.json({ data: order }, 200);
+      }
+    } else if (accessToken || refreshToken) {
+      clearAuthCookies(c, deps.config);
     }
 
     return problemResponse(c, {

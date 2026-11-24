@@ -33,13 +33,37 @@ describe('Phase 4 security config, trusted-proxy IP extraction, and bounded rate
       }),
     ).toThrow(/RECEIPT_SIGNING_SECRET/);
 
+    expect(() =>
+      parseApiConfig({
+        ...BASE_ENV,
+        NODE_ENV: 'production',
+        RECEIPT_SIGNING_SECRET: 'a-very-strong-production-receipt-signing-secret-1234',
+        APP_ORIGIN: 'https://eight-burgers.vercel.app',
+        COOKIE_SECURE: 'false',
+      }),
+    ).toThrow(/COOKIE_SECURE/);
+
+    expect(() =>
+      parseApiConfig({
+        ...BASE_ENV,
+        NODE_ENV: 'production',
+        RECEIPT_SIGNING_SECRET: 'a-very-strong-production-receipt-signing-secret-1234',
+        APP_ORIGIN: 'http://eight-burgers.vercel.app',
+        COOKIE_SECURE: 'true',
+      }),
+    ).toThrow(/APP_ORIGIN/);
+
     const prod = parseApiConfig({
       ...BASE_ENV,
       NODE_ENV: 'production',
+      APP_ORIGIN: 'https://eight-burgers.vercel.app',
+      COOKIE_SECURE: 'true',
       RECEIPT_SIGNING_SECRET: 'a-very-strong-production-receipt-signing-secret-1234',
       TRUST_PROXY: 'true',
       ENABLE_DEMO_RESET: 'true',
     });
+    expect(prod.appOrigin).toBe('https://eight-burgers.vercel.app');
+    expect(prod.cookieSecure).toBe(true);
     expect(prod.receiptSigningSecret).toBe('a-very-strong-production-receipt-signing-secret-1234');
     expect(prod.trustProxy).toBe(true);
     expect(prod.enableDemoReset).toBe(true);

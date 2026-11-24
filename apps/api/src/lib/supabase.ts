@@ -266,7 +266,7 @@ export type ShopBackendGateway = {
   signInAdmin: (email: string, password: string) => Promise<AuthSignInResult>;
   verifyAccessToken: (accessToken: string) => Promise<AdminUser | null>;
   refreshAdminSession: (refreshToken: string) => Promise<AuthRefreshResult | null>;
-  signOutAdmin: (accessToken: string) => Promise<void>;
+  signOutAdmin: (accessToken: string) => Promise<boolean>;
   createMenuItem: (
     accessToken: string,
     input: Omit<MenuItemMutationInput, 'expectedVersion'>,
@@ -1768,7 +1768,6 @@ export function createSupabaseGateway(config: ApiConfig): ShopBackendGateway {
       if (!cleaned) return { status: 'not_found' };
       const { data, error } = await serviceClient.rpc('cancel_public_order_by_queue', {
         p_queue_number: cleaned,
-        p_customer_name: verification.customerName ?? null,
         p_contact_number: verification.contactNumber ?? null,
       });
       if (error) throw error;
@@ -1844,8 +1843,12 @@ export function createSupabaseGateway(config: ApiConfig): ShopBackendGateway {
     },
 
     async signOutAdmin(accessToken) {
-      const userClient = createUserRlsClient(accessToken);
-      await userClient.auth.signOut({ scope: 'local' }).catch(() => undefined);
+      try {
+        const { error } = await serviceClient.auth.admin.signOut(accessToken, 'local');
+        return !error;
+      } catch {
+        return false;
+      }
     },
 
     async createMenuItem(accessToken, input) {
@@ -2659,7 +2662,12 @@ export function createSupabaseGateway(config: ApiConfig): ShopBackendGateway {
         .eq('user_id', userId)
         .select(ADMIN_USER_COLUMNS)
         .maybeSingle<DbAdminUserRow>();
-      if (updateError) throw updateError;
+      if (updateError) {
+        if (updateError.message?.includes('LAST_ACTIVE_OWNER')) {
+          return { status: 'last_owner' };
+        }
+        throw updateError;
+      }
       if (!updated) {
         return { status: 'not_found' };
       }

@@ -1,4 +1,6 @@
+import { MENU_IMAGE_MAX_UPLOAD_BYTES } from '@menu-kiosk/contracts';
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { problemResponse } from './lib/problem';
 import { createStoreProfileCache } from './lib/store-profile-cache';
 import { createCsrfMiddleware } from './middleware/csrf';
@@ -19,6 +21,9 @@ import { createLocationRoutes } from './routes/location';
 import { createOrderRoutes } from './routes/orders';
 import type { ApiDeps, ApiEnv } from './types';
 
+const API_JSON_BODY_LIMIT_BYTES = 256 * 1024;
+const API_UPLOAD_BODY_LIMIT_BYTES = MENU_IMAGE_MAX_UPLOAD_BYTES + 128 * 1024;
+
 export function createApp(deps: ApiDeps): Hono<ApiEnv> {
   const app = new Hono<ApiEnv>();
   const storeProfileCache =
@@ -28,6 +33,33 @@ export function createApp(deps: ApiDeps): Hono<ApiEnv> {
   app.use('*', requestIdMiddleware);
   app.use('*', securityHeadersMiddleware);
   app.use('/api/*', createCsrfMiddleware(deps.config.appOrigin));
+
+  const jsonBodyLimit = bodyLimit({
+    maxSize: API_JSON_BODY_LIMIT_BYTES,
+    onError: (c) =>
+      problemResponse(c, {
+        status: 413,
+        code: 'PAYLOAD_TOO_LARGE',
+        title: 'Payload Too Large',
+        detail: 'Request body exceeds the 256 KB limit.',
+      }),
+  });
+  const uploadBodyLimit = bodyLimit({
+    maxSize: API_UPLOAD_BODY_LIMIT_BYTES,
+    onError: (c) =>
+      problemResponse(c, {
+        status: 413,
+        code: 'PAYLOAD_TOO_LARGE',
+        title: 'Payload Too Large',
+        detail: 'Upload request exceeds the 4 MB limit.',
+      }),
+  });
+  app.use('/api/*', (c, next) => {
+    const isUploadRequest =
+      c.req.method === 'POST' &&
+      (c.req.path === '/api/v1/admin/menu-images' || c.req.path === '/api/v1/admin/store-assets');
+    return (isUploadRequest ? uploadBodyLimit : jsonBodyLimit)(c, next);
+  });
 
   app.route('/', createHealthRoutes(sharedDeps));
 

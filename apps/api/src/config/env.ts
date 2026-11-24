@@ -62,6 +62,20 @@ const envSchema = z
         message: `RECEIPT_SIGNING_SECRET must be at least ${MIN_PROD_RECEIPT_SECRET_LENGTH} characters in production.`,
       });
     }
+    if (env.NODE_ENV === 'production' && !env.COOKIE_SECURE) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['COOKIE_SECURE'],
+        message: 'COOKIE_SECURE must be set to "true" in production.',
+      });
+    }
+    if (env.NODE_ENV === 'production' && new URL(env.APP_ORIGIN).protocol !== 'https:') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['APP_ORIGIN'],
+        message: 'APP_ORIGIN must use an https:// origin in production.',
+      });
+    }
   });
 
 export type ApiConfig = {

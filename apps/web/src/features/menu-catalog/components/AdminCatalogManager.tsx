@@ -258,7 +258,7 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
     }
 
     if (file.size > MENU_IMAGE_MAX_UPLOAD_BYTES) {
-      setUploadError('Image must be 5 MB or smaller.');
+      setUploadError('Image must be 4 MB or smaller.');
       return;
     }
 
@@ -789,7 +789,7 @@ export function AdminCatalogManager({ role = 'owner' }: AdminCatalogManagerProps
                   </button>
                 </div>
                 <p className="text-[11px] text-ui-text-muted">
-                  JPG, PNG, WebP, or AVIF up to 5 MB — automatically optimized to WebP and stored in
+                  JPG, PNG, WebP, or AVIF up to 4 MB — automatically optimized to WebP and stored in
                   Supabase Storage.
                 </p>
                 {uploadError ? (

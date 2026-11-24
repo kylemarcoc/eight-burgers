@@ -153,7 +153,7 @@ export function StoreBrandingThemeForm({ onStatusMessage }: StoreBrandingThemeFo
       return;
     }
     if (file.size > MENU_IMAGE_MAX_UPLOAD_BYTES) {
-      setUploadError('Image must be 5 MB or smaller.');
+      setUploadError('Image must be 4 MB or smaller.');
       return;
     }
 

@@ -144,9 +144,18 @@ export function createAuthRoutes(deps: ApiDeps): Hono<ApiEnv> {
   });
 
   app.post('/auth/logout', async (c) => {
-    const { accessToken } = readAuthCookies(c);
+    const { accessToken, refreshToken } = readAuthCookies(c);
+    let revoked = false;
     if (accessToken) {
-      await deps.gateway.signOutAdmin(accessToken);
+      revoked = await deps.gateway.signOutAdmin(accessToken).catch(() => false);
+    }
+    if (!revoked && refreshToken) {
+      const refreshed = await refreshAdminSessionSingleFlight(deps.gateway, refreshToken).catch(
+        () => null,
+      );
+      if (refreshed) {
+        await deps.gateway.signOutAdmin(refreshed.tokens.accessToken).catch(() => false);
+      }
     }
     clearAuthCookies(c, deps.config);
     return c.body(null, 204);

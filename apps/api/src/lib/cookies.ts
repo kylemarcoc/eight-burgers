@@ -24,18 +24,22 @@ export function readAuthCookies(c: Context): {
   };
 }
 
-export function setAuthCookies(
-  c: Context,
-  config: Pick<ApiConfig, 'cookieSecure' | 'cookieDomain'>,
-  tokens: AuthCookieTokens,
-): void {
-  const baseOptions = {
+function buildCookieScopeOptions(config: Pick<ApiConfig, 'cookieSecure' | 'cookieDomain'>) {
+  return {
     httpOnly: true,
     sameSite: 'Lax' as const,
     secure: config.cookieSecure,
     path: COOKIE_PATH,
     ...(config.cookieDomain ? { domain: config.cookieDomain } : {}),
   };
+}
+
+export function setAuthCookies(
+  c: Context,
+  config: Pick<ApiConfig, 'cookieSecure' | 'cookieDomain'>,
+  tokens: AuthCookieTokens,
+): void {
+  const baseOptions = buildCookieScopeOptions(config);
 
   setCookie(c, ACCESS_TOKEN_COOKIE, tokens.accessToken, {
     ...baseOptions,
@@ -52,11 +56,7 @@ export function clearAuthCookies(
   c: Context,
   config: Pick<ApiConfig, 'cookieSecure' | 'cookieDomain'>,
 ): void {
-  const baseOptions = {
-    path: COOKIE_PATH,
-    secure: config.cookieSecure,
-    ...(config.cookieDomain ? { domain: config.cookieDomain } : {}),
-  };
+  const baseOptions = buildCookieScopeOptions(config);
   deleteCookie(c, ACCESS_TOKEN_COOKIE, baseOptions);
   deleteCookie(c, REFRESH_TOKEN_COOKIE, baseOptions);
 }

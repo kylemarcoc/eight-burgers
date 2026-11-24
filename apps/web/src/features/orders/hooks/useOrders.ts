@@ -9,6 +9,7 @@ import type {
   PlaceOrderRequest,
 } from '@menu-kiosk/contracts';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { handleAdminUnauthorizedError } from '@/shared/lib/admin-session-cache';
 import { isApiError } from '@/shared/lib/api-error';
 import {
   cancelOrderByQueueRequest,
@@ -208,14 +209,10 @@ export function useUpdateOrderStatusMutation() {
       void queryClient.invalidateQueries({ queryKey: orderKeys.adminAll });
     },
     onError: (error) => {
-      if (isApiError(error) && error.status === 401) {
-        void queryClient.cancelQueries({ queryKey: ['admin'] });
-        queryClient.removeQueries({ queryKey: orderKeys.adminAll });
-        queryClient.setQueryData(['admin', 'auth', 'session'], {
-          authenticated: false,
-          user: null,
-        });
-      } else if (isApiError(error) && error.status === 409) {
+      if (handleAdminUnauthorizedError(queryClient, error)) {
+        return;
+      }
+      if (isApiError(error) && error.status === 409) {
         void queryClient.invalidateQueries({ queryKey: orderKeys.adminAll });
       }
     },
@@ -234,14 +231,10 @@ export function useUpdateOrderPaymentStatusMutation() {
       void queryClient.invalidateQueries({ queryKey: orderKeys.adminAll });
     },
     onError: (error) => {
-      if (isApiError(error) && error.status === 401) {
-        void queryClient.cancelQueries({ queryKey: ['admin'] });
-        queryClient.removeQueries({ queryKey: orderKeys.adminAll });
-        queryClient.setQueryData(['admin', 'auth', 'session'], {
-          authenticated: false,
-          user: null,
-        });
-      } else if (isApiError(error) && error.status === 409) {
+      if (handleAdminUnauthorizedError(queryClient, error)) {
+        return;
+      }
+      if (isApiError(error) && error.status === 409) {
         void queryClient.invalidateQueries({ queryKey: orderKeys.adminAll });
       }
     },

@@ -93,6 +93,7 @@ function toPublicOrderTracker(order: OrderRecord): PublicOrderTracker {
     queueNumber: order.queueNumber,
     fulfillment: order.fulfillment,
     tableNumber: order.tableNumber,
+    hasContactNumber: order.contactNumber.trim().length > 0,
     paymentStatus: order.paymentStatus,
     ...(order.deliveryEtaMinutes ? { deliveryEtaMinutes: order.deliveryEtaMinutes } : {}),
     lines: order.lines.map((line) => {
@@ -741,16 +742,8 @@ function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
 
       const orderDigits = normalizeContactDigits(entry.order.contactNumber);
       const inputDigits = normalizeContactDigits(verification.contactNumber ?? '');
-      const orderName = entry.order.customerName.trim().replace(/\s+/g, ' ').toLowerCase();
-      const inputName = (verification.customerName ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
 
-      const verified =
-        entry.order.fulfillment === 'delivery'
-          ? Boolean(orderDigits && inputDigits && orderDigits === inputDigits)
-          : Boolean(
-              (orderName && inputName && orderName === inputName) ||
-              (orderDigits && inputDigits && orderDigits === inputDigits),
-            );
+      const verified = Boolean(orderDigits && inputDigits && orderDigits === inputDigits);
 
       if (!verified) {
         return { status: 'verification_failed' };
@@ -801,7 +794,7 @@ function createFakeGateway(overrides: Partial<ShopBackendGateway> = {}): {
             },
           }
         : null,
-    signOutAdmin: async () => undefined,
+    signOutAdmin: async () => true,
     createMenuItem: async (_token, input) => {
       if (!state.categories.some((category) => category.id === input.category)) {
         return { status: 'invalid_reference', detail: 'Selected category does not exist.' };
@@ -2045,7 +2038,7 @@ describe('Eight Burgers REST BFF', () => {
       },
       body: JSON.stringify({
         customerName: 'Ana Reyes',
-        contactNumber: '',
+        contactNumber: '09179998888',
         fulfillment: 'pickup',
         addressOrNotes: '',
         paymentMethod: 'cash',
@@ -2064,6 +2057,7 @@ describe('Eight Burgers REST BFF', () => {
     const trackBody = (await trackRes.json()) as { data: Record<string, unknown> };
     expect(trackBody.data.queueNumber).toBe('#8B-101');
     expect(trackBody.data.status).toBe('received');
+    expect(trackBody.data.hasContactNumber).toBe(true);
     expect(trackBody.data.customerName).toBeUndefined();
     expect(trackBody.data.contactNumber).toBeUndefined();
     expect(trackBody.data.addressOrNotes).toBeUndefined();
@@ -2089,18 +2083,26 @@ describe('Eight Burgers REST BFF', () => {
     const tier1Body = (await tier1Cancel.json()) as { data: OrderRecord };
     expect(tier1Body.data.status).toBe('cancelled');
 
-    // Tier 2: Cross-device queue cancel rejects wrong customer name with 403 and succeeds with matching name
-    const wrongNameCancel = await app.request('/api/v1/orders/track/8B-102/cancel', {
+    // Tier 2: Cross-device queue cancel rejects name-only verification (400),
+    // rejects mismatched mobile number (403), and succeeds with matching mobile number
+    const nameOnlyCancel = await app.request('/api/v1/orders/track/8B-102/cancel', {
       method: 'POST',
       headers: CSRF_HEADERS,
-      body: JSON.stringify({ customerName: 'Wrong Person' }),
+      body: JSON.stringify({ customerName: 'Ana Reyes' }),
     });
-    expect(wrongNameCancel.status).toBe(403);
+    expect(nameOnlyCancel.status).toBe(400);
+
+    const wrongPhoneCancel = await app.request('/api/v1/orders/track/8B-102/cancel', {
+      method: 'POST',
+      headers: CSRF_HEADERS,
+      body: JSON.stringify({ contactNumber: '09990000000' }),
+    });
+    expect(wrongPhoneCancel.status).toBe(403);
 
     const tier2Cancel = await app.request('/api/v1/orders/track/102/cancel', {
       method: 'POST',
       headers: CSRF_HEADERS,
-      body: JSON.stringify({ customerName: '  ana   reyes ' }),
+      body: JSON.stringify({ contactNumber: '+63 917 999 8888' }),
     });
     expect(tier2Cancel.status).toBe(200);
     const tier2Body = (await tier2Cancel.json()) as { data: PublicOrderTracker };
@@ -3554,13 +3556,13 @@ describe('Eight Burgers REST BFF', () => {
     expect(missingTableRes.status).toBe(422);
     expect(((await missingTableRes.json()) as { code: string }).code).toBe('TABLE_NUMBER_REQUIRED');
 
-    // Place dine-in GCash order without initial reference (starts unpaid, mobile optional)
+    // Place dine-in GCash order without initial reference (starts unpaid, mobile used for Tier 2 cancel check)
     const dineInGcashRes = await app.request('/api/v1/orders', {
       method: 'POST',
       headers: { ...CSRF_HEADERS, 'Idempotency-Key': 'phase3-dinein-gcash-order-1' },
       body: JSON.stringify({
         customerName: 'Ana',
-        contactNumber: '',
+        contactNumber: '09175551234',
         fulfillment: 'dine-in',
         tableNumber: '7',
         addressOrNotes: '',
@@ -3666,7 +3668,7 @@ describe('Eight Burgers REST BFF', () => {
       {
         method: 'POST',
         headers: CSRF_HEADERS,
-        body: JSON.stringify({ customerName: 'Ana' }),
+        body: JSON.stringify({ contactNumber: '09175551234' }),
       },
     );
     expect(blockedCancelTier2.status).toBe(409);
@@ -3851,5 +3853,140 @@ describe('Eight Burgers REST BFF', () => {
     } finally {
       consoleErrorSpy.mockRestore();
     }
+  });
+
+  it('rejects cross-device queue cancel when order has no mobile number while keeping receipt cancel working', async () => {
+    const { gateway } = createFakeGateway();
+    const app = createApp({ config: TEST_CONFIG, gateway });
+
+    const createRes = await app.request('/api/v1/orders', {
+      method: 'POST',
+      headers: {
+        ...CSRF_HEADERS,
+        'Idempotency-Key': 'no-phone-pickup-cancel-check',
+      },
+      body: JSON.stringify({
+        customerName: 'Kiosk Guest',
+        contactNumber: '',
+        fulfillment: 'pickup',
+        addressOrNotes: '',
+        paymentMethod: 'cash',
+        items: [{ itemId: 'burger-deluxe', quantity: 1, selectedOptionIds: [] }],
+      }),
+    });
+    expect(createRes.status).toBe(201);
+    const created = (await createRes.json()) as { data: OrderRecord; receiptToken: string };
+
+    const trackRes = await app.request('/api/v1/orders/track/101');
+    expect(trackRes.status).toBe(200);
+    const tracked = (await trackRes.json()) as { data: PublicOrderTracker };
+    expect(tracked.data.hasContactNumber).toBe(false);
+
+    const queueCancel = await app.request('/api/v1/orders/track/101/cancel', {
+      method: 'POST',
+      headers: CSRF_HEADERS,
+      body: JSON.stringify({ contactNumber: '09171234567' }),
+    });
+    expect(queueCancel.status).toBe(403);
+
+    const receiptCancel = await app.request(`/api/v1/orders/${created.data.id}/cancel`, {
+      method: 'POST',
+      headers: {
+        ...CSRF_HEADERS,
+        'X-Order-Receipt-Token': created.receiptToken,
+      },
+    });
+    expect(receiptCancel.status).toBe(200);
+    const cancelledBody = (await receiptCancel.json()) as { data: OrderRecord };
+    expect(cancelledBody.data.status).toBe('cancelled');
+  });
+
+  it('hardens logout cookie flags & refresh revocation, GET /orders/:id refresh, and Hono body limits', async () => {
+    const signOutTokens: string[] = [];
+    const { gateway } = createFakeGateway({
+      signOutAdmin: async (accessToken) => {
+        signOutTokens.push(accessToken);
+        return accessToken === 'valid-access-token';
+      },
+    });
+    const app = createApp({
+      config: { ...TEST_CONFIG, cookieSecure: true },
+      gateway,
+    });
+
+    // 1. Expired access token + valid refresh token refreshes before revoking on logout and clears with HttpOnly + SameSite=Lax
+    const logoutRes = await app.request('/api/v1/auth/logout', {
+      method: 'POST',
+      headers: {
+        ...CSRF_HEADERS,
+        Cookie: 'mk_access_token=expired-access-token; mk_refresh_token=valid-refresh-token',
+      },
+    });
+    expect(logoutRes.status).toBe(204);
+    expect(signOutTokens).toEqual(['expired-access-token', 'valid-access-token']);
+    const clearHeaders = logoutRes.headers.getSetCookie();
+    expect(clearHeaders.length).toBeGreaterThanOrEqual(2);
+    for (const cookieHeader of clearHeaders) {
+      expect(cookieHeader).toContain('HttpOnly');
+      expect(cookieHeader).toContain('SameSite=Lax');
+      expect(cookieHeader).toContain('Secure');
+      expect(cookieHeader).toContain('Path=/api');
+    }
+
+    // 2. GET /api/v1/orders/:id silently refreshes an expired admin access cookie using mk_refresh_token
+    const createdOrderRes = await app.request('/api/v1/orders', {
+      method: 'POST',
+      headers: { ...CSRF_HEADERS, 'Idempotency-Key': 'order-get-refresh-check-1234' },
+      body: JSON.stringify({
+        customerName: 'Marco',
+        contactNumber: '09171234567',
+        fulfillment: 'pickup',
+        addressOrNotes: '',
+        paymentMethod: 'cash',
+        items: [{ itemId: 'burger-deluxe', quantity: 1, selectedOptionIds: [] }],
+      }),
+    });
+    expect(createdOrderRes.status).toBe(201);
+    const createdOrder = (await createdOrderRes.json()) as { data: OrderRecord };
+
+    const adminOrderRefreshRes = await app.request(`/api/v1/orders/${createdOrder.data.id}`, {
+      headers: {
+        Cookie: 'mk_access_token=expired-access-token; mk_refresh_token=valid-refresh-token',
+      },
+    });
+    expect(adminOrderRefreshRes.status).toBe(200);
+    const refreshedOrderBody = (await adminOrderRefreshRes.json()) as { data: OrderRecord };
+    expect(refreshedOrderBody.data.id).toBe(createdOrder.data.id);
+    expect(adminOrderRefreshRes.headers.getSetCookie().join(';')).toContain('mk_access_token=');
+
+    // 3. Body size limits return Problem Details 413 PAYLOAD_TOO_LARGE
+    const hugeJsonRes = await app.request('/api/v1/orders', {
+      method: 'POST',
+      headers: { ...CSRF_HEADERS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ padding: 'x'.repeat(270 * 1024) }),
+    });
+    expect(hugeJsonRes.status).toBe(413);
+    const hugeJsonBody = (await hugeJsonRes.json()) as { code: string };
+    expect(hugeJsonBody.code).toBe('PAYLOAD_TOO_LARGE');
+
+    const hugeUploadForm = new FormData();
+    hugeUploadForm.set(
+      'file',
+      new File([new Uint8Array(4 * 1024 * 1024 + 200 * 1024)], 'oversize.webp', {
+        type: 'image/webp',
+      }),
+    );
+    const hugeUploadRes = await app.request('/api/v1/admin/menu-images', {
+      method: 'POST',
+      headers: {
+        Origin: 'http://localhost:5173',
+        'X-Requested-With': 'fetch',
+        Cookie: 'mk_access_token=valid-access-token',
+      },
+      body: hugeUploadForm,
+    });
+    expect(hugeUploadRes.status).toBe(413);
+    const hugeUploadBody = (await hugeUploadRes.json()) as { code: string };
+    expect(hugeUploadBody.code).toBe('PAYLOAD_TOO_LARGE');
   });
 });

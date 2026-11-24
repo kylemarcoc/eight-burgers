@@ -1,3 +1,4 @@
+import { QueryClient } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { installMockShopApi } from '@/shared/test/mock-api';
@@ -11,9 +12,9 @@ afterEach(() => {
 
 const OWNER_ID = '11111111-1111-4111-8111-111111111111';
 
-function renderTeamManager() {
+function renderTeamManager(client?: QueryClient) {
   return render(
-    <TestQueryWrapper>
+    <TestQueryWrapper client={client}>
       <AdminTeamManager currentUserId={OWNER_ID} />
     </TestQueryWrapper>,
   );
@@ -87,5 +88,33 @@ describe('AdminTeamManager', () => {
     await waitFor(() => {
       expect(screen.getByText(/re-enabled staff portal access for/i)).toBeTruthy();
     });
+  });
+
+  it('clears cached admin team, orders, and session state when team queries return HTTP 401', async () => {
+    installMockShopApi({ authenticated: true, role: 'owner' });
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: 60_000 },
+        mutations: { retry: false },
+      },
+    });
+    client.setQueryData(['admin', 'auth', 'session'], {
+      authenticated: true,
+      user: { id: OWNER_ID, email: 'owner@eightburgers.local', role: 'owner' },
+    });
+    client.setQueryData(['admin', 'orders', 'list'], { pages: [], pageParams: [] });
+    client.setQueryData(['admin', 'team', 'list'], [], { updatedAt: Date.now() - 60_000 });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(null, { status: 401 }));
+
+    renderTeamManager(client);
+
+    await waitFor(() => {
+      expect(client.getQueryData(['admin', 'auth', 'session'])).toEqual({
+        authenticated: false,
+        user: null,
+      });
+    });
+    expect(client.getQueriesData({ queryKey: ['admin', 'orders'] })).toEqual([]);
+    expect(client.getQueriesData({ queryKey: ['admin', 'team'] })).toEqual([]);
   });
 });

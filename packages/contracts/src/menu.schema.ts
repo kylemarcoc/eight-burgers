@@ -288,7 +288,8 @@ export const menuItemsListResponseSchema = z.object({
   data: z.array(menuItemSchema),
 });
 
-export const MENU_IMAGE_MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+// Keep image uploads safely below Vercel's 4.5 MB serverless request-body ceiling (including multipart overhead).
+export const MENU_IMAGE_MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 export const MENU_IMAGE_ALLOWED_INPUT_MIME_TYPES = [
   'image/jpeg',
   'image/png',
