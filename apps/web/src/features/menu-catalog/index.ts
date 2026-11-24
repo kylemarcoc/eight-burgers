@@ -1,4 +1,5 @@
 import { lazy } from 'react';
+import { loadItemCustomizerModal } from './preload';
 
 export const AdminCatalogManager = lazy(() =>
   import('./components/AdminCatalogManager').then((module) => ({
@@ -6,7 +7,12 @@ export const AdminCatalogManager = lazy(() =>
   })),
 );
 export { catalogKeys } from './api/catalog-api';
-export { ItemCustomizerModal } from './components/ItemCustomizerModal';
+export const ItemCustomizerModal = lazy(() =>
+  loadItemCustomizerModal().then((module) => ({
+    default: module.ItemCustomizerModal,
+  })),
+);
+export { preloadItemCustomizerModal } from './preload';
 export { StorefrontCatalog } from './components/StorefrontCatalog';
 export {
   useCatalogQuery,

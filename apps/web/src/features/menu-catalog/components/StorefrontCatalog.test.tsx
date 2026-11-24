@@ -98,9 +98,11 @@ describe('StorefrontCatalog', () => {
     const heroImage = screen.getByAltText('8Burgers Chino Roces Avenue, Makati showcase');
     expect(heroImage.getAttribute('loading')).toBe('eager');
     expect(heroImage.getAttribute('fetchpriority')).toBe('high');
+    expect(heroImage.getAttribute('decoding')).toBeNull();
 
     const cardImage = screen.getByAltText('Mini Cheese Burger Deluxe');
     expect(cardImage.getAttribute('loading')).toBe('lazy');
+    expect(cardImage.getAttribute('decoding')).toBe('async');
   });
 
   it('renders a clean typographic hero fallback and paused banner while keeping bag building active', async () => {

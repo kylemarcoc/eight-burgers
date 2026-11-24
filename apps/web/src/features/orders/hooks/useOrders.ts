@@ -30,6 +30,10 @@ export function usePlaceOrderMutation() {
   return useMutation({
     mutationFn: (params: { payload: PlaceOrderRequest; idempotencyKey: string }) =>
       placeOrderRequest(params),
+    meta: {
+      blockingBackdrop: true,
+      loadingLabel: 'Submitting your order…',
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: orderKeys.adminAll });
     },
@@ -50,6 +54,7 @@ export function useOrderReceiptQuery(
     queryKey: orderKeys.receipt(orderId ?? 'none'),
     queryFn: ({ signal }) => fetchOrderReceipt(orderId ?? '', receiptToken ?? '', signal),
     enabled: Boolean(enabled && orderId && receiptToken),
+    meta: { isPolling: true },
     retry: (failureCount, error) => {
       if (
         isApiError(error) &&
@@ -73,6 +78,7 @@ export function usePublicOrderTrackerQuery(queueNumber: string | null, enabled =
     queryKey: orderKeys.tracker(normalized || 'none'),
     queryFn: ({ signal }) => fetchPublicOrderTracker(normalized, signal),
     enabled: Boolean(enabled && normalized),
+    meta: { isPolling: true },
     retry: (failureCount, error) => {
       if (isApiError(error) && error.status === 404) {
         return false;
@@ -193,6 +199,7 @@ export function useInfiniteAdminOrdersQuery(options: AdminOrdersQueryOptions = {
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     enabled: options.enabled ?? true,
     staleTime: 10_000,
+    meta: { isPolling: true },
     refetchInterval:
       typeof options.refetchInterval === 'number' && options.pauseAutoRefreshWhenPaginated
         ? (query) => ((query.state.data?.pages.length ?? 0) > 1 ? false : options.refetchInterval)

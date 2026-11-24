@@ -11,6 +11,7 @@ import {
   useTrackedQueueNumber,
 } from '@/shared/store/useCartStore';
 import { useResolvedCartSummary } from '../hooks/useResolvedCartSummary';
+import { preloadCartPortalDrawer } from '../preload';
 
 function getTrackerStageLabel(status: OrderStatus, preparingStageLabel: string): string {
   switch (status) {
@@ -86,6 +87,8 @@ export function FloatingCartButton() {
     <button
       type="button"
       onClick={() => setCartOpen(!isCartOpen)}
+      onPointerEnter={preloadCartPortalDrawer}
+      onFocus={preloadCartPortalDrawer}
       aria-label={label}
       aria-expanded={isCartOpen}
       className="fixed right-5 bottom-5 z-40 inline-flex items-center gap-3 rounded-2xl border border-ui-border bg-ui-accent px-4 py-3 text-ui-on-accent shadow-lg hover:bg-ui-accent-hover motion-safe:transition-transform motion-safe:hover:scale-[1.02] motion-safe:active:scale-[0.98] sm:right-7 sm:bottom-7"

@@ -44,6 +44,10 @@ export function useUpdateStoreProfileMutation() {
 
   return useMutation({
     mutationFn: (patch: StoreProfilePatch) => patchAdminStoreProfile(patch),
+    meta: {
+      blockingBackdrop: true,
+      loadingLabel: 'Saving store settings…',
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: catalogKeys.all }),
     onError: (error) => handleAdminStoreMutationError(queryClient, error),
   });
@@ -65,6 +69,10 @@ export function useUploadStoreAssetMutation() {
   return useMutation({
     mutationFn: (params: { file: File; purpose: StoreAssetUploadPurpose }) =>
       uploadAdminStoreAsset(params),
+    meta: {
+      blockingBackdrop: true,
+      loadingLabel: 'Optimizing and uploading image…',
+    },
     onError: (error) => handleAdminStoreMutationError(queryClient, error),
   });
 }

@@ -7,6 +7,7 @@ import {
   type PlaceOrderRequest,
 } from '@menu-kiosk/contracts';
 import { Hono } from 'hono';
+import { verifyAdminAccessToken } from '../lib/admin-auth-cache';
 import { refreshAdminSessionSingleFlight } from '../lib/auth-refresh';
 import { clearAuthCookies, readAuthCookies, setAuthCookies } from '../lib/cookies';
 import { problemResponse, zodFieldErrors } from '../lib/problem';
@@ -628,7 +629,7 @@ export function createOrderRoutes(deps: ApiDeps): Hono<ApiEnv> {
     const { accessToken, refreshToken } = readAuthCookies(c);
     let verifiedAdminAccessToken: string | null = null;
     if (accessToken) {
-      const admin = await deps.gateway.verifyAccessToken(accessToken);
+      const admin = await verifyAdminAccessToken(deps, accessToken);
       if (admin) {
         verifiedAdminAccessToken = accessToken;
       }

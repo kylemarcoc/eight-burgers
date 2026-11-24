@@ -4,7 +4,9 @@ import { problemResponse, zodFieldErrors } from '../lib/problem';
 import { createRequireAdminRolesMiddleware } from '../middleware/require-admin';
 import type { ApiDeps, ApiEnv } from '../types';
 
-export function createAdminUserRoutes(deps: Pick<ApiDeps, 'gateway'>): Hono<ApiEnv> {
+export function createAdminUserRoutes(
+  deps: Pick<ApiDeps, 'gateway' | 'adminAuthCache'>,
+): Hono<ApiEnv> {
   const app = new Hono<ApiEnv>();
   const requireOwner = createRequireAdminRolesMiddleware(['owner']);
 
@@ -108,6 +110,7 @@ export function createAdminUserRoutes(deps: Pick<ApiDeps, 'gateway'>): Hono<ApiE
       });
     }
 
+    deps.adminAuthCache?.invalidateUser(userId);
     return c.json({ data: result.member }, 200);
   });
 

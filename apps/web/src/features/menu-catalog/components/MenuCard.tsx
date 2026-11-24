@@ -15,6 +15,7 @@ type MenuCardProps = {
   qtyInCart: number;
   onAddToCart: (itemId: string) => void;
   onOpenCustomizer?: (item: MenuItem) => void;
+  onPreloadCustomizer?: () => void;
 };
 
 export const MenuCard = memo(function MenuCard({
@@ -23,6 +24,7 @@ export const MenuCard = memo(function MenuCard({
   qtyInCart,
   onAddToCart,
   onOpenCustomizer,
+  onPreloadCustomizer,
 }: MenuCardProps) {
   const [justAdded, setJustAdded] = useState(false);
   const addedTimerRef = useRef<number | null>(null);
@@ -121,6 +123,8 @@ export const MenuCard = memo(function MenuCard({
             <button
               type="button"
               onClick={() => onOpenCustomizer(item)}
+              onPointerEnter={onPreloadCustomizer}
+              onFocus={onPreloadCustomizer}
               className="text-xs font-medium text-ui-text-muted underline decoration-ui-border underline-offset-4 hover:text-ui-text"
             >
               Customize / Note
@@ -145,6 +149,8 @@ export const MenuCard = memo(function MenuCard({
             type="button"
             disabled={!item.available || !orderable}
             onClick={handlePrimaryAction}
+            onPointerEnter={hasOptionGroups && onOpenCustomizer ? onPreloadCustomizer : undefined}
+            onFocus={hasOptionGroups && onOpenCustomizer ? onPreloadCustomizer : undefined}
             className={`inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-semibold tabular-nums transition-colors motion-reduce:transition-none ${
               item.available && orderable
                 ? 'bg-ui-accent text-ui-on-accent hover:bg-ui-accent-hover'

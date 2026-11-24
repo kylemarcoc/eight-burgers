@@ -1,5 +1,6 @@
 import type { AdminUser, AssetUploadPurpose } from '@menu-kiosk/contracts';
 import type { ApiConfig } from './config/env';
+import type { AdminAuthCache } from './lib/admin-auth-cache';
 import type { OptimizedMenuImage } from './lib/image-optimizer';
 import type { LocationProvider } from './lib/location-provider';
 import type { SlidingWindowRateLimiter } from './lib/rate-limit';
@@ -22,6 +23,7 @@ export type ApiDeps = {
   locationRateLimiter?: SlidingWindowRateLimiter;
   locationProvider?: LocationProvider;
   storeProfileCache?: StoreProfileCache;
+  adminAuthCache?: AdminAuthCache;
   optimizeMenuImage?: (
     inputBuffer: Uint8Array,
     purpose?: AssetUploadPurpose,

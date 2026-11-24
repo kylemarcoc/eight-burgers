@@ -17,6 +17,7 @@ export async function searchDeliveryAddresses(
   const response = await apiRequest(`/location/search?${params.toString()}`, {
     method: 'GET',
     schema: locationSearchResponseSchema,
+    trackForeground: true,
     ...(signal ? { signal } : {}),
   });
   return response.data;
@@ -33,6 +34,7 @@ export async function reverseGeocodeDeliveryPin(
   const response = await apiRequest(`/location/reverse?${params.toString()}`, {
     method: 'GET',
     schema: locationReverseResponseSchema,
+    trackForeground: true,
     ...(signal ? { signal } : {}),
   });
   return response.data?.label ?? null;

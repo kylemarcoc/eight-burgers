@@ -55,7 +55,7 @@ describe('8Burgers Storefront, Bottom-Right Cart Portal, and Admin', () => {
     if (!burgerCard) return;
 
     fireEvent.click(within(burgerCard).getByRole('button', { name: /customize · ₱148/i }));
-    const customizer = screen.getByRole('dialog', { name: 'Burger Deluxe' });
+    const customizer = await screen.findByRole('dialog', { name: 'Burger Deluxe' });
     fireEvent.click(within(customizer).getByRole('button', { name: /add to cart · ₱148/i }));
 
     const friesCard = screen
@@ -71,7 +71,7 @@ describe('8Burgers Storefront, Bottom-Right Cart Portal, and Admin', () => {
     });
     fireEvent.click(floatingCartButton);
 
-    const dialog = screen.getByRole('dialog', { name: /your order cart/i });
+    const dialog = await screen.findByRole('dialog', { name: /your order cart/i });
     expect(dialog).toBeTruthy();
 
     fireEvent.click(

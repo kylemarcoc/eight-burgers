@@ -3,17 +3,20 @@ import {
   isSafeImageUrl,
   resolveStoreAccentTokens,
 } from '@menu-kiosk/contracts';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { NavLink, Outlet, useMatch } from 'react-router-dom';
 import { useTheme } from '@/app/providers/theme-context';
 import {
   CartPortalDrawer,
   FloatingCartButton,
+  preloadCartPortalDrawer,
+  useCartLifecycle,
   useResolvedCartSummary,
 } from '@/features/cart-portal';
 import { useCatalogQuery } from '@/features/menu-catalog';
 import {
   useCartActions,
+  useCartOpen,
   useLastPlacedOrder,
   useTrackedQueueNumber,
 } from '@/shared/store/useCartStore';
@@ -45,6 +48,8 @@ export function KioskShell() {
   const totalItems = cartSummary.totalItems;
   const showAdminNav = import.meta.env.VITE_HIDE_PUBLIC_ADMIN !== 'true';
   const isAdminRoute = Boolean(useMatch('/admin/*'));
+  const isCartOpen = useCartOpen();
+  useCartLifecycle(!isAdminRoute);
   const [failedLogoSrc, setFailedLogoSrc] = useState<string | null>(null);
 
   useEffect(() => {
@@ -153,6 +158,8 @@ export function KioskShell() {
               <button
                 type="button"
                 onClick={() => setCartOpen(true)}
+                onPointerEnter={preloadCartPortalDrawer}
+                onFocus={preloadCartPortalDrawer}
                 className="hidden rounded-xl border border-ui-border bg-ui-surface-muted px-3 py-2 text-xs font-semibold text-ui-text tabular-nums hover:bg-ui-canvas sm:inline-flex"
               >
                 Cart ({totalItems}){activeQueueNumber ? ` · ${activeQueueNumber}` : ''}
@@ -177,7 +184,11 @@ export function KioskShell() {
       {!isAdminRoute ? (
         <>
           <FloatingCartButton />
-          <CartPortalDrawer />
+          {isCartOpen ? (
+            <Suspense fallback={null}>
+              <CartPortalDrawer />
+            </Suspense>
+          ) : null}
         </>
       ) : null}
     </div>

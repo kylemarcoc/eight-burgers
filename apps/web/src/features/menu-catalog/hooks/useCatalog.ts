@@ -83,12 +83,20 @@ export function useMenuMutations() {
 
   const resetCatalog = useMutation({
     mutationFn: () => resetAdminMenuCatalog(),
+    meta: {
+      blockingBackdrop: true,
+      loadingLabel: 'Resetting demo catalog…',
+    },
     onSuccess: invalidateCatalog,
     onError,
   });
 
   const uploadMenuImage = useMutation({
     mutationFn: (file: File) => uploadAdminMenuImage(file),
+    meta: {
+      blockingBackdrop: true,
+      loadingLabel: 'Optimizing and uploading image…',
+    },
     onError,
   });
 

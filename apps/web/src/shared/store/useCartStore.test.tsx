@@ -1,5 +1,5 @@
 import { buildCartLineId } from '@menu-kiosk/contracts';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CART_STORAGE_KEY,
   DINE_IN_TABLE_STORAGE_KEY,
@@ -214,5 +214,32 @@ describe('useCartStore', () => {
     // Clearing dine-in table removes sessionStorage key
     actions.clearDineInTable();
     expect(window.sessionStorage.getItem(DINE_IN_TABLE_STORAGE_KEY)).toBeNull();
+  });
+
+  it('batches stale line removals in removeCartLines with one storage write and tracks ephemeral prunedRemovedCount', () => {
+    const actions = useCartStore.getState().actions;
+
+    actions.addToCart({ id: 'burger-deluxe', available: true });
+    actions.addToCart({ id: 'chicano-burger', available: true });
+    actions.addToCart({ id: 'overload-burger', available: true });
+
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem');
+    actions.removeCartLines(['burger-deluxe', 'overload-burger', 'missing-item']);
+
+    expect(setItemSpy).toHaveBeenCalledTimes(1);
+    expect(useCartStore.getState().cart.map((line) => line.itemId)).toEqual(['chicano-burger']);
+    expect(useCartStore.getState().prunedRemovedCount).toBe(2);
+
+    const persistedRaw = window.localStorage.getItem(CART_STORAGE_KEY) ?? '';
+    expect(persistedRaw).not.toContain('prunedRemovedCount');
+
+    // No-op when line IDs are already gone
+    setItemSpy.mockClear();
+    actions.removeCartLines(['burger-deluxe']);
+    expect(setItemSpy).not.toHaveBeenCalled();
+    expect(useCartStore.getState().prunedRemovedCount).toBe(2);
+
+    actions.clearPrunedRemovedCount();
+    expect(useCartStore.getState().prunedRemovedCount).toBe(0);
   });
 });

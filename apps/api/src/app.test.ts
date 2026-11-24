@@ -3989,4 +3989,57 @@ describe('Eight Burgers REST BFF', () => {
     const hugeUploadBody = (await hugeUploadRes.json()) as { code: string };
     expect(hugeUploadBody.code).toBe('PAYLOAD_TOO_LARGE');
   });
+
+  it('caches admin token verification briefly and invalidates on logout or team account update', async () => {
+    const tokenUsers = new Map<string, AdminUser>([
+      ['valid-access-token', ADMIN_USER],
+      ['staff-access-token', STAFF_USER],
+    ]);
+    const verifyAccessToken = vi.fn(async (token: string) => tokenUsers.get(token) ?? null);
+    const { gateway } = createFakeGateway({
+      verifyAccessToken,
+    });
+    const app = createApp({ config: TEST_CONFIG, gateway });
+
+    // Consecutive admin requests with the same token reuse the cached verification
+    const firstOrdersRes = await app.request('/api/v1/admin/orders', {
+      headers: { Cookie: 'mk_access_token=staff-access-token' },
+    });
+    const secondOrdersRes = await app.request('/api/v1/admin/orders', {
+      headers: { Cookie: 'mk_access_token=staff-access-token' },
+    });
+    expect(firstOrdersRes.status).toBe(200);
+    expect(secondOrdersRes.status).toBe(200);
+    expect(verifyAccessToken).toHaveBeenCalledTimes(1);
+
+    // Owner updates staff member -> invalidates cached staff entries immediately
+    tokenUsers.delete('staff-access-token');
+    const disableRes = await app.request(`/api/v1/admin/users/${STAFF_USER.id}`, {
+      method: 'PATCH',
+      headers: { ...CSRF_HEADERS, Cookie: 'mk_access_token=valid-access-token' },
+      body: JSON.stringify({ active: false }),
+    });
+    expect(disableRes.status).toBe(200);
+    expect(verifyAccessToken).toHaveBeenCalledTimes(2);
+
+    const disabledStaffRes = await app.request('/api/v1/admin/orders', {
+      headers: { Cookie: 'mk_access_token=staff-access-token' },
+    });
+    expect(disabledStaffRes.status).toBe(401);
+    expect(verifyAccessToken).toHaveBeenCalledTimes(3);
+
+    // Logout immediately invalidates the owner's cached access token
+    tokenUsers.delete('valid-access-token');
+    const logoutRes = await app.request('/api/v1/auth/logout', {
+      method: 'POST',
+      headers: { ...CSRF_HEADERS, Cookie: 'mk_access_token=valid-access-token' },
+    });
+    expect(logoutRes.status).toBe(204);
+
+    const afterLogoutRes = await app.request('/api/v1/admin/orders', {
+      headers: { Cookie: 'mk_access_token=valid-access-token' },
+    });
+    expect(afterLogoutRes.status).toBe(401);
+    expect(verifyAccessToken).toHaveBeenCalledTimes(4);
+  });
 });

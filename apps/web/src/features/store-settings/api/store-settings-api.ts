@@ -67,6 +67,7 @@ export async function searchStoreOriginAddresses(
   const res = await apiRequest(`/location/search?${params.toString()}`, {
     method: 'GET',
     schema: locationSearchResponseSchema,
+    trackForeground: true,
     ...(signal ? { signal } : {}),
   });
   return res.data;
@@ -83,6 +84,7 @@ export async function reverseGeocodeStoreOrigin(
   const res = await apiRequest(`/location/reverse?${params.toString()}`, {
     method: 'GET',
     schema: locationReverseResponseSchema,
+    trackForeground: true,
     ...(signal ? { signal } : {}),
   });
   return res.data?.label ?? null;

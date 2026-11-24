@@ -1,6 +1,7 @@
 import { MENU_IMAGE_MAX_UPLOAD_BYTES } from '@menu-kiosk/contracts';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { createAdminAuthCache } from './lib/admin-auth-cache';
 import { problemResponse } from './lib/problem';
 import { createStoreProfileCache } from './lib/store-profile-cache';
 import { createCsrfMiddleware } from './middleware/csrf';
@@ -28,7 +29,10 @@ export function createApp(deps: ApiDeps): Hono<ApiEnv> {
   const app = new Hono<ApiEnv>();
   const storeProfileCache =
     deps.storeProfileCache ?? createStoreProfileCache(() => deps.gateway.getStoreProfile());
-  const sharedDeps: ApiDeps = { ...deps, storeProfileCache };
+  const adminAuthCache =
+    deps.adminAuthCache ??
+    createAdminAuthCache((accessToken) => deps.gateway.verifyAccessToken(accessToken));
+  const sharedDeps: ApiDeps = { ...deps, storeProfileCache, adminAuthCache };
 
   app.use('*', requestIdMiddleware);
   app.use('*', securityHeadersMiddleware);

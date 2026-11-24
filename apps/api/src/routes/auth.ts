@@ -1,5 +1,6 @@
 import { adminLoginRequestSchema } from '@menu-kiosk/contracts';
 import { Hono } from 'hono';
+import { verifyAdminAccessToken } from '../lib/admin-auth-cache';
 import { refreshAdminSessionSingleFlight } from '../lib/auth-refresh';
 import { clearAuthCookies, readAuthCookies, setAuthCookies } from '../lib/cookies';
 import { problemResponse, zodFieldErrors } from '../lib/problem';
@@ -95,7 +96,7 @@ export function createAuthRoutes(deps: ApiDeps): Hono<ApiEnv> {
     const { accessToken, refreshToken } = readAuthCookies(c);
 
     if (accessToken) {
-      const user = await deps.gateway.verifyAccessToken(accessToken);
+      const user = await verifyAdminAccessToken(deps, accessToken);
       if (user) {
         return c.json({ data: { authenticated: true, user } }, 200);
       }
@@ -147,6 +148,7 @@ export function createAuthRoutes(deps: ApiDeps): Hono<ApiEnv> {
     const { accessToken, refreshToken } = readAuthCookies(c);
     let revoked = false;
     if (accessToken) {
+      deps.adminAuthCache?.invalidateToken(accessToken);
       revoked = await deps.gateway.signOutAdmin(accessToken).catch(() => false);
     }
     if (!revoked && refreshToken) {
@@ -154,6 +156,7 @@ export function createAuthRoutes(deps: ApiDeps): Hono<ApiEnv> {
         () => null,
       );
       if (refreshed) {
+        deps.adminAuthCache?.invalidateToken(refreshed.tokens.accessToken);
         await deps.gateway.signOutAdmin(refreshed.tokens.accessToken).catch(() => false);
       }
     }

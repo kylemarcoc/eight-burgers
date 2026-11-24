@@ -57,7 +57,7 @@ export function FoodImage({
       alt={alt}
       loading={loading}
       fetchPriority={fetchPriority}
-      decoding="async"
+      decoding={loading === 'eager' ? undefined : 'async'}
       onError={() => setFailedSrc(src)}
       className={`object-cover ${className}`}
     />

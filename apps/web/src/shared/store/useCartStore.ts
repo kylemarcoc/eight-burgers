@@ -46,6 +46,8 @@ export type CartActions = {
   ) => void;
   setLineQuantity: (lineId: string, quantity: number) => void;
   removeCartLine: (lineId: string) => void;
+  removeCartLines: (lineIds: readonly string[]) => void;
+  clearPrunedRemovedCount: () => void;
   clearCart: () => void;
   setLastPlacedOrder: (receipt: PlacedOrderReceipt | null) => void;
   setTrackedQueueNumber: (queueNumber: string | null) => void;
@@ -61,6 +63,7 @@ export type CartActions = {
 export type CartStoreState = {
   cart: CartLineItem[];
   isCartOpen: boolean;
+  prunedRemovedCount: number;
   lastPlacedOrder: PlacedOrderReceipt | null;
   receiptSession: OpaqueReceiptSession | null;
   trackedQueueNumber: string | null;
@@ -329,9 +332,10 @@ const cartPersistStorage: PersistStorage<PersistedCartPayload> = {
 
 export const useCartStore = create<CartStoreState>()(
   persist(
-    immer((set) => ({
+    immer((set, get) => ({
       cart: [],
       isCartOpen: false,
+      prunedRemovedCount: 0,
       lastPlacedOrder: null,
       receiptSession: readSessionReceipt(),
       trackedQueueNumber: null,
@@ -430,6 +434,26 @@ export const useCartStore = create<CartStoreState>()(
             draft.cart.splice(idx, 1);
           }),
 
+        removeCartLines: (lineIds) => {
+          if (lineIds.length === 0) return;
+          const removeSet = new Set(lineIds);
+          if (!get().cart.some((line) => removeSet.has(line.lineId))) return;
+          set((draft) => {
+            const nextCart = draft.cart.filter((line) => !removeSet.has(line.lineId));
+            const removedCount = draft.cart.length - nextCart.length;
+            if (removedCount <= 0) return;
+            draft.cart = nextCart;
+            draft.prunedRemovedCount += removedCount;
+          });
+        },
+
+        clearPrunedRemovedCount: () => {
+          if (get().prunedRemovedCount === 0) return;
+          set((draft) => {
+            draft.prunedRemovedCount = 0;
+          });
+        },
+
         clearCart: () =>
           set((draft) => {
             draft.cart = [];
@@ -524,6 +548,7 @@ export const useCartStore = create<CartStoreState>()(
             set((draft) => {
               draft.cart = [];
               draft.isCartOpen = false;
+              draft.prunedRemovedCount = 0;
               draft.lastPlacedOrder = null;
               draft.receiptSession = null;
               draft.trackedQueueNumber = null;
@@ -564,6 +589,8 @@ export function resetCartStore(): void {
 
 export const useCartLines = (): readonly CartLineItem[] => useCartStore((state) => state.cart);
 export const useCartOpen = (): boolean => useCartStore((state) => state.isCartOpen);
+export const usePrunedRemovedCount = (): number =>
+  useCartStore((state) => state.prunedRemovedCount);
 export const useLastPlacedOrder = (): PlacedOrderReceipt | null =>
   useCartStore((state) => state.lastPlacedOrder);
 export const useReceiptSession = (): OpaqueReceiptSession | null =>

@@ -1,5 +1,11 @@
+import { lazy } from 'react';
+
 export { orderKeys } from './api/orders-api';
-export { AdminOrdersManager } from './components/AdminOrdersManager';
+export const AdminOrdersManager = lazy(() =>
+  import('./components/AdminOrdersManager').then((module) => ({
+    default: module.AdminOrdersManager,
+  })),
+);
 export {
   useAdminOrdersQuery,
   useCancelOrderByQueueMutation,

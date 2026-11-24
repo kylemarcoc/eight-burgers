@@ -988,7 +988,7 @@ describe('CartPortalDrawer', () => {
     fireEvent.click(
       within(dialog).getByRole('button', { name: /edit options for burger deluxe/i }),
     );
-    const customizer = screen.getByRole('dialog', { name: 'Burger Deluxe' });
+    const customizer = await screen.findByRole('dialog', { name: 'Burger Deluxe' });
     fireEvent.click(within(customizer).getByRole('button', { name: /clear unavailable/i }));
     fireEvent.click(within(customizer).getByLabelText(/sliced cheese/i));
     fireEvent.click(within(customizer).getByRole('button', { name: /update item · ₱168/i }));

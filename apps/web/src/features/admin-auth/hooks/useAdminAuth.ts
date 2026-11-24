@@ -16,6 +16,10 @@ export function useAdminLoginMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (payload: AdminLoginRequest) => loginAdmin(payload),
+    meta: {
+      blockingBackdrop: true,
+      loadingLabel: 'Signing in…',
+    },
     onSuccess: (session) => {
       queryClient.setQueryData(adminAuthKeys.session(), session);
       void queryClient.invalidateQueries({ queryKey: ['admin', 'orders'] });
@@ -28,6 +32,10 @@ export function useAdminLogoutMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => logoutAdmin(),
+    meta: {
+      blockingBackdrop: true,
+      loadingLabel: 'Signing out…',
+    },
     onSettled: async () => {
       await clearAdminSessionCache(queryClient);
     },

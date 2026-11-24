@@ -7,14 +7,29 @@ import {
   validateItemOptionSelections,
   type MenuItem,
 } from '@menu-kiosk/contracts';
-import { useCallback, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react';
 import { FoodImage } from '@/shared/components/FoodImage';
 import { getApiErrorMessage } from '@/shared/lib/api-error';
 import { calculateCartDetails, formatPhp } from '@/shared/shop/shop-storage';
 import { useCartActions, useCartLines, useDineInTable } from '@/shared/store/useCartStore';
 import { useCatalogQuery } from '../hooks/useCatalog';
-import { ItemCustomizerModal } from './ItemCustomizerModal';
+import { loadItemCustomizerModal, preloadItemCustomizerModal } from '../preload';
 import { MenuCard } from './MenuCard';
+
+const ItemCustomizerModal = lazy(() =>
+  loadItemCustomizerModal().then((module) => ({
+    default: module.ItemCustomizerModal,
+  })),
+);
 
 export function StorefrontCatalog() {
   const catalogQuery = useCatalogQuery();
@@ -378,6 +393,8 @@ export function StorefrontCatalog() {
                         key={item.id}
                         type="button"
                         onClick={() => handleQuickAddFeatured(item)}
+                        onPointerEnter={preloadItemCustomizerModal}
+                        onFocus={preloadItemCustomizerModal}
                         disabled={!orderable}
                         aria-label={
                           orderable
@@ -565,6 +582,7 @@ export function StorefrontCatalog() {
                   qtyInCart={itemQuantitiesInCart.get(item.id) ?? 0}
                   onAddToCart={handleDirectAddToCart}
                   onOpenCustomizer={setCustomizingItem}
+                  onPreloadCustomizer={preloadItemCustomizerModal}
                 />
               ))}
             </div>
@@ -573,16 +591,18 @@ export function StorefrontCatalog() {
       </section>
 
       {customizingItem ? (
-        <ItemCustomizerModal
-          item={customizingItem}
-          optionGroups={optionGroups}
-          onConfirm={(selection) => {
-            addToCart(customizingItem, selection);
-            setHeroAnnouncement(`Added ${customizingItem.name} to cart.`);
-            setCustomizingItem(null);
-          }}
-          onClose={() => setCustomizingItem(null)}
-        />
+        <Suspense fallback={null}>
+          <ItemCustomizerModal
+            item={customizingItem}
+            optionGroups={optionGroups}
+            onConfirm={(selection) => {
+              addToCart(customizingItem, selection);
+              setHeroAnnouncement(`Added ${customizingItem.name} to cart.`);
+              setCustomizingItem(null);
+            }}
+            onClose={() => setCustomizingItem(null)}
+          />
+        </Suspense>
       ) : null}
     </div>
   );

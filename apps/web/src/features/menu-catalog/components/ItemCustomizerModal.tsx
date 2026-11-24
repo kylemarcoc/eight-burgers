@@ -145,7 +145,11 @@ export function ItemCustomizerModal({
     }> = [];
 
     for (const child of Array.from(document.body.children)) {
-      if (child instanceof HTMLElement && child !== portalNode) {
+      if (
+        child instanceof HTMLElement &&
+        child !== portalNode &&
+        !child.hasAttribute('data-api-loading-portal')
+      ) {
         isolatedSiblings.push({
           element: child,
           hadInert: child.hasAttribute('inert'),

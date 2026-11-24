@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { useForegroundRequestCount } from './api-activity';
 import { isApiError } from './api-error';
 import { apiRequest, parseRetryAfterMs } from './http-client';
 
@@ -130,5 +131,39 @@ describe('http-client', () => {
     expect(headers).toBeInstanceOf(Headers);
     expect(headers instanceof Headers ? headers.get('content-type') : null).toBeNull();
     expect(headers instanceof Headers ? headers.get('x-requested-with') : null).toBe('fetch');
+  });
+
+  it('tracks foreground activity when trackForeground is true and decrements on settle or error', async () => {
+    const { renderHook, act } = await import('@testing-library/react');
+    const { result } = renderHook(() => useForegroundRequestCount());
+    expect(result.current).toBe(0);
+
+    let resolveFetch!: (response: Response) => void;
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+
+    let pending!: Promise<unknown>;
+    act(() => {
+      pending = apiRequest('/location/search?q=makati', { trackForeground: true });
+    });
+    expect(result.current).toBe(1);
+
+    await act(async () => {
+      resolveFetch(new Response(JSON.stringify({ data: [] }), { status: 200 }));
+      await pending;
+    });
+    expect(result.current).toBe(0);
+
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    await act(async () => {
+      await expect(
+        apiRequest('/location/search?q=makati', { trackForeground: true }),
+      ).rejects.toMatchObject({ kind: 'network' });
+    });
+    expect(result.current).toBe(0);
   });
 });

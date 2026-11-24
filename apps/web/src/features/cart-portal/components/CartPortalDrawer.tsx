@@ -11,13 +11,25 @@ import {
   type PaymentStatus,
   type PublicOrderTracker,
 } from '@menu-kiosk/contracts';
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type SubmitEvent } from 'react';
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type SubmitEvent,
+} from 'react';
 import { createPortal } from 'react-dom';
-import { ItemCustomizerModal, useCatalogQuery } from '@/features/menu-catalog';
+import {
+  ItemCustomizerModal,
+  preloadItemCustomizerModal,
+  useCatalogQuery,
+} from '@/features/menu-catalog';
 import {
   useCancelOrderByQueueMutation,
   useCancelOrderByReceiptMutation,
-  useOrderReceiptQuery,
   usePlaceOrderMutation,
   usePublicOrderTrackerQuery,
   useSubmitPaymentReferenceMutation,
@@ -44,9 +56,9 @@ import {
   useCartOpen,
   useDineInTable,
   useLastPlacedOrder,
-  useReceiptSession,
-  useTrackedQueueNumber,
+  usePrunedRemovedCount,
 } from '@/shared/store/useCartStore';
+import { useCartLifecycle } from '../hooks/useCartLifecycle';
 import { useResolvedCartSummary } from '../hooks/useResolvedCartSummary';
 import { DeliveryLocationPicker } from './DeliveryLocationPicker';
 
@@ -363,21 +375,19 @@ export function CartPortalDrawer() {
   const cartLines = useCartLines();
   const cartSummary = useResolvedCartSummary();
   const isCartOpen = useCartOpen();
+  const prunedRemovedCount = usePrunedRemovedCount();
   const lastPlacedOrderState = useLastPlacedOrder();
-  const receiptSession = useReceiptSession();
-  const trackedQueueNumber = useTrackedQueueNumber();
   const dineInTable = useDineInTable();
   const {
     setCartOpen,
     updateCartLine,
     setLineQuantity,
     removeCartLine,
+    clearPrunedRemovedCount,
     clearCart,
     setLastPlacedOrder,
     setTrackedQueueNumber,
     clearDineInTable,
-    clearReceiptSession,
-    clearPersistedReceiptSession,
     dismissLastOrder,
   } = useCartActions();
 
@@ -420,54 +430,18 @@ export function CartPortalDrawer() {
     [store.paymentMethods],
   );
 
-  const activeReceiptOrderId = lastPlacedOrderState?.order.id ?? receiptSession?.orderId ?? null;
-  const activeReceiptToken =
-    lastPlacedOrderState?.receiptToken ?? receiptSession?.receiptToken ?? null;
-  const activeReceiptQueue =
-    lastPlacedOrderState?.order.queueNumber ?? receiptSession?.queueNumber ?? null;
-
-  const activeQueueNumber = trackedQueueNumber ?? activeReceiptQueue ?? null;
-  const hasMatchingReceiptSession = Boolean(
-    activeReceiptOrderId &&
-    activeReceiptToken &&
-    (!activeQueueNumber ||
-      !activeReceiptQueue ||
-      normalizeQueueNumber(activeReceiptQueue, store.queuePrefix) ===
-        normalizeQueueNumber(activeQueueNumber, store.queuePrefix)),
-  );
+  const { activeReceiptToken, activeQueueNumber, hasMatchingReceiptSession, liveReceiptQuery } =
+    useCartLifecycle(true);
 
   const placeOrderMutation = usePlaceOrderMutation();
   const submitPaymentReferenceMutation = useSubmitPaymentReferenceMutation();
   const cancelByReceiptMutation = useCancelOrderByReceiptMutation();
   const cancelByQueueMutation = useCancelOrderByQueueMutation();
 
-  const liveReceiptQuery = useOrderReceiptQuery(
-    hasMatchingReceiptSession ? activeReceiptOrderId : null,
-    hasMatchingReceiptSession ? activeReceiptToken : null,
-    hasMatchingReceiptSession,
-  );
   const publicTrackerQuery = usePublicOrderTrackerQuery(
     activeQueueNumber,
     Boolean(activeQueueNumber && !hasMatchingReceiptSession),
   );
-
-  useEffect(() => {
-    const status = liveReceiptQuery.data?.status;
-    if (status === 'completed' || status === 'cancelled') {
-      clearPersistedReceiptSession();
-    }
-  }, [liveReceiptQuery.data?.status, clearPersistedReceiptSession]);
-
-  useEffect(() => {
-    if (
-      liveReceiptQuery.isError &&
-      isApiError(liveReceiptQuery.error) &&
-      liveReceiptQuery.error.status === 404 &&
-      receiptSession
-    ) {
-      clearReceiptSession();
-    }
-  }, [liveReceiptQuery.isError, liveReceiptQuery.error, receiptSession, clearReceiptSession]);
 
   const lastPlacedOrder = hasMatchingReceiptSession
     ? (liveReceiptQuery.data ?? lastPlacedOrderState?.order ?? null)
@@ -504,10 +478,15 @@ export function CartPortalDrawer() {
   const [checkoutPaymentRef, setCheckoutPaymentRef] = useState('');
   const [fieldErrors, setFieldErrors] = useState<CheckoutFieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [removedNotice, setRemovedNotice] = useState<string | null>(null);
-  const [lastPrunedKey, setLastPrunedKey] = useState('');
   const [confirmClear, setConfirmClear] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
+
+  const removedNotice =
+    prunedRemovedCount > 0
+      ? `Removed ${prunedRemovedCount} ${
+          prunedRemovedCount === 1 ? 'item' : 'items'
+        } from your bag that ${prunedRemovedCount === 1 ? 'is' : 'are'} no longer on the menu.`
+      : null;
 
   const fulfillment: FulfillmentMode = useMemo(() => {
     if (selectedFulfillment) {
@@ -618,9 +597,9 @@ export function CartPortalDrawer() {
     setQueueLookupError(null);
     setCopyStatus('idle');
     setSubmitError(null);
-    setRemovedNotice(null);
+    clearPrunedRemovedCount();
     setCartOpen(false);
-  }, [setCartOpen]);
+  }, [clearPrunedRemovedCount, setCartOpen]);
 
   const handleClearLocation = useCallback(() => {
     setDeliveryPin(null);
@@ -659,7 +638,11 @@ export function CartPortalDrawer() {
     }> = [];
 
     for (const child of Array.from(document.body.children)) {
-      if (child instanceof HTMLElement && child !== portalNode) {
+      if (
+        child instanceof HTMLElement &&
+        child !== portalNode &&
+        !child.hasAttribute('data-api-loading-portal')
+      ) {
         isolatedSiblings.push({
           element: child,
           hadInert: child.hasAttribute('inert'),
@@ -727,24 +710,6 @@ export function CartPortalDrawer() {
       }
     };
   }, [isCartOpen, handleClose]);
-
-  const removedLinesKey = catalogQuery.isSuccess ? cartSummary.removedLineIds.join(',') : '';
-  if (removedLinesKey && removedLinesKey !== lastPrunedKey) {
-    const count = cartSummary.removedLineIds.length;
-    setLastPrunedKey(removedLinesKey);
-    setRemovedNotice(
-      `Removed ${count} ${count === 1 ? 'item' : 'items'} from your bag that ${
-        count === 1 ? 'is' : 'are'
-      } no longer on the menu.`,
-    );
-  }
-
-  useEffect(() => {
-    if (!catalogQuery.isSuccess || cartSummary.removedLineIds.length === 0) return;
-    for (const lineId of cartSummary.removedLineIds) {
-      removeCartLine(lineId);
-    }
-  }, [catalogQuery.isSuccess, cartSummary.removedLineIds, removeCartLine]);
 
   useEffect(() => {
     if (isCartOpen && lastPlacedOrder && cartSummary.lines.length === 0 && cartLines.length === 0) {
@@ -1873,7 +1838,7 @@ export function CartPortalDrawer() {
                   <span>{removedNotice}</span>
                   <button
                     type="button"
-                    onClick={() => setRemovedNotice(null)}
+                    onClick={() => clearPrunedRemovedCount()}
                     className="shrink-0 font-medium text-ui-text-muted underline hover:text-ui-text"
                   >
                     Dismiss
@@ -2058,6 +2023,8 @@ export function CartPortalDrawer() {
                               type="button"
                               aria-label={`Edit options for ${line.item.name}`}
                               onClick={() => setEditingCartLineId(line.lineId)}
+                              onPointerEnter={preloadItemCustomizerModal}
+                              onFocus={preloadItemCustomizerModal}
                               className={`text-xs font-semibold underline hover:opacity-80 ${
                                 line.hasInvalidOptions ? 'text-ui-accent' : 'text-ui-text-muted'
                               }`}
@@ -2620,20 +2587,22 @@ export function CartPortalDrawer() {
       </aside>
 
       {editingCartLine ? (
-        <ItemCustomizerModal
-          item={editingCartLine.item}
-          optionGroups={optionGroups}
-          initialSelectedOptionIds={editingCartLine.selectedOptionIds}
-          initialItemNote={editingCartLine.itemNote}
-          initialQuantity={editingCartLine.quantity}
-          submitLabel="Update item"
-          onConfirm={(selection) => {
-            updateCartLine(editingCartLine.lineId, selection);
-            setSubmitError(null);
-            setEditingCartLineId(null);
-          }}
-          onClose={() => setEditingCartLineId(null)}
-        />
+        <Suspense fallback={null}>
+          <ItemCustomizerModal
+            item={editingCartLine.item}
+            optionGroups={optionGroups}
+            initialSelectedOptionIds={editingCartLine.selectedOptionIds}
+            initialItemNote={editingCartLine.itemNote}
+            initialQuantity={editingCartLine.quantity}
+            submitLabel="Update item"
+            onConfirm={(selection) => {
+              updateCartLine(editingCartLine.lineId, selection);
+              setSubmitError(null);
+              setEditingCartLineId(null);
+            }}
+            onClose={() => setEditingCartLineId(null)}
+          />
+        </Suspense>
       ) : null}
     </div>,
     document.body,
